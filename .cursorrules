@@ -1,0 +1,53 @@
+# Cursor Rules for Network Monitoring Project
+
+# Documentation First
+
+Always read `docs/` folder before planning or implementing:
+
+- `docs/architecture.md` - System design
+- `docs/metrics-schema.md` - Data formats
+- `docs/event-schema.md` - Event types
+- `docs/decisions.md` - Design rationale
+
+# Prototype Context
+
+This is a prototype for executive demos, not production. Prioritize:
+
+- Solid data schemas and architecture
+- Quick iteration on visualization
+- Extensibility over robustness
+
+Skip:
+
+- Auth, security, tests, error handling (for now)
+- Production deployment concerns
+- Over-engineering
+
+# Tech Stack
+
+Backend: Python, Darts, TinyFlux, SQLite, FastAPI, websockets
+Frontend: TypeScript, Vite, D3.js v7
+
+# Code Style
+
+- Python: Type hints, async/await where beneficial
+- TypeScript: Strict mode, explicit types for public APIs
+- D3: Functional style, method chaining
+- Comments: Explain "why", not "what"
+
+# When Making Decisions
+
+- Check `docs/decisions.md` for existing ADRs
+- State trade-offs explicitly (speed vs quality)
+- Ask clarifying questions if ambiguous
+- Push back if technically unsound
+
+# Current Focus
+
+Building data infrastructure (Phase 1):
+
+1. Metrics generator with seasonality
+2. Event generator with correlation
+3. Storage layer (TinyFlux + SQLite)
+4. WebSocket event bus
+5. Timeseries chart (historical + live)
