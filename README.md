@@ -48,6 +48,11 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | [event-schema.md](docs/event-schema.md)     | Event types, correlation, storage       |
 | [decisions.md](docs/decisions.md)           | Architecture Decision Records (ADRs)    |
 | [chart-design.md](docs/chart-design.md)     | Timeseries chart architecture           |
+| [juttle-viz-implementation-guide.md](docs/juttle-viz-implementation-guide.md) | D3 patterns, visual design, code reference from juttle-viz |
+
+**Reference Materials**:
+- `docs/references/juttle-viz-source/` - Complete juttle-viz source code for reference
+- `docs/references/juttle-viz.md` - Quick reference guide for juttle-viz API
 
 ## Quick Start
 
