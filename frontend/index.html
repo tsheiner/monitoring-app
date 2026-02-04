@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Network Monitoring</title>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Network Monitoring Dashboard</h1>
+        <div class="controls">
+          <div class="control-group">
+            <label for="metric-select">Metric:</label>
+            <select id="metric-select">
+              <option value="time_to_connect">Time to Connect</option>
+              <option value="throughput">Throughput</option>
+              <option value="coverage">Coverage</option>
+              <option value="capacity">Capacity</option>
+              <option value="roaming">Roaming</option>
+              <option value="successful_connects">Successful Connects</option>
+              <option value="ap_health">AP Health</option>
+            </select>
+          </div>
+          
+          <div class="control-group">
+            <label for="time-range">Time Range:</label>
+            <select id="time-range">
+              <option value="3600">Last Hour</option>
+              <option value="10800">Last 3 Hours</option>
+              <option value="21600" selected>Last 6 Hours</option>
+              <option value="43200">Last 12 Hours</option>
+              <option value="86400">Last 24 Hours</option>
+            </select>
+          </div>
+          
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="live-mode" checked />
+              Live Mode
+            </label>
+          </div>
+          
+          <div class="control-group">
+            <label>
+              <input type="checkbox" id="show-events" checked />
+              Show Events
+            </label>
+          </div>
+        </div>
+      </header>
+      
+      <main>
+        <div id="chart-container">
+          <div id="chart"></div>
+        </div>
+        
+        <div id="status">
+          <span id="connection-status" class="status-disconnected">Disconnected</span>
+          <span id="data-stats"></span>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
