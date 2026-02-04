@@ -17,7 +17,7 @@ Aggregation tiers:
 import time
 from typing import Dict, List
 
-from simulator.metrics_generator import get_generator, reset_generator
+from simulator.realistic_generator import get_generator, reset_generator
 from simulator.event_generator import get_event_generator
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store

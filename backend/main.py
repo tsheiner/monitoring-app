@@ -12,7 +12,7 @@ import time
 import uvicorn
 from multiprocessing import Process
 
-from simulator.metrics_generator import get_generator
+from simulator.realistic_generator import get_generator
 from simulator.event_generator import get_event_generator
 from simulator.bootstrap import bootstrap_historical_data
 from storage.metrics_store import get_metrics_store

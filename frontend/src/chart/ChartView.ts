@@ -124,9 +124,11 @@ export class ChartView {
     if (this.config.liveMode) {
       const now = observation.timestamp;
       const currentRange = this.sharedRange.getRange();
-      
-      console.log(`Live data: ${new Date(now * 1000).toISOString()}, current range end: ${new Date(currentRange[1] * 1000).toISOString()}`);
-      
+
+      console.log(
+        `Live data: ${new Date(now * 1000).toISOString()}, current range end: ${new Date(currentRange[1] * 1000).toISOString()}`,
+      );
+
       // Only slide the window if the new observation is beyond the current range
       // This prevents jumping forward and losing historical data when live mode first starts
       if (now > currentRange[1]) {
