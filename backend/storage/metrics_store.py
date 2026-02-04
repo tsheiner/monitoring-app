@@ -181,6 +181,16 @@ class MetricsStore:
         results = self.db.search(Tag.metric == metric)
         return len(results)
     
+    def delete_all(self, metric: str) -> None:
+        """
+        Delete all observations for a metric.
+        
+        Args:
+            metric: Metric name
+        """
+        Tag = TagQuery()
+        self.db.remove(Tag.metric == metric)
+    
     def close(self) -> None:
         """Close database connection."""
         self.db.close()

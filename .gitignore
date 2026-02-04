@@ -37,3 +37,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+#playwright
+.playwright*

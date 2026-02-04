@@ -102,12 +102,20 @@ async def run_backend():
     print("Network Monitoring Backend")
     print("="*60 + "\n")
     
-    # Bootstrap historical data (only if empty)
+    # Clear and regenerate historical data on each startup
+    # This ensures timestamps are always current for the prototype
+    print("Clearing existing data...")
     metrics_store = get_metrics_store()
-    if metrics_store.count_observations("time_to_connect") == 0:
-        bootstrap_historical_data(hours=24)
-    else:
-        print("Historical data already exists, skipping bootstrap\n")
+    events_store = get_events_store()
+    
+    # Clear all data
+    for metric in ["time_to_connect", "throughput", "coverage", "capacity", 
+                   "roaming", "successful_connects", "ap_health"]:
+        metrics_store.delete_all(metric)
+    events_store.delete_all()
+    
+    # Bootstrap with 90 days of tiered historical data
+    bootstrap_historical_data(days=90)
     
     # Start WebSocket server
     ws_server = get_websocket_server(host="0.0.0.0", port=8000)

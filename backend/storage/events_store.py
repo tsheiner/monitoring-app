@@ -235,6 +235,12 @@ class EventsStore:
         
         return cursor.fetchone()[0]
     
+    def delete_all(self) -> None:
+        """Delete all events from the store."""
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM events")
+        self.conn.commit()
+    
     def close(self) -> None:
         """Close database connection."""
         self.conn.close()

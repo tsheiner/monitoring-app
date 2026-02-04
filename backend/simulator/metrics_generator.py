@@ -228,3 +228,8 @@ def get_generator(start_time: int = None) -> MetricsGenerator:
     if _generator_instance is None:
         _generator_instance = MetricsGenerator(start_time)
     return _generator_instance
+
+def reset_generator() -> None:
+    """Reset the singleton instance (useful after bootstrap)."""
+    global _generator_instance
+    _generator_instance = None
