@@ -41,8 +41,8 @@ class MonitoringApp {
     };
     const config: ChartConfig = {
       width: 1200,
-      height: 500,
-      margin: { top: 20, right: 50, bottom: 50, left: 70 },
+      height: 600,
+      margin: { top: 20, right: 50, bottom: 120, left: 70 },
       metric: this.currentMetric,
       timeRange: [now - initialTimeRange, now], // [past, NOW]
       showDistribution: true,
@@ -68,6 +68,11 @@ class MonitoringApp {
     // Setup API callbacks
     this.setupAPICallbacks();
 
+    // Register callback for brush range selection
+    this.chart.onRangeSelected(async (range) => {
+      await this.loadDataForRange(range[0], range[1]);
+    });
+
     // Load initial data
     this.loadData();
 
@@ -86,7 +91,10 @@ class MonitoringApp {
 
   private async loadData(): Promise<void> {
     const [start, end] = this.getTimeRange();
+    await this.loadDataForRange(start, end);
+  }
 
+  private async loadDataForRange(start: number, end: number): Promise<void> {
     try {
       // Load metric history
       console.log(
@@ -100,7 +108,7 @@ class MonitoringApp {
       console.log(`Received ${metricData.observations.length} observations`);
 
       // Update chart config with CURRENT time range
-      this.chart.setTimeRange(this.currentTimeRangeSeconds);
+      this.chart.setTimeRange(end - start);
 
       this.chart.loadHistoricalData(
         metricData.observations,

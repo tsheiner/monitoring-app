@@ -32,6 +32,8 @@ export class ChartView {
   private config: ChartConfig;
   private currentDistribution: Distribution | null = null;
   private distributionSeries: DistributionPoint[] = [];
+  private hasLoadedData: boolean = false; // Track if historical data loaded
+  private onRangeSelectedCallback?: (range: [number, number]) => void;
 
   // Track chart start time for growth phase
   private chartStartTime: number;
@@ -88,6 +90,11 @@ export class ChartView {
     this.sharedRange.onChange((range) => {
       this.onRangeChange(range);
     });
+
+    // Wire up brush control to update time range
+    this.core.onBrushChange((range) => {
+      this.handleBrushSelection(range);
+    });
   }
 
   /**
@@ -101,6 +108,15 @@ export class ChartView {
     distributionSeries?: DistributionPoint[],
   ): void {
     console.log(`Loading ${observations.length} historical observations`);
+    console.log('Distribution data:', {
+      hasDistribution: !!distribution,
+      seriesLength: distributionSeries?.length || 0,
+      showDistribution: this.config.showDistribution,
+      generatorExists: !!this.distributionGenerator,
+    });
+
+    // Mark that we've loaded data - brush extent can now be properly set
+    this.hasLoadedData = true;
 
     // Clear existing data first
     this.dataTarget.clear();
@@ -119,13 +135,50 @@ export class ChartView {
       this.recomputeDistributionSeries();
     }
 
+    // Ensure distribution generator exists if we need to show distributions
+    // Recreate it to ensure fresh state with correct scales
+    if (this.config.showDistribution) {
+      if (this.distributionGenerator) {
+        this.distributionGenerator.destroy();
+      }
+      this.distributionGenerator = new DistributionRibbonGenerator(
+        this.core.getChartGroup(),
+        this.config.colors.distribution,
+      );
+      this.distributionGenerator.setScales(
+        this.core.getXScale(),
+        this.core.getYScale(),
+      );
+    }
+
     // Update Y domain based on data
     const yDomain = this.dataTarget.getYDomain();
     this.core.updateYDomain(yDomain);
 
-    // Make sure time range is set correctly
+    // CRITICAL: Update brush range FIRST, before updateXDomain triggers onRangeChange
+    // This ensures brushXScale domain is set correctly when brush selection is updated
+    if (observations.length > 0) {
+      const minTime = observations[0].timestamp;
+      const maxTime = observations[observations.length - 1].timestamp;
+
+      // Add buffer equal to the requested duration to allow sliding back in time
+      const bufferDuration = this.durationSeconds;
+      const brushStart = minTime - bufferDuration;
+
+      // Ensure brush extends to at least the view range end (current time)
+      const viewRange = this.sharedRange.getRange();
+      const brushEnd = Math.max(maxTime, viewRange[1]);
+
+      this.core.updateFullTimeRange([brushStart, brushEnd]);
+    }
+
+    // Now update X domain (which will trigger onRangeChange and updateBrushSelection)
     const range = this.sharedRange.getRange();
     this.core.updateXDomain(range);
+
+    // Explicitly update brush selection to match the view range
+    // This ensures proper initial positioning after brush extent is set
+    this.core.updateBrushSelection(range);
 
     // Render
     this.render();
@@ -196,8 +249,26 @@ export class ChartView {
         const newRange: [number, number] = [now - this.durationSeconds, now];
         this.sharedRange.setRange(newRange);
 
-        // Prune old data outside the visible window to prevent memory leak
-        this.dataTarget.pruneOutsideRange(newRange[0], newRange[1]);
+        // Prune old data but keep buffer for sliding backwards
+        // Keep data from (now - 2*duration) to allow full backward slide
+        const pruneStart = newRange[0] - this.durationSeconds;
+        this.dataTarget.pruneOutsideRange(pruneStart, newRange[1]);
+
+        // Update brush context to show full available data range with buffer
+        const allData = this.dataTarget.getAll();
+        if (allData.length > 0) {
+          const minTime = allData[0].timestamp;
+          const maxTime = allData[allData.length - 1].timestamp;
+
+          // Add buffer equal to requested duration for sliding
+          const bufferDuration = this.durationSeconds;
+          const brushStart = minTime - bufferDuration;
+
+          // Extend brush to current time to prevent selection overflow
+          const brushEnd = Math.max(maxTime, now);
+
+          this.core.updateFullTimeRange([brushStart, brushEnd]);
+        }
       }
     }
 
@@ -240,6 +311,12 @@ export class ChartView {
 
     // Set range to [now - duration, now]
     this.chartStartTime = now - durationSeconds;
+    
+    // Clear data before changing range to prevent rendering with stale data
+    this.dataTarget.clear();
+    this.distributionSeries = [];
+    this.distributionGenerator.hide(); // Hide old distribution visualization
+    
     this.sharedRange.setRange([this.chartStartTime, now]);
 
     // Note: The caller should reload historical data for the new range
@@ -309,6 +386,13 @@ export class ChartView {
       `Range changed: ${new Date(range[0] * 1000).toISOString()} to ${new Date(range[1] * 1000).toISOString()}`,
     );
     this.core.updateXDomain(range);
+
+    // Only update brush selection after historical data is loaded and brush extent is set
+    // This prevents brush from filling entire timeline during initialization
+    if (this.hasLoadedData) {
+      this.core.updateBrushSelection(range);
+    }
+
     this.render();
   }
 
@@ -354,11 +438,11 @@ export class ChartView {
       // This ensures the distribution bands extend to the full time range
       const firstDist = newSeries[0].distribution;
       const lastDist = newSeries[newSeries.length - 1].distribution;
-      
+
       this.distributionSeries = [
         { timestamp: range[0], distribution: firstDist },
         ...newSeries,
-        { timestamp: range[1], distribution: lastDist }
+        { timestamp: range[1], distribution: lastDist },
       ];
     }
   }
@@ -377,15 +461,23 @@ export class ChartView {
 
     // Render distribution using time-bucketed series if available
     if (this.distributionGenerator && this.config.showDistribution) {
+      console.log('Attempting to render distribution:', {
+        seriesLength: this.distributionSeries?.length || 0,
+        hasCurrentDistribution: !!this.currentDistribution,
+      });
+      
       if (this.distributionSeries && this.distributionSeries.length > 0) {
         // Use time-varying distribution series
         const distributionInRange = this.distributionSeries.filter(
           (dp) => dp.timestamp >= range[0] && dp.timestamp <= range[1],
         );
 
+        console.log(`Distribution in range: ${distributionInRange.length} points`);
+
         if (distributionInRange.length > 0) {
           this.distributionGenerator.update(distributionInRange, range);
         } else {
+          console.log('No distribution points in range, hiding');
           this.distributionGenerator.hide();
         }
       } else if (this.currentDistribution) {
@@ -428,6 +520,32 @@ export class ChartView {
     }
 
     this.render();
+  }
+
+  /**
+   * Handle brush selection for range zooming.
+   */
+  private handleBrushSelection(range: [number, number]): void {
+    // Disable live mode when user zooms
+    this.config.liveMode = false;
+
+    // Update duration
+    this.durationSeconds = range[1] - range[0];
+
+    // Update the shared range (this triggers onRangeChange which updates X domain and renders)
+    this.sharedRange.setRange(range);
+
+    // Notify that a new range was selected so data can be fetched
+    if (this.onRangeSelectedCallback) {
+      this.onRangeSelectedCallback(range);
+    }
+  }
+
+  /**
+   * Register callback for when user selects a new time range via brush.
+   */
+  onRangeSelected(callback: (range: [number, number]) => void): void {
+    this.onRangeSelectedCallback = callback;
   }
 
   /**
