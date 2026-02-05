@@ -14,6 +14,18 @@ class MonitoringApp {
   private currentTimeRangeSeconds: number = 86400; // Start with 24 hours to catch historical data
   private events: Event[] = [];
 
+  // Per-metric color scheme
+  private metricColors: Record<string, { line: string; distribution: string }> =
+    {
+      time_to_connect: { line: "#E67E22", distribution: "#E67E22" }, // Orange
+      throughput: { line: "#3498DB", distribution: "#3498DB" }, // Blue
+      coverage: { line: "#2ECC71", distribution: "#2ECC71" }, // Green
+      capacity: { line: "#9B59B6", distribution: "#9B59B6" }, // Purple
+      roaming: { line: "#E74C3C", distribution: "#E74C3C" }, // Red
+      successful_connects: { line: "#1ABC9C", distribution: "#1ABC9C" }, // Teal
+      ap_health: { line: "#F39C12", distribution: "#F39C12" }, // Amber
+    };
+
   constructor() {
     // Initialize API client
     this.api = new APIClient();
@@ -23,6 +35,10 @@ class MonitoringApp {
     // (backend may have been bootstrapped days ago)
     const now = Math.floor(Date.now() / 1000);
     const initialTimeRange = this.currentTimeRangeSeconds; // 24 hours
+    const metricColor = this.metricColors[this.currentMetric] || {
+      line: "#D87118",
+      distribution: "#4E8DB8",
+    };
     const config: ChartConfig = {
       width: 1200,
       height: 500,
@@ -33,8 +49,8 @@ class MonitoringApp {
       showEvents: true,
       liveMode: true,
       colors: {
-        line: "#D87118", // Orange from juttle-viz
-        distribution: "#4E8DB8", // Blue from juttle-viz
+        line: metricColor.line,
+        distribution: metricColor.distribution,
         event: "#999",
         eventHover: "#7EC7FF",
       },
@@ -89,6 +105,7 @@ class MonitoringApp {
       this.chart.loadHistoricalData(
         metricData.observations,
         metricData.distribution,
+        metricData.distribution_series,
       );
 
       // Load events
@@ -116,6 +133,17 @@ class MonitoringApp {
     ) as HTMLSelectElement;
     metricSelect.addEventListener("change", async () => {
       this.currentMetric = metricSelect.value;
+
+      // Update colors for new metric
+      const metricColor = this.metricColors[this.currentMetric] || {
+        line: "#D87118",
+        distribution: "#4E8DB8",
+      };
+      this.chart.updateColors({
+        line: metricColor.line,
+        distribution: metricColor.distribution,
+      });
+
       await this.loadData();
     });
 
@@ -135,6 +163,14 @@ class MonitoringApp {
     ) as HTMLInputElement;
     liveModeCheckbox.addEventListener("change", () => {
       this.chart.setLiveMode(liveModeCheckbox.checked);
+    });
+
+    // Show distribution toggle
+    const showDistributionCheckbox = document.getElementById(
+      "show-distribution",
+    ) as HTMLInputElement;
+    showDistributionCheckbox.addEventListener("change", () => {
+      this.chart.setShowDistribution(showDistributionCheckbox.checked);
     });
 
     // Show events toggle

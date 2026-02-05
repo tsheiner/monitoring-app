@@ -29,7 +29,7 @@ export class LineGenerator implements Generator {
       .attr('class', 'line')
       .attr('fill', 'none')
       .attr('stroke', color)
-      .attr('stroke-width', 1);
+      .attr('stroke-width', 3);
   }
   
   setScales(xScale: any, yScale: any): void {

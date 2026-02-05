@@ -14,7 +14,13 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
-import { ChartConfig, Observation, Distribution, Event } from "./types";
+import {
+  ChartConfig,
+  Observation,
+  Distribution,
+  DistributionPoint,
+  Event,
+} from "./types";
 
 export class ChartView {
   private core: ChartCore;
@@ -25,6 +31,7 @@ export class ChartView {
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
   private currentDistribution: Distribution | null = null;
+  private distributionSeries: DistributionPoint[] = [];
 
   // Track chart start time for growth phase
   private chartStartTime: number;
@@ -48,14 +55,7 @@ export class ChartView {
     // Initialize data target
     this.dataTarget = new DataTarget();
 
-    // Initialize line generator
-    this.lineGenerator = new LineGenerator(
-      this.core.getChartGroup(),
-      config.colors.line,
-    );
-    this.lineGenerator.setScales(this.core.getXScale(), this.core.getYScale());
-
-    // Initialize distribution generator if enabled
+    // Initialize distribution generator FIRST (so it renders behind line)
     if (config.showDistribution) {
       this.distributionGenerator = new DistributionRibbonGenerator(
         this.core.getChartGroup(),
@@ -66,6 +66,13 @@ export class ChartView {
         this.core.getYScale(),
       );
     }
+
+    // Initialize line generator AFTER distribution (so it renders on top)
+    this.lineGenerator = new LineGenerator(
+      this.core.getChartGroup(),
+      config.colors.line,
+    );
+    this.lineGenerator.setScales(this.core.getXScale(), this.core.getYScale());
 
     // Initialize event markers if enabled
     if (config.showEvents) {
@@ -91,6 +98,7 @@ export class ChartView {
   loadHistoricalData(
     observations: Observation[],
     distribution: Distribution | null,
+    distributionSeries?: DistributionPoint[],
   ): void {
     console.log(`Loading ${observations.length} historical observations`);
 
@@ -100,6 +108,12 @@ export class ChartView {
     // Store data
     this.dataTarget.push(observations);
     this.currentDistribution = distribution;
+    this.distributionSeries = distributionSeries || [];
+
+    // If no distribution series provided but we have data, compute it
+    if (this.distributionSeries.length === 0 && observations.length > 0 && this.config.showDistribution) {
+      this.recomputeDistributionSeries();
+    }
 
     // Update Y domain based on data
     const yDomain = this.dataTarget.getYDomain();
@@ -110,6 +124,46 @@ export class ChartView {
     this.core.updateXDomain(range);
 
     // Render
+    this.render();
+  }
+
+  /**
+   * Update chart colors (for metric switching).
+   */
+  updateColors(colors: { line?: string; distribution?: string }): void {
+    // Update distribution first (if needed) to maintain z-order (behind line)
+    if (colors.distribution && this.distributionGenerator) {
+      this.config.colors.distribution = colors.distribution;
+      // Destroy old generator before creating new one
+      this.distributionGenerator.destroy();
+      this.distributionGenerator = new DistributionRibbonGenerator(
+        this.core.getChartGroup(),
+        colors.distribution,
+      );
+      this.distributionGenerator.setScales(
+        this.core.getXScale(),
+        this.core.getYScale(),
+      );
+    }
+
+    // Update line last to ensure it renders on top
+    if (colors.line) {
+      this.config.colors.line = colors.line;
+      // Destroy old generator before creating new one
+      if (this.lineGenerator) {
+        this.lineGenerator.destroy();
+      }
+      this.lineGenerator = new LineGenerator(
+        this.core.getChartGroup(),
+        colors.line,
+      );
+      this.lineGenerator.setScales(
+        this.core.getXScale(),
+        this.core.getYScale(),
+      );
+    }
+
+    // Re-render with new colors
     this.render();
   }
 
@@ -150,6 +204,11 @@ export class ChartView {
       const yMin = Math.min(...visibleObservations.map((obs) => obs.value));
       const yMax = Math.max(...visibleObservations.map((obs) => obs.value));
       this.core.updateYDomain([yMin, yMax]);
+    }
+
+    // Recompute distribution from buffered data for live updates
+    if (this.config.showDistribution && this.config.liveMode) {
+      this.recomputeDistributionSeries();
     }
 
     // Render
@@ -250,6 +309,45 @@ export class ChartView {
   }
 
   /**
+   * Recompute distribution series from buffered data.
+   * Used for live updates when backend data is not available.
+   */
+  private recomputeDistributionSeries(): void {
+    const range = this.sharedRange.getRange();
+    const duration = range[1] - range[0];
+    
+    // Determine bucket size based on duration
+    let bucketSize: number;
+    if (duration <= 3600) {  // <= 1 hour
+      bucketSize = 300;  // 5 minutes
+    } else if (duration <= 14400) {  // <= 4 hours
+      bucketSize = 900;  // 15 minutes
+    } else if (duration <= 86400) {  // <= 24 hours
+      bucketSize = 3600;  // 1 hour
+    } else {
+      bucketSize = 10800;  // 3 hours
+    }
+
+    // Compute distribution for each bucket
+    const newSeries: DistributionPoint[] = [];
+    for (let t = range[0]; t < range[1]; t += bucketSize) {
+      const bucketEnd = Math.min(t + bucketSize, range[1]);
+      const dist = this.dataTarget.computeDistributionInRange(t, bucketEnd);
+      
+      if (dist) {
+        newSeries.push({
+          timestamp: t + bucketSize / 2,  // Bucket center
+          distribution: dist,
+        });
+      }
+    }
+
+    if (newSeries.length > 0) {
+      this.distributionSeries = newSeries;
+    }
+  }
+
+  /**
    * Render all generators.
    */
   private render(): void {
@@ -261,24 +359,23 @@ export class ChartView {
     // Render line
     this.lineGenerator.update(observations, range);
 
-    // Render distribution if we have it
-    // For MVP: create distribution ribbon spanning entire visible range
-    // TODO: compute rolling distributions in time buckets for time-varying bands
-    if (
-      this.distributionGenerator &&
-      this.currentDistribution &&
-      this.config.showDistribution
-    ) {
-      // Safety check: ensure distribution has required fields
-      if (
-        this.currentDistribution.p5 !== undefined &&
-        this.currentDistribution.p25 !== undefined &&
-        this.currentDistribution.p75 !== undefined &&
-        this.currentDistribution.p95 !== undefined
-      ) {
-        // Create distribution points at regular intervals across visible range
-        // This makes the ribbon render as smooth horizontal bands
-        const numPoints = 20; // More points = smoother rendering
+    // Render distribution using time-bucketed series if available
+    if (this.distributionGenerator && this.config.showDistribution) {
+      if (this.distributionSeries && this.distributionSeries.length > 0) {
+        // Use time-varying distribution series
+        const distributionInRange = this.distributionSeries.filter(
+          (dp) => dp.timestamp >= range[0] && dp.timestamp <= range[1],
+        );
+
+        if (distributionInRange.length > 0) {
+          this.distributionGenerator.update(distributionInRange, range);
+        } else {
+          this.distributionGenerator.hide();
+        }
+      } else if (this.currentDistribution) {
+        // Fallback to static distribution (for backwards compatibility)
+        // Create distribution points spanning visible range
+        const numPoints = 20;
         const step = (range[1] - range[0]) / (numPoints - 1);
         const distributionPoints = [];
 
@@ -291,9 +388,6 @@ export class ChartView {
 
         this.distributionGenerator.update(distributionPoints, range);
       } else {
-        console.warn(
-          "Distribution missing required percentile fields, hiding ribbon",
-        );
         this.distributionGenerator.hide();
       }
     }

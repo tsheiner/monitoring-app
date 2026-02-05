@@ -117,7 +117,7 @@ class MetricsStore:
             end: End timestamp
             
         Returns:
-            Dict with percentiles (p5, p25, p50, p75, p95), mean, stddev
+            Dict with percentiles (p1, p5, p10, p25, p50, p75, p90, p95, p99), mean, stddev
             None if no data in range
         """
         observations = self.query_range(metric, start, end)
@@ -128,15 +128,88 @@ class MetricsStore:
         values = np.array([obs["value"] for obs in observations])
         
         return {
+            "p1": float(np.percentile(values, 1)),
             "p5": float(np.percentile(values, 5)),
+            "p10": float(np.percentile(values, 10)),
             "p25": float(np.percentile(values, 25)),
             "p50": float(np.percentile(values, 50)),  # median
             "p75": float(np.percentile(values, 75)),
+            "p90": float(np.percentile(values, 90)),
             "p95": float(np.percentile(values, 95)),
+            "p99": float(np.percentile(values, 99)),
             "mean": float(np.mean(values)),
             "stddev": float(np.std(values)),
             "count": len(values)
         }
+    
+    def compute_distribution_series(
+        self,
+        metric: str,
+        start: int,
+        end: int,
+        bucket_size: int
+    ) -> List[Dict]:
+        """
+        Compute time-bucketed distribution series.
+        
+        Returns distributions computed over time windows, allowing
+        the distribution to vary across the time range.
+        
+        Args:
+            metric: Metric name
+            start: Start timestamp
+            end: End timestamp
+            bucket_size: Size of each bucket in seconds
+            
+        Returns:
+            List of dicts with 'timestamp' (bucket center) and 'distribution'
+        """
+        # Get all observations in range
+        observations = self.query_range(metric, start, end)
+        
+        if not observations:
+            return []
+        
+        # Group observations into buckets
+        buckets: Dict[int, List[float]] = {}
+        
+        for obs in observations:
+            # Determine which bucket this observation belongs to
+            bucket_start = (obs["timestamp"] // bucket_size) * bucket_size
+            bucket_center = bucket_start + bucket_size // 2
+            
+            if bucket_center not in buckets:
+                buckets[bucket_center] = []
+            
+            buckets[bucket_center].append(obs["value"])
+        
+        # Compute distribution for each bucket
+        result = []
+        for timestamp in sorted(buckets.keys()):
+            values = np.array(buckets[timestamp])
+            
+            if len(values) >= 2:  # Need at least 2 points for meaningful distribution
+                dist = {
+                    "p1": float(np.percentile(values, 1)),
+                    "p5": float(np.percentile(values, 5)),
+                    "p10": float(np.percentile(values, 10)),
+                    "p25": float(np.percentile(values, 25)),
+                    "p50": float(np.percentile(values, 50)),
+                    "p75": float(np.percentile(values, 75)),
+                    "p90": float(np.percentile(values, 90)),
+                    "p95": float(np.percentile(values, 95)),
+                    "p99": float(np.percentile(values, 99)),
+                    "mean": float(np.mean(values)),
+                    "stddev": float(np.std(values)),
+                    "count": len(values)
+                }
+                
+                result.append({
+                    "timestamp": timestamp,
+                    "distribution": dist
+                })
+        
+        return result
     
     def get_latest(self, metric: str, limit: int = 100) -> List[Dict]:
         """

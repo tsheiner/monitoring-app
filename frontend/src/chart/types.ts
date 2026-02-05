@@ -12,13 +12,22 @@ export interface Observation {
 }
 
 export interface Distribution {
+  p1: number;
   p5: number;
+  p10: number;
   p25: number;
   p50: number;
   p75: number;
+  p90: number;
   p95: number;
+  p99: number;
   mean: number;
   stddev: number;
+}
+
+export interface DistributionPoint {
+  timestamp: number;
+  distribution: Distribution;
 }
 
 export interface Event {
@@ -38,16 +47,16 @@ export interface ChartConfig {
   width: number;
   height: number;
   margin: { top: number; right: number; bottom: number; left: number };
-  
+
   // Data configuration
   metric: string;
-  timeRange: [number, number];  // Unix timestamps
-  
+  timeRange: [number, number]; // Unix timestamps
+
   // Features
   showDistribution: boolean;
   showEvents: boolean;
   liveMode: boolean;
-  
+
   // Visual configuration
   colors: {
     line: string;
@@ -64,22 +73,22 @@ export interface ChartConfig {
 export interface Generator {
   /** Set scales for rendering */
   setScales(xScale: any, yScale: any): void;
-  
+
   /** Update with new data */
   update(data: any, range: [number, number]): void;
-  
+
   /** Redraw without new data */
   redraw(range: [number, number]): void;
-  
+
   /** Show the generator */
   show(): void;
-  
+
   /** Hide the generator */
   hide(): void;
-  
+
   /** Resize the generator */
   resize(width: number, height: number): void;
-  
+
   /** Cleanup resources */
   destroy(): void;
 }
@@ -94,6 +103,7 @@ export interface MetricResponse {
   end: number;
   observations: Observation[];
   distribution: Distribution | null;
+  distribution_series?: DistributionPoint[];
 }
 
 export interface EventsResponse {
@@ -110,14 +120,14 @@ export interface EventsResponse {
 export type WebSocketMessage = MetricMessage | EventMessage;
 
 export interface MetricMessage {
-  type: 'metric';
+  type: "metric";
   timestamp: number;
   metric: string;
   value: number;
 }
 
 export interface EventMessage {
-  type: 'event';
+  type: "event";
   timestamp: number;
   event_type: string;
   severity?: string | null;

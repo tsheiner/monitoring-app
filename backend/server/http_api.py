@@ -74,7 +74,7 @@ async def query_metric(
         end: End timestamp
         
     Returns:
-        Observations and distribution statistics
+        Observations and time-bucketed distribution statistics
     """
     # Validate metric name
     if metric not in MetricsGenerator.get_all_metrics():
@@ -89,6 +89,22 @@ async def query_metric(
     observations = store.query_range(metric, start, end)
     distribution = store.compute_distribution(metric, start, end)
     
+    # Compute time-bucketed distributions
+    # Bucket size based on time range duration
+    duration = end - start
+    if duration <= 3600:  # <= 1 hour
+        bucket_size = 300  # 5 minutes
+    elif duration <= 14400:  # <= 4 hours
+        bucket_size = 900  # 15 minutes
+    elif duration <= 86400:  # <= 24 hours
+        bucket_size = 3600  # 1 hour
+    elif duration <= 259200:  # <= 3 days
+        bucket_size = 10800  # 3 hours
+    else:
+        bucket_size = 21600  # 6 hours
+    
+    distribution_series = store.compute_distribution_series(metric, start, end, bucket_size)
+    
     # Convert to response models
     obs_models = [
         MetricObservation(**obs) for obs in observations
@@ -96,12 +112,21 @@ async def query_metric(
     
     dist_model = Distribution(**distribution) if distribution else None
     
+    from .models import DistributionPoint
+    dist_series_models = [
+        DistributionPoint(
+            timestamp=dp["timestamp"],
+            distribution=Distribution(**dp["distribution"])
+        ) for dp in distribution_series
+    ] if distribution_series else None
+    
     return MetricResponse(
         metric=metric,
         start=start,
         end=end,
         observations=obs_models,
-        distribution=dist_model
+        distribution=dist_model,
+        distribution_series=dist_series_models
     )
 
 
