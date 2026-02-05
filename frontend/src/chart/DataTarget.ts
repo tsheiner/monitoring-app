@@ -104,7 +104,7 @@ export class DataTarget {
     const data = this.getInRange(start, end);
     if (data.length < 2) return null;
 
-    const values = data.map(d => d.value).sort((a, b) => a - b);
+    const values = data.map((d) => d.value).sort((a, b) => a - b);
     const percentile = (p: number) => {
       const index = (p / 100) * (values.length - 1);
       const lower = Math.floor(index);

@@ -111,7 +111,11 @@ export class ChartView {
     this.distributionSeries = distributionSeries || [];
 
     // If no distribution series provided but we have data, compute it
-    if (this.distributionSeries.length === 0 && observations.length > 0 && this.config.showDistribution) {
+    if (
+      this.distributionSeries.length === 0 &&
+      observations.length > 0 &&
+      this.config.showDistribution
+    ) {
       this.recomputeDistributionSeries();
     }
 
@@ -315,17 +319,20 @@ export class ChartView {
   private recomputeDistributionSeries(): void {
     const range = this.sharedRange.getRange();
     const duration = range[1] - range[0];
-    
+
     // Determine bucket size based on duration
     let bucketSize: number;
-    if (duration <= 3600) {  // <= 1 hour
-      bucketSize = 300;  // 5 minutes
-    } else if (duration <= 14400) {  // <= 4 hours
-      bucketSize = 900;  // 15 minutes
-    } else if (duration <= 86400) {  // <= 24 hours
-      bucketSize = 3600;  // 1 hour
+    if (duration <= 3600) {
+      // <= 1 hour
+      bucketSize = 300; // 5 minutes
+    } else if (duration <= 14400) {
+      // <= 4 hours
+      bucketSize = 900; // 15 minutes
+    } else if (duration <= 86400) {
+      // <= 24 hours
+      bucketSize = 3600; // 1 hour
     } else {
-      bucketSize = 10800;  // 3 hours
+      bucketSize = 10800; // 3 hours
     }
 
     // Compute distribution for each bucket
@@ -333,17 +340,26 @@ export class ChartView {
     for (let t = range[0]; t < range[1]; t += bucketSize) {
       const bucketEnd = Math.min(t + bucketSize, range[1]);
       const dist = this.dataTarget.computeDistributionInRange(t, bucketEnd);
-      
+
       if (dist) {
         newSeries.push({
-          timestamp: t + bucketSize / 2,  // Bucket center
+          timestamp: t + bucketSize / 2, // Bucket center
           distribution: dist,
         });
       }
     }
 
     if (newSeries.length > 0) {
-      this.distributionSeries = newSeries;
+      // Extend distribution to edges by adding points at range boundaries
+      // This ensures the distribution bands extend to the full time range
+      const firstDist = newSeries[0].distribution;
+      const lastDist = newSeries[newSeries.length - 1].distribution;
+      
+      this.distributionSeries = [
+        { timestamp: range[0], distribution: firstDist },
+        ...newSeries,
+        { timestamp: range[1], distribution: lastDist }
+      ];
     }
   }
 

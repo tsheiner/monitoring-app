@@ -74,10 +74,12 @@ export class ChartCore {
    * Update Y scale domain.
    */
   updateYDomain(domain: [number, number]): void {
-    // Add 10% padding to Y domain
+    // Start at 0 for positive metrics, use data min for negative (like coverage dBm)
+    // Add 10% padding only to the maximum
     const padding = (domain[1] - domain[0]) * 0.1;
+    const yMin = domain[0] >= 0 ? 0 : domain[0] - padding;
     this.yScale.domain([
-      domain[0] - padding,
+      yMin,
       domain[1] + padding
     ]);
     this.updateAxes();
