@@ -28,20 +28,35 @@ header {
   background: #2a2a2a;
   padding: 20px 30px;
   border-bottom: 2px solid #3a3a3a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 30px;
 }
 
 header h1 {
   font-size: 24px;
   font-weight: 600;
-  margin-bottom: 15px;
   color: #fff;
+  white-space: nowrap;
 }
 
-.controls {
+.header-controls {
   display: flex;
-  gap: 30px;
+  gap: 20px;
   align-items: center;
-  flex-wrap: wrap;
+}
+
+.header-right {
+  display: flex;
+  gap: 20px;
+  align-items: center;
 }
 
 .control-group {
@@ -86,9 +101,93 @@ input[type="checkbox"] {
 main {
   flex: 1;
   padding: 30px;
+}
+
+.main-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 20px;
+  height: 100%;
+}
+
+.sidebar-card {
+  background: #2a2a2a;
+  border-radius: 8px;
+  padding: 20px;
+  border: 1px solid #3a3a3a;
+  min-width: 200px;
+}
+
+.sidebar-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 15px;
+}
+
+#metrics-list,
+#events-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 8px;
+}
+
+.metric-toggle,
+.event-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #333;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.metric-toggle:hover,
+.event-toggle:hover {
+  background: #3a3a3a;
+  border-color: #555;
+}
+
+.event-toggle.active {
+  background: #3a3a3a;
+  border-color: #666;
+}
+
+.metric-indicator,
+.event-icon {
+  flex-shrink: 0;
+}
+
+.metric-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid;
+}
+
+.event-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+  transition: all 0.2s;
+}
+
+.metric-indicator.active {
+  /* Filled circle when active */
+}
+
+.event-icon.active {
+  /* Filled icon when active */
+}
+
+.metric-toggle span,
+.event-toggle span {
+  font-size: 14px;
+  color: #e0e0e0;
 }
 
 #chart-container {
@@ -96,6 +195,7 @@ main {
   border-radius: 8px;
   padding: 20px;
   border: 1px solid #3a3a3a;
+  min-width: 0; /* Allow flex shrink */
 }
 
 #chart {
@@ -125,20 +225,10 @@ main {
 
 /* Status Bar */
 
-#status {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  padding: 15px 20px;
-  background: #2a2a2a;
-  border-radius: 8px;
-  border: 1px solid #3a3a3a;
-  font-size: 14px;
-}
-
 .status-connected {
   color: #79E0CB;
   font-weight: 600;
+  font-size: 14px;
 }
 
 .status-connected::before {
@@ -149,6 +239,7 @@ main {
 .status-disconnected {
   color: #CC2200;
   font-weight: 600;
+  font-size: 14px;
 }
 
 .status-disconnected::before {
@@ -158,6 +249,7 @@ main {
 
 #data-stats {
   color: #b0b0b0;
+  font-size: 14px;
 }
 
 /* Event Tooltip */

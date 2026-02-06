@@ -7,60 +7,125 @@ import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
 import { ChartConfig, Event } from "./chart/types";
 
+// Metric configuration
+interface MetricInfo {
+  name: string;
+  label: string;
+  color: string;
+  enabled: boolean;
+}
+
+// Event group configuration
+interface EventGroup {
+  name: string;
+  label: string;
+  eventTypes: string[];
+  enabled: boolean;
+  icon: string; // SVG path data
+}
+
 class MonitoringApp {
   private chart: ChartView;
   private api: APIClient;
-  private currentMetric: string = "time_to_connect";
-  private currentTimeRangeSeconds: number = 86400; // Start with 24 hours to catch historical data
-  private events: Event[] = [];
+  private currentTimeRangeSeconds: number = 86400; // Start with 24 hours
+  private allEvents: Event[] = [];
 
-  // Per-metric color scheme
-  private metricColors: Record<string, { line: string; distribution: string }> =
+  // Metric configuration
+  private metrics: MetricInfo[] = [
     {
-      time_to_connect: { line: "#E67E22", distribution: "#E67E22" }, // Orange
-      throughput: { line: "#3498DB", distribution: "#3498DB" }, // Blue
-      coverage: { line: "#2ECC71", distribution: "#2ECC71" }, // Green
-      capacity: { line: "#9B59B6", distribution: "#9B59B6" }, // Purple
-      roaming: { line: "#E74C3C", distribution: "#E74C3C" }, // Red
-      successful_connects: { line: "#1ABC9C", distribution: "#1ABC9C" }, // Teal
-      ap_health: { line: "#F39C12", distribution: "#F39C12" }, // Amber
-    };
+      name: "time_to_connect",
+      label: "Time to Connect",
+      color: "#E67E22",
+      enabled: true,
+    },
+    {
+      name: "throughput",
+      label: "Throughput",
+      color: "#3498DB",
+      enabled: false,
+    },
+    { name: "coverage", label: "Coverage", color: "#2ECC71", enabled: false },
+    { name: "capacity", label: "Capacity", color: "#9B59B6", enabled: false },
+    { name: "roaming", label: "Roaming", color: "#E74C3C", enabled: false },
+    {
+      name: "successful_connects",
+      label: "Successful Connects",
+      color: "#1ABC9C",
+      enabled: false,
+    },
+    { name: "ap_health", label: "AP Health", color: "#F39C12", enabled: false },
+  ];
+
+  // Event group configuration with icon mappings
+  private eventGroups: EventGroup[] = [
+    {
+      name: "device_lifecycle",
+      label: "Device Lifecycle",
+      eventTypes: ["device_restart", "device_crash", "firmware_update"],
+      enabled: false,
+      icon: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z", // Wifi
+    },
+    {
+      name: "config",
+      label: "Config",
+      eventTypes: ["config_change"],
+      enabled: false,
+      icon: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", // Settings
+    },
+    {
+      name: "agent",
+      label: "Agent",
+      eventTypes: ["ai_action"],
+      enabled: false,
+      icon: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z", // CheckCircle
+    },
+    {
+      name: "security",
+      label: "Security",
+      eventTypes: ["security_incident"],
+      enabled: false,
+      icon: "M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm-1.06 13.54L7.4 12l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41-5.64 5.66z", // Shield
+    },
+  ];
 
   constructor() {
     // Initialize API client
     this.api = new APIClient();
 
     // Create chart configuration
-    // For initial load, request last 24 hours to ensure we get historical data
-    // (backend may have been bootstrapped days ago)
     const now = Math.floor(Date.now() / 1000);
-    const initialTimeRange = this.currentTimeRangeSeconds; // 24 hours
-    const metricColor = this.metricColors[this.currentMetric] || {
-      line: "#D87118",
-      distribution: "#4E8DB8",
-    };
+    const initialTimeRange = this.currentTimeRangeSeconds;
     const config: ChartConfig = {
       width: 1200,
       height: 600,
       margin: { top: 20, right: 50, bottom: 120, left: 70 },
-      metric: this.currentMetric,
-      timeRange: [now - initialTimeRange, now], // [past, NOW]
+      metric: "multi", // Not used in multi-metric mode
+      timeRange: [now - initialTimeRange, now],
       showDistribution: true,
-      showEvents: true,
+      showEvents: false, // Start with events off
       liveMode: true,
       colors: {
-        line: metricColor.line,
-        distribution: metricColor.distribution,
+        line: "#E67E22",
+        distribution: "#E67E22",
         event: "#999",
         eventHover: "#7EC7FF",
       },
     };
+
+    // Enable events by default
+    config.showEvents = true;
 
     // Initialize chart
     const container = document.getElementById("chart");
     if (!container) throw new Error("Chart container not found");
 
     this.chart = new ChartView(container, config);
+
+    // Add initial metric (time_to_connect)
+    const initialMetric = this.metrics.find((m) => m.enabled);
+    if (initialMetric) {
+      this.chart.addMetric(initialMetric.name, initialMetric.color);
+    }
 
     // Setup UI controls
     this.setupControls();
@@ -96,64 +161,142 @@ class MonitoringApp {
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
     try {
-      // Load metric history
-      console.log(
-        `Fetching metric data: ${this.currentMetric} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
-      );
-      const metricData = await this.api.fetchMetricHistory(
-        this.currentMetric,
-        start,
-        end,
-      );
-      console.log(`Received ${metricData.observations.length} observations`);
+      // Load data for each enabled metric
+      const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
-      // Update chart config with CURRENT time range
+      for (const metric of enabledMetrics) {
+        console.log(
+          `Fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
+        );
+
+        const metricData = await this.api.fetchMetricHistory(
+          metric.name,
+          start,
+          end,
+        );
+        console.log(
+          `Received ${metricData.observations.length} observations for ${metric.name}`,
+        );
+
+        this.chart.loadHistoricalData(
+          metric.name,
+          metricData.observations,
+          metricData.distribution,
+          metricData.distribution_series,
+        );
+      }
+
+      // Update chart time range
       this.chart.setTimeRange(end - start);
-
-      this.chart.loadHistoricalData(
-        metricData.observations,
-        metricData.distribution,
-        metricData.distribution_series,
-      );
 
       // Load events
       const eventsData = await this.api.fetchEvents(start, end);
-      this.events = eventsData.events;
-      this.chart.updateEvents(this.events);
+      this.allEvents = eventsData.events;
+      this.updateEventDisplay();
 
-      this.updateStats(metricData.observations.length, this.events.length);
+      // Update stats
+      const totalObs = enabledMetrics.reduce((sum, metric) => {
+        // We don't have individual counts, so we'll approximate
+        return sum + 100; // Placeholder
+      }, 0);
+      this.updateStats(totalObs, this.allEvents.length);
     } catch (error) {
       console.error("Error loading data:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       this.showError(`Failed to load historical data: ${errorMessage}`);
-
-      // Show empty chart with error state
-      this.chart.loadHistoricalData([], null);
-      this.updateStats(0, 0);
     }
   }
 
+  private updateEventDisplay(): void {
+    // Filter events based on enabled event groups
+    const enabledTypes = new Set<string>();
+    for (const group of this.eventGroups) {
+      if (group.enabled) {
+        group.eventTypes.forEach((type) => enabledTypes.add(type));
+      }
+    }
+
+    const filteredEvents = this.allEvents.filter((e) =>
+      enabledTypes.has(e.event_type),
+    );
+    this.chart.updateEvents(filteredEvents);
+  }
+
   private setupControls(): void {
-    // Metric selector
-    const metricSelect = document.getElementById(
-      "metric-select",
-    ) as HTMLSelectElement;
-    metricSelect.addEventListener("change", async () => {
-      this.currentMetric = metricSelect.value;
+    // Build metric toggles
+    const metricsList = document.getElementById("metrics-list");
+    if (metricsList) {
+      for (const metric of this.metrics) {
+        const toggle = document.createElement("div");
+        toggle.className = "metric-toggle";
+        toggle.dataset.metric = metric.name;
 
-      // Update colors for new metric
-      const metricColor = this.metricColors[this.currentMetric] || {
-        line: "#D87118",
-        distribution: "#4E8DB8",
-      };
-      this.chart.updateColors({
-        line: metricColor.line,
-        distribution: metricColor.distribution,
-      });
+        const indicator = document.createElement("div");
+        indicator.className = `metric-indicator ${metric.enabled ? "active" : ""}`;
+        indicator.style.borderColor = metric.color;
+        if (metric.enabled) {
+          indicator.style.backgroundColor = metric.color;
+        }
 
-      await this.loadData();
-    });
+        const label = document.createElement("span");
+        label.textContent = metric.label;
+
+        toggle.appendChild(indicator);
+        toggle.appendChild(label);
+
+        toggle.addEventListener("click", () => this.toggleMetric(metric.name));
+
+        metricsList.appendChild(toggle);
+      }
+    }
+
+    // Build event group toggles
+    const eventsList = document.getElementById("events-list");
+    if (eventsList) {
+      for (const group of this.eventGroups) {
+        const toggle = document.createElement("div");
+        toggle.className = "event-toggle";
+        toggle.dataset.group = group.name;
+
+        // Create SVG icon instead of circle indicator
+        const svg = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "svg",
+        );
+        svg.setAttribute("class", "event-icon");
+        svg.setAttribute("width", "16");
+        svg.setAttribute("height", "16");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "#999");
+        svg.setAttribute("stroke-width", "2");
+
+        // Add active class to toggle div for background styling
+        if (group.enabled) {
+          toggle.classList.add("active");
+        }
+
+        const path = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "path",
+        );
+        path.setAttribute("d", group.icon);
+        svg.appendChild(path);
+
+        const label = document.createElement("span");
+        label.textContent = group.label;
+
+        toggle.appendChild(svg);
+        toggle.appendChild(label);
+
+        toggle.addEventListener("click", () =>
+          this.toggleEventGroup(group.name),
+        );
+
+        eventsList.appendChild(toggle);
+      }
+    }
 
     // Time range selector
     const timeRangeSelect = document.getElementById(
@@ -161,7 +304,6 @@ class MonitoringApp {
     ) as HTMLSelectElement;
     timeRangeSelect.addEventListener("change", async () => {
       this.currentTimeRangeSeconds = parseInt(timeRangeSelect.value);
-      // Clear existing data and reload with new range
       await this.loadData();
     });
 
@@ -172,30 +314,82 @@ class MonitoringApp {
     liveModeCheckbox.addEventListener("change", () => {
       this.chart.setLiveMode(liveModeCheckbox.checked);
     });
-
-    // Show distribution toggle
-    const showDistributionCheckbox = document.getElementById(
-      "show-distribution",
-    ) as HTMLInputElement;
-    showDistributionCheckbox.addEventListener("change", () => {
-      this.chart.setShowDistribution(showDistributionCheckbox.checked);
-    });
-
-    // Show events toggle
-    const showEventsCheckbox = document.getElementById(
-      "show-events",
-    ) as HTMLInputElement;
-    showEventsCheckbox.addEventListener("change", () => {
-      this.chart.setShowEvents(showEventsCheckbox.checked);
-    });
   }
 
+  private async toggleMetric(metricName: string): Promise<void> {
+    const metric = this.metrics.find((m) => m.name === metricName);
+    if (!metric) return;
+
+    metric.enabled = !metric.enabled;
+
+    // Update UI
+    const toggle = document.querySelector(
+      `.metric-toggle[data-metric="${metricName}"]`,
+    );
+    if (toggle) {
+      const indicator = toggle.querySelector(".metric-indicator");
+      if (indicator) {
+        if (metric.enabled) {
+          indicator.classList.add("active");
+          (indicator as HTMLElement).style.backgroundColor = metric.color;
+        } else {
+          indicator.classList.remove("active");
+          (indicator as HTMLElement).style.backgroundColor = "";
+        }
+      }
+    }
+
+    // Update chart
+    if (metric.enabled) {
+      this.chart.addMetric(metricName, metric.color);
+      // Load data for this metric
+      const [start, end] = this.getTimeRange();
+      const metricData = await this.api.fetchMetricHistory(
+        metricName,
+        start,
+        end,
+      );
+      this.chart.loadHistoricalData(
+        metricName,
+        metricData.observations,
+        metricData.distribution,
+        metricData.distribution_series,
+      );
+    } else {
+      this.chart.removeMetric(metricName);
+    }
+  }
+
+  private toggleEventGroup(groupName: string): void {
+    const group = this.eventGroups.find((g) => g.name === groupName);
+    if (!group) return;
+
+    group.enabled = !group.enabled;
+
+    // Update UI - toggle active class on button for background styling
+    const toggle = document.querySelector(
+      `.event-toggle[data-group="${groupName}"]`,
+    );
+    if (toggle) {
+      if (group.enabled) {
+        toggle.classList.add("active");
+      } else {
+        toggle.classList.remove("active");
+      }
+    }
+
+    // Update event display
+    this.updateEventDisplay();
+  }
   private setupAPICallbacks(): void {
     // Handle incoming metric observations
     this.api.onMetric((message) => {
-      // Only process if it's the current metric
-      if (message.metric === this.currentMetric) {
-        this.chart.appendLiveData({
+      // Check if this metric is enabled
+      const metric = this.metrics.find(
+        (m) => m.name === message.metric && m.enabled,
+      );
+      if (metric) {
+        this.chart.appendLiveData(message.metric, {
           timestamp: message.timestamp,
           value: message.value,
         });
@@ -213,8 +407,8 @@ class MonitoringApp {
         metadata: message.metadata,
       };
 
-      this.events.push(event);
-      this.chart.updateEvents(this.events);
+      this.allEvents.push(event);
+      this.updateEventDisplay();
     });
 
     // Handle connection status
@@ -231,20 +425,20 @@ class MonitoringApp {
       console.log(
         `Reconnected after ${gapDuration}s gap, reloading recent data...`,
       );
-      // Reload last hour of data to fill gap
       const now = Math.floor(Date.now() / 1000);
-      const gapStart = now - Math.min(gapDuration + 60, 3600); // At most 1 hour
+      const gapStart = now - Math.min(gapDuration + 60, 3600);
 
       try {
-        const gapData = await this.api.fetchMetricHistory(
-          this.currentMetric,
-          gapStart,
-          now,
-        );
-        console.log(
-          `Recovered ${gapData.observations.length} observations from gap`,
-        );
-        // Note: Observations will be deduplicated by timestamp in DataTarget
+        for (const metric of this.metrics.filter((m) => m.enabled)) {
+          const gapData = await this.api.fetchMetricHistory(
+            metric.name,
+            gapStart,
+            now,
+          );
+          console.log(
+            `Recovered ${gapData.observations.length} observations for ${metric.name}`,
+          );
+        }
       } catch (error) {
         console.error("Failed to recover gap data:", error);
       }

@@ -9,16 +9,23 @@ import { Observation } from "./types";
 export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
   private path: d3.Selection<SVGPathElement, unknown, null, undefined>;
+  private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
   private data: Observation[] = [];
   private color: string;
+  private strokeWidth: number;
+  private markerRadius: number;
 
   constructor(
     parent: d3.Selection<SVGGElement, unknown, null, undefined>,
     color: string = "#4E8DB8",
+    strokeWidth: number = 2,
+    markerRadius: number = 5,
   ) {
     this.color = color;
+    this.strokeWidth = strokeWidth;
+    this.markerRadius = markerRadius;
 
     this.group = parent.append("g").attr("class", "line-generator");
 
@@ -27,7 +34,9 @@ export class LineGenerator implements Generator {
       .attr("class", "line")
       .attr("fill", "none")
       .attr("stroke", color)
-      .attr("stroke-width", 3);
+      .attr("stroke-width", strokeWidth);
+
+    this.markersGroup = this.group.append("g").attr("class", "markers");
   }
 
   setScales(xScale: any, yScale: any): void {
@@ -49,7 +58,6 @@ export class LineGenerator implements Generator {
     );
 
     // Create line generator with smooth interpolation
-    // curveMonotoneX preserves monotonicity and avoids overshoot for realistic traces
     const line = d3
       .line<Observation>()
       .x((d) => this.xScale(new Date(d.timestamp * 1000)))
@@ -58,6 +66,22 @@ export class LineGenerator implements Generator {
 
     // Update path
     this.path.datum(visibleData).attr("d", line);
+
+    // Update markers (circle at each data point)
+    const markers = this.markersGroup
+      .selectAll<SVGCircleElement, Observation>("circle")
+      .data(visibleData, (d) => d.timestamp.toString());
+
+    markers.exit().remove();
+
+    markers
+      .enter()
+      .append("circle")
+      .attr("r", this.markerRadius)
+      .attr("fill", this.color)
+      .merge(markers)
+      .attr("cx", (d) => this.xScale(new Date(d.timestamp * 1000)))
+      .attr("cy", (d) => this.yScale(d.value));
   }
 
   show(): void {
