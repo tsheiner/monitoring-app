@@ -99,9 +99,10 @@ class MonitoringApp {
 
     // Use actual container dimensions instead of hardcoded values
     const containerWidth = container.clientWidth || 900;
+    const containerHeight = container.clientHeight || 500;
     // Height needs to accommodate: chart area + top margin + bottom margin
-    // Bottom margin needs: x-axis (30px) + range text (20px) + brush (40px) + brush axis (30px) = 120px
-    const chartHeight = 500;
+    // Bottom margin needs: x-axis (30px) + range text (20px) + brush (20px) + brush axis (30px) = 100px
+    const chartHeight = Math.max(500, containerHeight);
 
     const now = Math.floor(Date.now() / 1000);
     const initialTimeRange = this.currentTimeRangeSeconds;
@@ -538,7 +539,7 @@ class MonitoringApp {
     if (!container) return;
 
     const width = container.clientWidth;
-    const height = 500; // Fixed height for prototype
+    const height = Math.max(500, container.clientHeight); // Minimum 500px
 
     this.chart.resize(width, height);
   }

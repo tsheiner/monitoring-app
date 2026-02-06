@@ -18,8 +18,10 @@ body {
 
 #app {
   min-height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Header */
@@ -101,13 +103,22 @@ input[type="checkbox"] {
 main {
   flex: 1;
   padding: 30px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main-grid {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 20px;
-  height: 100%;
+  flex: 1;
+  /* Allow grid to shrink with viewport */
+  min-height: 0;
+  /* Rows take available height, no fixed minimum */
+  grid-template-rows: 1fr;
+  overflow: hidden;
 }
 
 .sidebar-card {
@@ -116,6 +127,9 @@ main {
   padding: 20px;
   border: 1px solid #3a3a3a;
   min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .sidebar-card h3 {
@@ -130,6 +144,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
 }
 
 .metric-toggle,
@@ -197,7 +212,10 @@ main {
   border: 1px solid #3a3a3a;
   min-width: 0;
   /* Allow grid shrink */
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  height: 100%;
   /* Prevent chart from overflowing card */
 }
 
@@ -205,6 +223,8 @@ main {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 #chart svg {

@@ -92,7 +92,7 @@ export class ChartCore {
       .attr("font-size", "10px");
 
     // Create brush control for range selection
-    const brushHeight = 20;
+    const brushHeight = 20; // Fixed height, never changes
     const brushY = chartHeight + 60;
 
     this.brushGroup = this.chartGroup
@@ -418,7 +418,7 @@ export class ChartCore {
 
     // Reposition and resize brush
     const brushY = chartHeight + 60;
-    const brushHeight = 40;
+    const brushHeight = 20; // Always fixed at 20px
     this.brushGroup.attr("transform", `translate(0,${brushY})`);
     this.brushXScale.range([0, chartWidth]);
     this.brush.extent([
