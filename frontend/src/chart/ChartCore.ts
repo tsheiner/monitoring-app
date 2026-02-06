@@ -214,8 +214,31 @@ export class ChartCore {
     if (!event.sourceEvent || !event.selection || !this.onBrushCallback) return;
 
     const [x0, x1] = event.selection;
-    const start = Math.floor(this.brushXScale.invert(x0).getTime() / 1000);
-    const end = Math.floor(this.brushXScale.invert(x1).getTime() / 1000);
+    let start = Math.floor(this.brushXScale.invert(x0).getTime() / 1000);
+    let end = Math.floor(this.brushXScale.invert(x1).getTime() / 1000);
+
+    // Constrain to brush context range to prevent empty data queries
+    const [brushMin, brushMax] = this.fullTimeRange;
+    const originalStart = start;
+    const originalEnd = end;
+    
+    start = Math.max(start, brushMin);
+    end = Math.min(end, brushMax);
+    
+    // If constrained, update the visual brush position
+    if (start !== originalStart || end !== originalEnd) {
+      const constrainedX0 = this.brushXScale(new Date(start * 1000));
+      const constrainedX1 = this.brushXScale(new Date(end * 1000));
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush:constrained',message:'Brush constrained to data range',data:{originalStart,originalEnd,constrainedStart:start,constrainedEnd:end,brushMin,brushMax},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-constrained',hypothesisId:'H6'})}).catch(()=>{});
+      // #endregion
+      
+      this.updatingBrush = true;
+      d3.select(event.target).call(this.brush.move as any, [constrainedX0, constrainedX1]);
+      setTimeout(() => { this.updatingBrush = false; }, 50);
+      return;
+    }
 
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush',message:'User brush interaction',data:{eventType:event.type,sourceEventType:event.sourceEvent?.type,x0,x1,start,end,duration:end-start,fullRangeStart:this.fullTimeRange[0],fullRangeEnd:this.fullTimeRange[1],updatingBrushFlag:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H1'})}).catch(()=>{});
@@ -250,6 +273,13 @@ export class ChartCore {
       .tickFormat(d3.timeFormat("%b %d %H:%M"));
 
     this.brushAxis.call(brushAxisGenerator as any);
+  }
+
+  /**
+   * Get current full time range (for brush context).
+   */
+  getFullTimeRange(): [number, number] {
+    return [...this.fullTimeRange];
   }
 
   /**

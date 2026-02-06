@@ -261,31 +261,57 @@ export class ChartView {
     // Mark that we've loaded historical data
     this.hasLoadedData = true;
 
-    // Update brush context range
-    const allObservations = observations;
-    if (allObservations.length > 0) {
-      const minTime = allObservations[0].timestamp;
-      const maxTime = allObservations[allObservations.length - 1].timestamp;
-      const now = Math.floor(Date.now() / 1000);
+    // Update brush context range - compute global min/max across ALL metrics
+    // to prevent brush from shrinking when individual metrics are loaded
+    if (observations.length > 0) {
+      let globalMinTime = observations[0].timestamp;
+      let globalMaxTime = observations[observations.length - 1].timestamp;
 
+      // Check all metrics to find true global min/max
+      for (const [name, metricData] of this.metrics) {
+        const allObs = metricData.dataTarget.getAll();
+        if (allObs.length > 0) {
+          globalMinTime = Math.min(globalMinTime, allObs[0].timestamp);
+          globalMaxTime = Math.max(globalMaxTime, allObs[allObs.length - 1].timestamp);
+        }
+      }
+
+      const now = Math.floor(Date.now() / 1000);
       // Add buffer equal to requested duration for sliding
       const bufferDuration = this.durationSeconds;
-      const brushStart = minTime - bufferDuration;
-      const brushEnd = Math.max(maxTime, now);
+      
+      // Constrain brush to reasonable data boundaries:
+      // - Start: Earlier of (globalMinTime - buffer) or (90 days ago)
+      // - End: Later of (now) or (globalMaxTime)
+      const ninetyDaysAgo = now - (90 * 86400);
+      const brushStart = Math.max(ninetyDaysAgo, globalMinTime - bufferDuration);
+      const brushEnd = Math.max(globalMaxTime, now);
 
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext',message:'Updating brush context from loaded data',data:{metricName,obsCount:allObservations.length,minTime,maxTime,now,bufferDuration,brushStart,brushEnd,currentRange:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H1'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext',message:'Updating brush context from ALL metrics',data:{metricName,obsCount:observations.length,globalMinTime,globalMaxTime,now,bufferDuration,brushStart,brushEnd,currentRange:this.sharedRange.getRange(),metricsChecked:this.metrics.size,ninetyDaysAgo},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H1'})}).catch(()=>{});
       // #endregion
 
-      this.core.updateFullTimeRange([brushStart, brushEnd]);
+      // Only expand the brush context, never shrink it
+      const currentBrushRange = this.core.getFullTimeRange();
+      const expandedBrushStart = Math.min(currentBrushRange[0], brushStart);
+      const expandedBrushEnd = Math.max(currentBrushRange[1], brushEnd);
 
-      // Set brush selection to current range
-      const currentRange = this.sharedRange.getRange();
-      this.core.updateBrushSelection(currentRange);
+      this.core.updateFullTimeRange([expandedBrushStart, expandedBrushEnd]);
 
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:after',message:'Brush context and selection updated',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H4'})}).catch(()=>{});
-      // #endregion
+      // ONLY update brush selection if this is the initial load
+      // Don't update during user-initiated brush interactions to avoid fighting
+      if (!this.config.liveMode || this.metrics.size === 1) {
+        const currentRange = this.sharedRange.getRange();
+        this.core.updateBrushSelection(currentRange);
+
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:updated',message:'Brush selection updated (not in brush mode)',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange,liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
+        // #endregion
+      } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:skipped',message:'Skipping brush selection update (brush mode active)',data:{liveMode:this.config.liveMode,metricsSize:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
+        // #endregion
+      }
     }
 
     // Compute global Y domain across all visible metrics (normalized to 0-100)

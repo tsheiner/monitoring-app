@@ -99,6 +99,8 @@ class MonitoringApp {
 
     // Use actual container dimensions instead of hardcoded values
     const containerWidth = container.clientWidth || 900;
+    // Height needs to accommodate: chart area + top margin + bottom margin
+    // Bottom margin needs: x-axis (30px) + range text (20px) + brush (40px) + brush axis (30px) = 120px
     const chartHeight = 500;
 
     const now = Math.floor(Date.now() / 1000);
@@ -106,9 +108,9 @@ class MonitoringApp {
     const config: ChartConfig = {
       width: containerWidth,
       height: chartHeight,
-      // Brush is hidden via CSS, so bottom margin only needs space for
-      // the x-axis label + range text (~60px), not the full 120px.
-      margin: { top: 20, right: 50, bottom: 60, left: 70 },
+      // Bottom margin: 120px to accommodate x-axis labels, range text, brush (40px), and brush axis
+      // Even if brush is hidden via CSS, the space is pre-allocated in the SVG
+      margin: { top: 20, right: 50, bottom: 120, left: 70 },
       metric: "multi", // Not used in multi-metric mode
       timeRange: [now - initialTimeRange, now],
       showDistribution: true,

@@ -195,8 +195,10 @@ main {
   border-radius: 8px;
   padding: 20px;
   border: 1px solid #3a3a3a;
-  min-width: 0; /* Allow grid shrink */
-  overflow: hidden; /* Prevent chart from overflowing card */
+  min-width: 0;
+  /* Allow grid shrink */
+  overflow: hidden;
+  /* Prevent chart from overflowing card */
 }
 
 #chart {
@@ -282,9 +284,9 @@ main {
 
 /* Hide brush control */
 
-.brush-context {
+/* .brush-context {
   display: none !important;
-}
+} */
 
 /* Responsive */
 
@@ -292,19 +294,19 @@ main {
   header {
     padding: 15px 20px;
   }
-  
+
   header h1 {
     font-size: 20px;
   }
-  
+
   .controls {
     gap: 15px;
   }
-  
+
   main {
     padding: 20px;
   }
-  
+
   #chart {
     min-height: 400px;
   }
