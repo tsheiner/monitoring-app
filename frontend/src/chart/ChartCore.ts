@@ -217,6 +217,10 @@ export class ChartCore {
     const start = Math.floor(this.brushXScale.invert(x0).getTime() / 1000);
     const end = Math.floor(this.brushXScale.invert(x1).getTime() / 1000);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush',message:'User brush interaction',data:{eventType:event.type,sourceEventType:event.sourceEvent?.type,x0,x1,start,end,duration:end-start,fullRangeStart:this.fullTimeRange[0],fullRangeEnd:this.fullTimeRange[1],updatingBrushFlag:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+
     // Only trigger if range is meaningful (> 1 minute)
     if (end - start > 60) {
       console.log(
@@ -230,6 +234,10 @@ export class ChartCore {
    * Update full time range (for brush context).
    */
   updateFullTimeRange(range: [number, number]): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:updateFullTimeRange',message:'Updating brush context full range',data:{oldFullRange:[this.fullTimeRange[0],this.fullTimeRange[1]],newFullRange:[range[0],range[1]],delta:{start:range[0]-this.fullTimeRange[0],end:range[1]-this.fullTimeRange[1]}},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H5'})}).catch(()=>{});
+    // #endregion
+
     this.fullTimeRange = [...range];
     this.brushXScale.domain([
       new Date(range[0] * 1000),
@@ -251,14 +259,25 @@ export class ChartCore {
     const x0 = this.brushXScale(new Date(range[0] * 1000));
     const x1 = this.brushXScale(new Date(range[1] * 1000));
 
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:updateBrushSelection',message:'Programmatically updating brush',data:{rangeStart:range[0],rangeEnd:range[1],x0,x1,brushScaleDomain:[this.brushXScale.domain()[0].getTime()/1000,this.brushXScale.domain()[1].getTime()/1000],updatingBrushFlagBefore:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+
     // Set flag to prevent feedback loop
     this.updatingBrush = true;
 
     // Move brush without triggering callback
     this.brushGroup.select(".brush").call(this.brush.move as any, [x0, x1]);
 
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:updateBrushSelection:after',message:'Brush moved programmatically, setting timeout',data:{timeoutMs:50,updatingBrushFlag:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+
     // Clear flag after a short delay to ensure all events have settled
     setTimeout(() => {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:updateBrushSelection:timeout',message:'Timeout fired, clearing updatingBrush flag',data:{updatingBrushFlagBefore:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion
       this.updatingBrush = false;
     }, 50);
   }

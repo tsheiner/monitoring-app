@@ -29,6 +29,7 @@ class MonitoringApp {
   private api: APIClient;
   private currentTimeRangeSeconds: number = 86400; // Start with 24 hours
   private allEvents: Event[] = [];
+  private loadedRange: [number, number] = [0, 0]; // Track the actual data range
 
   // Metric configuration
   private metrics: MetricInfo[] = [
@@ -92,17 +93,26 @@ class MonitoringApp {
     // Initialize API client
     this.api = new APIClient();
 
-    // Create chart configuration
+    // Initialize chart - measure container for responsive sizing
+    const container = document.getElementById("chart");
+    if (!container) throw new Error("Chart container not found");
+
+    // Use actual container dimensions instead of hardcoded values
+    const containerWidth = container.clientWidth || 900;
+    const chartHeight = 500;
+
     const now = Math.floor(Date.now() / 1000);
     const initialTimeRange = this.currentTimeRangeSeconds;
     const config: ChartConfig = {
-      width: 1200,
-      height: 600,
-      margin: { top: 20, right: 50, bottom: 120, left: 70 },
+      width: containerWidth,
+      height: chartHeight,
+      // Brush is hidden via CSS, so bottom margin only needs space for
+      // the x-axis label + range text (~60px), not the full 120px.
+      margin: { top: 20, right: 50, bottom: 60, left: 70 },
       metric: "multi", // Not used in multi-metric mode
       timeRange: [now - initialTimeRange, now],
       showDistribution: true,
-      showEvents: false, // Start with events off
+      showEvents: true,
       liveMode: true,
       colors: {
         line: "#E67E22",
@@ -111,13 +121,6 @@ class MonitoringApp {
         eventHover: "#7EC7FF",
       },
     };
-
-    // Enable events by default
-    config.showEvents = true;
-
-    // Initialize chart
-    const container = document.getElementById("chart");
-    if (!container) throw new Error("Chart container not found");
 
     this.chart = new ChartView(container, config);
 
@@ -135,6 +138,9 @@ class MonitoringApp {
 
     // Register callback for brush range selection
     this.chart.onRangeSelected(async (range) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:onRangeSelected',message:'Brush triggered range change in main',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],currentTimeRangeSeconds:this.currentTimeRangeSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion
       await this.loadDataForRange(range[0], range[1]);
     });
 
@@ -161,14 +167,20 @@ class MonitoringApp {
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
     try {
-      // Load data for each enabled metric
+      const duration = end - start;
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
+
+      // 1. Fetch ALL data first. Old chart stays visible during the fetch,
+      //    preventing the "flash" (blank frame between clear and load).
+      const fetchedData: Array<{
+        metric: (typeof this.metrics)[0];
+        data: Awaited<ReturnType<typeof this.api.fetchMetricHistory>>;
+      }> = [];
 
       for (const metric of enabledMetrics) {
         console.log(
           `Fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
         );
-
         const metricData = await this.api.fetchMetricHistory(
           metric.name,
           start,
@@ -177,28 +189,40 @@ class MonitoringApp {
         console.log(
           `Received ${metricData.observations.length} observations for ${metric.name}`,
         );
+        fetchedData.push({ metric, data: metricData });
+      }
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange',message:'Data fetched, setting chart range',data:{start,end,duration,metricsCount:fetchedData.length,obsCountsPerMetric:fetchedData.map(f=>({metric:f.metric.name,obsCount:f.data.observations.length,distSeriesLen:(f.data.distribution_series||[]).length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix-v5',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+
+      // 2. Set chart range (clears old data) — synchronous, no repaint yet
+      this.chart.setTimeRange(duration, end);
+
+      // 3. Load fetched data — synchronous, same JS tick as step 2.
+      //    Browser won't repaint between clear and load, so no flash.
+      for (const { metric, data } of fetchedData) {
         this.chart.loadHistoricalData(
           metric.name,
-          metricData.observations,
-          metricData.distribution,
-          metricData.distribution_series,
+          data.observations,
+          data.distribution,
+          data.distribution_series,
         );
       }
 
-      // Update chart time range
-      this.chart.setTimeRange(end - start);
+      // Track the actual range used for this data load
+      this.loadedRange = [start, end];
 
-      // Load events
+      // Load events for the requested range
       const eventsData = await this.api.fetchEvents(start, end);
       this.allEvents = eventsData.events;
       this.updateEventDisplay();
 
       // Update stats
-      const totalObs = enabledMetrics.reduce((sum, metric) => {
-        // We don't have individual counts, so we'll approximate
-        return sum + 100; // Placeholder
-      }, 0);
+      const totalObs = fetchedData.reduce(
+        (sum, { data }) => sum + data.observations.length,
+        0,
+      );
       this.updateStats(totalObs, this.allEvents.length);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -221,6 +245,34 @@ class MonitoringApp {
       enabledTypes.has(e.event_type),
     );
     this.chart.updateEvents(filteredEvents);
+
+    // Update event counts in button labels
+    this.updateEventCounts();
+  }
+
+  private updateEventCounts(): void {
+    // Use the actual loaded data range, not a recomputed getTimeRange().
+    // getTimeRange() computes a fresh "now" which drifts from the range
+    // used to fetch events, causing off-by-one boundary mismatches.
+    const [start, end] = this.loadedRange;
+
+    // Count events per group within loaded time range
+    for (const group of this.eventGroups) {
+      const count = this.allEvents.filter(
+        (e) =>
+          group.eventTypes.includes(e.event_type) &&
+          e.timestamp >= start &&
+          e.timestamp <= end,
+      ).length;
+
+      // Update label in UI
+      const label = document.querySelector(
+        `.event-toggle[data-group="${group.name}"] span`,
+      );
+      if (label) {
+        label.textContent = `${group.label} ${count}`;
+      }
+    }
   }
 
   private setupControls(): void {
@@ -286,6 +338,7 @@ class MonitoringApp {
 
         const label = document.createElement("span");
         label.textContent = group.label;
+        label.dataset.group = group.name;
 
         toggle.appendChild(svg);
         toggle.appendChild(label);
@@ -321,6 +374,9 @@ class MonitoringApp {
     if (!metric) return;
 
     metric.enabled = !metric.enabled;
+    // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:toggleMetric',message:'Metric toggled',data:{metricName,enabled:metric.enabled,totalEnabled:this.metrics.filter(m=>m.enabled).length},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
 
     // Update UI
     const toggle = document.querySelector(
@@ -342,12 +398,13 @@ class MonitoringApp {
     // Update chart
     if (metric.enabled) {
       this.chart.addMetric(metricName, metric.color);
-      // Load data for this metric
-      const [start, end] = this.getTimeRange();
+      // Load data using the chart's current range (anchored to data),
+      // not getTimeRange() which always uses "now" and may overshoot.
+      const [rangeStart, rangeEnd] = this.chart.getTimeRange();
       const metricData = await this.api.fetchMetricHistory(
         metricName,
-        start,
-        end,
+        rangeStart,
+        rangeEnd,
       );
       this.chart.loadHistoricalData(
         metricName,

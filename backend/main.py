@@ -4,13 +4,12 @@ Main application entry point.
 Orchestrates:
 1. Historical data bootstrap
 2. WebSocket server for real-time streaming
-3. HTTP API server for queries
+3. HTTP API server for queries (same process for shared storage)
 4. Live metric/event generation
 """
 import asyncio
 import time
 import uvicorn
-from multiprocessing import Process
 
 from simulator.realistic_generator import get_generator
 from simulator.event_generator import get_event_generator
@@ -94,9 +93,10 @@ async def run_backend():
     Run the complete backend system.
     
     1. Bootstrap historical data
-    2. Start WebSocket server
-    3. Start metric streaming
-    4. Start event streaming
+    2. Start HTTP API server (in same process for shared storage)
+    3. Start WebSocket server
+    4. Start metric streaming
+    5. Start event streaming
     """
     print("\n" + "="*60)
     print("Network Monitoring Backend")
@@ -117,42 +117,36 @@ async def run_backend():
     # Bootstrap with 90 days of tiered historical data
     bootstrap_historical_data(days=90)
     
-    # Start WebSocket server
-    ws_server = get_websocket_server(host="0.0.0.0", port=8000)
-    await ws_server.start()
-    
-    # Start streaming loops
-    await asyncio.gather(
-        stream_metrics_loop(),
-        stream_events_loop()
-    )
-
-
-def run_http_api():
-    """Run FastAPI HTTP server in a separate process."""
-    uvicorn.run(
+    # Start HTTP API server in background task (same process!)
+    config = uvicorn.Config(
         app,
         host="0.0.0.0",
         port=8001,
         log_level="info"
     )
-
-
-if __name__ == "__main__":
-    # Start HTTP API in separate process
-    api_process = Process(target=run_http_api)
-    api_process.start()
+    server = uvicorn.Server(config)
     
     print("\n" + "="*60)
     print("FastAPI HTTP server starting on http://0.0.0.0:8001")
     print("API docs available at http://localhost:8001/docs")
     print("="*60 + "\n")
     
-    # Run WebSocket + streaming in main process
+    # Start WebSocket server
+    ws_server = get_websocket_server(host="0.0.0.0", port=8000)
+    await ws_server.start()
+    
+    # Start all services in parallel
+    await asyncio.gather(
+        server.serve(),  # HTTP API
+        stream_metrics_loop(),
+        stream_events_loop()
+    )
+
+
+if __name__ == "__main__":
+    # Run everything in single process so storage is shared
     try:
         asyncio.run(run_backend())
     except KeyboardInterrupt:
         print("\n\nShutting down...")
-        api_process.terminate()
-        api_process.join()
         print("Shutdown complete")

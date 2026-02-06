@@ -195,12 +195,19 @@ main {
   border-radius: 8px;
   padding: 20px;
   border: 1px solid #3a3a3a;
-  min-width: 0; /* Allow flex shrink */
+  min-width: 0; /* Allow grid shrink */
+  overflow: hidden; /* Prevent chart from overflowing card */
 }
 
 #chart {
   width: 100%;
-  min-height: 500px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+#chart svg {
+  display: block;
+  max-width: 100%;
 }
 
 /* Chart Styles (D3) */

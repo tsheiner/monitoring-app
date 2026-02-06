@@ -144,6 +144,9 @@ export class ChartView {
     this.metrics.delete(metricName);
 
     // If we're back to single metric, may need to recreate distribution
+    // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:removeMetric',message:'After removing metric, checking distribution recreation',data:{removedMetric:metricName,remainingCount:this.metrics.size,showDist:this.config.showDistribution,remainingMetrics:Array.from(this.metrics.keys()),remainingDistSeries:Array.from(this.metrics.values()).map(m=>({hasGen:!!m.distributionGenerator,seriesLen:m.distributionSeries.length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     if (this.metrics.size === 1 && this.config.showDistribution) {
       const [remainingMetric, remainingData] = Array.from(
         this.metrics.entries(),
@@ -195,7 +198,53 @@ export class ChartView {
 
     metricData.dataTarget.push(observations);
     metricData.currentDistribution = distribution;
-    metricData.distributionSeries = distributionSeries || [];
+
+    // Clamp distribution series to match the actual extent of the data.
+    // Left edge: clamp to range[0] (historical data typically starts at/before range).
+    // Right edge: clamp to the last observation's timestamp, NOT range[1].
+    // This prevents the ribbon from projecting flat through time gaps where
+    // no data exists (e.g., between historical data end and live "now").
+    const rawSeries = distributionSeries || [];
+    if (rawSeries.length > 0 && observations.length > 0) {
+      const range = this.sharedRange.getRange();
+      const duration = range[1] - range[0];
+      const buffer = duration * 0.05;
+
+      // Right edge = last observation timestamp (where actual data ends)
+      const lastObsTime = observations[observations.length - 1].timestamp;
+
+      // Keep points within generous buffer of visible range
+      const inRange = rawSeries.filter(
+        (dp) => dp.timestamp >= (range[0] - buffer) && dp.timestamp <= (lastObsTime + buffer),
+      );
+
+      if (inRange.length > 0) {
+        const padded: DistributionPoint[] = [];
+
+        // Always add left edge point at range[0]
+        padded.push({ timestamp: range[0], distribution: inRange[0].distribution });
+
+        // Add interior points
+        for (const dp of inRange) {
+          if (dp.timestamp > range[0] && dp.timestamp < lastObsTime) {
+            padded.push(dp);
+          }
+        }
+
+        // Add right edge point at last observation (not range[1])
+        padded.push({ timestamp: lastObsTime, distribution: inRange[inRange.length - 1].distribution });
+
+        metricData.distributionSeries = padded;
+      } else {
+        metricData.distributionSeries = rawSeries;
+      }
+    } else {
+      metricData.distributionSeries = rawSeries;
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData',message:'Data loaded for metric',data:{metricName,obsCount:observations.length,lastObsTs:observations.length>0?observations[observations.length-1].timestamp:null,distSeriesLen:metricData.distributionSeries.length,firstDistTs:metricData.distributionSeries[0]?.timestamp,lastDistTs:metricData.distributionSeries[metricData.distributionSeries.length-1]?.timestamp,currentRange:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix-v2',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
 
     // Calculate Y domain for this metric's raw data
     if (observations.length > 0) {
@@ -224,11 +273,19 @@ export class ChartView {
       const brushStart = minTime - bufferDuration;
       const brushEnd = Math.max(maxTime, now);
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext',message:'Updating brush context from loaded data',data:{metricName,obsCount:allObservations.length,minTime,maxTime,now,bufferDuration,brushStart,brushEnd,currentRange:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
+
       this.core.updateFullTimeRange([brushStart, brushEnd]);
 
       // Set brush selection to current range
       const currentRange = this.sharedRange.getRange();
       this.core.updateBrushSelection(currentRange);
+
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:after',message:'Brush context and selection updated',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion
     }
 
     // Compute global Y domain across all visible metrics (normalized to 0-100)
@@ -310,23 +367,55 @@ export class ChartView {
           const bufferDuration = this.durationSeconds;
           const brushStart = minTime - bufferDuration;
           const brushEnd = Math.max(maxTime, now);
+
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:appendLiveData:brushUpdate',message:'Updating brush context from live slide',data:{metricName,obsTs:observation.timestamp,now,currentRangeEnd:currentRange[1],newRangeStart:newRange[0],newRangeEnd:newRange[1],brushStart,brushEnd},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H5'})}).catch(()=>{});
+          // #endregion
+
           this.core.updateFullTimeRange([brushStart, brushEnd]);
         }
       }
+    } else {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:appendLiveData:notLiveMode',message:'Live data arrived but not in live mode',data:{metricName,obsTs:observation.timestamp,liveModeFlag:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion
     }
 
     // Update Y domain
     this.updateGlobalYDomain();
 
-    // Recompute distribution for single metric
+    // Slide the distribution left edge to track the sliding window.
+    // The right edge stays at the last meaningful data point (set by
+    // loadHistoricalData) - we don't force-extend it to "now" because
+    // that would project the distribution flat through data gaps.
+    // As new live data arrives, we extend the right edge to match.
     if (
       this.metrics.size === 1 &&
       this.config.showDistribution &&
-      this.config.liveMode
+      this.config.liveMode &&
+      metricData.distributionSeries.length >= 2
     ) {
-      const [name, data] = Array.from(this.metrics.entries())[0];
-      if (data === metricData) {
-        this.recomputeDistributionSeries(name);
+      const newRange = this.sharedRange.getRange();
+      const series = metricData.distributionSeries;
+
+      // Slide left edge to new range start
+      series[0] = { timestamp: newRange[0], distribution: series[0].distribution };
+
+      // Prune distribution points that fell off the left edge
+      while (series.length > 2 && series[1].timestamp < newRange[0]) {
+        series.splice(1, 1);
+        series[0] = { timestamp: newRange[0], distribution: series[1].distribution };
+      }
+
+      // Extend right edge to include the new live observation, using the
+      // last distribution values. This grows the ribbon incrementally as
+      // new data arrives.
+      const lastDistTs = series[series.length - 1].timestamp;
+      if (observation.timestamp > lastDistTs) {
+        series[series.length - 1] = {
+          timestamp: observation.timestamp,
+          distribution: series[series.length - 1].distribution,
+        };
       }
     }
 
@@ -345,18 +434,20 @@ export class ChartView {
 
   /**
    * Set time range (duration).
-   * This updates the chart to show [NOW - duration, NOW].
+   * This updates the chart to show [end - duration, end].
    * Called when user changes time range dropdown.
    */
-  setTimeRange(durationSeconds: number): void {
+  setTimeRange(durationSeconds: number, end: number): void {
     this.durationSeconds = durationSeconds;
-    const now = Math.floor(Date.now() / 1000);
 
-    // Set range to [now - duration, now]
-    this.chartStartTime = now - durationSeconds;
+    // Set range to [end - duration, end]
+    this.chartStartTime = end - durationSeconds;
 
     // Clear data for all metrics before changing range
     for (const [name, metricData] of this.metrics) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:setTimeRange:clearingData',message:'CLEARING data in setTimeRange',data:{metric:name,dataCountBeforeClear:metricData.dataTarget.count(),distSeriesLen:metricData.distributionSeries.length,durationSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       metricData.dataTarget.clear();
       metricData.distributionSeries = [];
       if (metricData.distributionGenerator) {
@@ -364,7 +455,7 @@ export class ChartView {
       }
     }
 
-    this.sharedRange.setRange([this.chartStartTime, now]);
+    this.sharedRange.setRange([this.chartStartTime, end]);
 
     // Update scales and render to ensure chart is not blank
     this.updateGlobalYDomain();
@@ -397,24 +488,23 @@ export class ChartView {
 
   /**
    * Toggle distribution display.
+   * FIX E: Updated to work with per-metric distribution generators.
    */
   setShowDistribution(enabled: boolean): void {
     this.config.showDistribution = enabled;
 
-    if (enabled && !this.distributionGenerator) {
-      this.distributionGenerator = new DistributionRibbonGenerator(
-        this.core.getChartGroup(),
-        this.config.colors.distribution,
-      );
-      this.distributionGenerator.setScales(
-        this.core.getXScale(),
-        this.core.getYScale(),
-      );
+    for (const [name, metricData] of this.metrics) {
+      if (metricData.distributionGenerator) {
+        if (enabled) {
+          metricData.distributionGenerator.show();
+        } else {
+          metricData.distributionGenerator.hide();
+        }
+      }
+    }
+
+    if (enabled) {
       this.render();
-    } else if (!enabled && this.distributionGenerator) {
-      this.distributionGenerator.hide();
-    } else if (enabled && this.distributionGenerator) {
-      this.distributionGenerator.show();
     }
   }
 
@@ -507,6 +597,9 @@ export class ChartView {
     // Render each metric
     for (const [metricName, metricData] of this.metrics) {
       const observations = metricData.dataTarget.getInRange(range[0], range[1]);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:render',message:'Rendering metric',data:{metricName,obsCount:observations.length,totalInBuffer:metricData.dataTarget.count(),metricsSize:this.metrics.size,rangeStart:range[0],rangeEnd:range[1],distSeriesLen:metricData.distributionSeries.length,hasDistGen:!!metricData.distributionGenerator,showDist:this.config.showDistribution,firstDistTs:metricData.distributionSeries[0]?.timestamp,lastDistTs:metricData.distributionSeries[metricData.distributionSeries.length-1]?.timestamp},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
@@ -524,21 +617,20 @@ export class ChartView {
         // Single metric: use actual values
         metricData.lineGenerator.update(observations, range);
 
+        // FIX C: Explicitly show distribution when in single-metric mode.
+        // It may have been hidden during a prior multi-metric render.
         // Render distribution for single metric
         if (metricData.distributionGenerator && this.config.showDistribution) {
-          if (metricData.distributionSeries.length > 0) {
-            const distributionInRange = metricData.distributionSeries.filter(
-              (dp) => dp.timestamp >= range[0] && dp.timestamp <= range[1],
-            );
+          metricData.distributionGenerator.show();
 
-            if (distributionInRange.length > 0) {
-              metricData.distributionGenerator.update(
-                distributionInRange,
-                range,
-              );
-            } else {
-              metricData.distributionGenerator.hide();
-            }
+          if (metricData.distributionSeries.length > 0) {
+            // Distribution series is already clamped to range edges by
+            // loadHistoricalData and kept in sync by appendLiveData.
+            // Pass it directly - no filtering needed.
+            metricData.distributionGenerator.update(
+              metricData.distributionSeries,
+              range,
+            );
           } else if (metricData.currentDistribution) {
             // Fallback: static distribution
             const numPoints = 20;
@@ -588,6 +680,10 @@ export class ChartView {
    * Handle brush selection for range zooming.
    */
   private handleBrushSelection(range: [number, number]): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection',message:'Brush selection received from user',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],liveModeBeforeDisable:this.config.liveMode,currentDurationSeconds:this.durationSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
+
     // Disable live mode when user zooms
     this.config.liveMode = false;
 
@@ -596,6 +692,10 @@ export class ChartView {
 
     // Update the shared range
     this.sharedRange.setRange(range);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:after',message:'Live mode disabled, calling callback',data:{liveModeAfter:this.config.liveMode,newDuration:this.durationSeconds,hasCallback:!!this.onRangeSelectedCallback},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
 
     // Notify that a new range was selected
     if (this.onRangeSelectedCallback) {

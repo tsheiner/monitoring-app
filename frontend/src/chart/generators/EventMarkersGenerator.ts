@@ -96,6 +96,15 @@ export class EventMarkersGenerator implements Generator {
       .attr("y1", 16)
       .attr("x2", 0);
 
+    // Add invisible larger hit area for better hover detection (2px padding)
+    enter
+      .append("path")
+      .attr("class", "hit-area")
+      .attr("fill", "transparent")
+      .attr("stroke", "none")
+      .attr("pointer-events", "all")
+      .attr("d", this.getHitAreaPath());
+
     // Add tear drop circle with slight point at bottom
     enter
       .append("path")
@@ -132,6 +141,9 @@ export class EventMarkersGenerator implements Generator {
     // Update tail heights to reach x-axis
     allMarkers.select("line.event-tail").attr("y2", this.height);
 
+    // Update hit area paths (need to recalculate when height changes)
+    allMarkers.select("path.hit-area").attr("d", this.getHitAreaPath());
+
     // Add hover behavior
     allMarkers
       .on("mouseenter", (event, d) => {
@@ -164,6 +176,29 @@ export class EventMarkersGenerator implements Generator {
 
     // Exit
     markerGroups.exit().remove();
+  }
+
+  /**
+   * Generate SVG path for larger hit area (tear drop + tail with 2px padding).
+   */
+  private getHitAreaPath(): string {
+    const radius = 14;
+    const pointExtension = 3;
+    const tailPadding = 2;
+
+    const path = `
+      M -${tailPadding},-${radius}
+      A ${radius},${radius} 0 0,1 ${radius},0
+      Q ${radius},${pointExtension} 0,${radius + pointExtension}
+      L 0,${this.height}
+      L ${tailPadding},${this.height}
+      L ${tailPadding},${radius + pointExtension}
+      Q ${radius + tailPadding},${pointExtension} ${radius + tailPadding},0
+      A ${radius + tailPadding},${radius + tailPadding} 0 0,0 -${tailPadding},-${radius}
+      Z
+    `;
+
+    return path.trim().replace(/\s+/g, " ");
   }
 
   /**
