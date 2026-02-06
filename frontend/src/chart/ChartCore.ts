@@ -92,7 +92,7 @@ export class ChartCore {
       .attr("font-size", "10px");
 
     // Create brush control for range selection
-    const brushHeight = 40;
+    const brushHeight = 20;
     const brushY = chartHeight + 60;
 
     this.brushGroup = this.chartGroup
@@ -168,9 +168,9 @@ export class ChartCore {
 
     brushSelection
       .selectAll(".selection")
-      .attr("fill", "#4a9eff")
+      .attr("fill", "#666")
       .attr("fill-opacity", 0.3)
-      .attr("stroke", "#4a9eff")
+      .attr("stroke", "#666")
       .attr("stroke-width", 2);
 
     // Initial axis render
