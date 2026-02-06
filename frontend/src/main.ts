@@ -27,7 +27,7 @@ interface EventGroup {
 class MonitoringApp {
   private chart: ChartView;
   private api: APIClient;
-  private currentTimeRangeSeconds: number = 86400; // Start with 24 hours
+  private currentTimeRangeSeconds: number = 3600; // Start with 1 hour
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
 

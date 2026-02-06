@@ -100,24 +100,49 @@ def bootstrap_historical_data(days: int = 90) -> Dict[str, int]:
     
     print(f"\n  Total stored: {total_observations} metric observations")
     
-    # Generate historical events
-    # Roughly 1 event per hour
+    # Generate historical events with randomized timing
+    # Uses Poisson process for natural event spacing
     print("  Generating historical events...")
     events = []
-    
-    num_events = days * 24  # 1 event per hour
-    event_interval = (days * 86400) // num_events
-    
-    for i in range(num_events):
-        event = event_generator.generate_event(
-            event_type=event_generator.EVENT_TYPES[i % len(event_generator.EVENT_TYPES)]
-        )
-        # Backdate the event
-        event["timestamp"] = now - (days * 86400) + (i * event_interval)
+
+    import random
+
+    # Event weights (some events are rarer than others)
+    event_weights = {
+        "device_restart": 0.15,
+        "device_crash": 0.05,  # Rare
+        "firmware_update": 0.10,
+        "config_change": 0.35,  # Common
+        "ai_action": 0.35,  # Common
+    }
+    event_types = list(event_weights.keys())
+    weights = list(event_weights.values())
+
+    # Average ~1 event per hour, but with random spacing
+    avg_interval_seconds = 3600  # 1 hour average
+    current_time = start_time
+
+    while current_time < now:
+        # Exponential distribution for inter-arrival times (Poisson process)
+        # This creates natural clustering - sometimes events come quickly,
+        # sometimes there are longer gaps
+        interval = random.expovariate(1.0 / avg_interval_seconds)
+        # Clamp to reasonable bounds (5 minutes to 4 hours)
+        interval = max(300, min(14400, interval))
+
+        current_time += int(interval)
+
+        if current_time >= now:
+            break
+
+        # Select event type based on weights
+        event_type = random.choices(event_types, weights=weights)[0]
+        event = event_generator.generate_event(event_type=event_type)
+        event["timestamp"] = current_time
         events.append(event)
-    
+
     events_store.insert_batch(events)
-    print(f"  Stored {len(events)} historical events\n")
+    print(f"  Stored {len(events)} historical events (randomized timing)\n")
 
     # Reset generator for live streaming while preserving noise state.
     # This ensures live data flows smoothly from where historical data ended.

@@ -80,7 +80,7 @@ async def stream_events_loop():
     event_generator.register_callback(sync_callback)
     
     # Schedule random events every 5 minutes
-    event_generator.schedule_random_events(interval_minutes=5)
+    event_generator.schedule_random_events(avg_interval_minutes=5)
     
     # Start scheduler
     event_generator.start()
