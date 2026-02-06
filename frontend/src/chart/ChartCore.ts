@@ -207,11 +207,25 @@ export class ChartCore {
    * Supports both sliding (move) and resizing (change duration).
    */
   private handleBrush(event: any): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush:entry',message:'Brush event received',data:{eventType:event.type,hasSourceEvent:!!event.sourceEvent,sourceEventType:event.sourceEvent?.type,hasSelection:!!event.selection,selectionValue:event.selection,hasCallback:!!this.onBrushCallback,updatingBrushFlag:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H9'})}).catch(()=>{});
+    // #endregion
+
     // Ignore if we're programmatically updating the brush
-    if (this.updatingBrush) return;
+    if (this.updatingBrush) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush:blocked',message:'Blocked: updatingBrush flag is true',data:{updatingBrushFlag:this.updatingBrush},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H9'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
 
     // Only act on user-initiated events (not programmatic)
-    if (!event.sourceEvent || !event.selection || !this.onBrushCallback) return;
+    if (!event.sourceEvent || !event.selection || !this.onBrushCallback) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:handleBrush:blocked',message:'Blocked: missing required conditions',data:{hasSourceEvent:!!event.sourceEvent,hasSelection:!!event.selection,hasCallback:!!this.onBrushCallback},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H9'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
 
     const [x0, x1] = event.selection;
     let start = Math.floor(this.brushXScale.invert(x0).getTime() / 1000);

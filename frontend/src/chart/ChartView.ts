@@ -298,18 +298,18 @@ export class ChartView {
 
       this.core.updateFullTimeRange([expandedBrushStart, expandedBrushEnd]);
 
-      // ONLY update brush selection if this is the initial load
-      // Don't update during user-initiated brush interactions to avoid fighting
-      if (!this.config.liveMode || this.metrics.size === 1) {
+      // ONLY update brush selection during initial load or when in live mode
+      // Skip updating during brush-initiated interactions to avoid fighting
+      if (this.config.liveMode) {
         const currentRange = this.sharedRange.getRange();
         this.core.updateBrushSelection(currentRange);
 
         // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:updated',message:'Brush selection updated (not in brush mode)',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange,liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:updated',message:'Brush selection updated (live mode)',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange,liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
         // #endregion
       } else {
         // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:skipped',message:'Skipping brush selection update (brush mode active)',data:{liveMode:this.config.liveMode,metricsSize:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:skipped',message:'Skipping brush selection update (user brushing)',data:{liveMode:this.config.liveMode,metricsSize:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
         // #endregion
       }
     }
@@ -551,12 +551,16 @@ export class ChartView {
    * Handle range change.
    */
   private onRangeChange(range: [number, number]): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:onRangeChange',message:'Range changed, updating X domain',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],hasLoadedData:this.hasLoadedData,liveMode:this.config.liveMode,currentDurationSeconds:this.durationSeconds,sharedRangeValue:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H8'})}).catch(()=>{});
+    // #endregion
+
     console.log(
       `Range changed: ${new Date(range[0] * 1000).toISOString()} to ${new Date(range[1] * 1000).toISOString()}`,
     );
     this.core.updateXDomain(range);
 
-    if (this.hasLoadedData) {
+    if (this.hasLoadedData && this.config.liveMode) {
       this.core.updateBrushSelection(range);
     }
 
@@ -683,23 +687,45 @@ export class ChartView {
    * Resize chart.
    */
   resize(width: number, height: number): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:resize',message:'Resizing chart',data:{oldWidth:this.config.width,oldHeight:this.config.height,newWidth:width,newHeight:height,metricsCount:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'resize-test',hypothesisId:'H10'})}).catch(()=>{});
+    // #endregion
+
     this.config.width = width;
     this.config.height = height;
 
     this.core.resize(width, height);
 
+    // Update scales for all generators after core resize
     for (const [name, metricData] of this.metrics) {
+      metricData.lineGenerator.setScales(
+        this.core.getXScale(),
+        this.core.getYScale()
+      );
       metricData.lineGenerator.resize(width, height);
+      
       if (metricData.distributionGenerator) {
+        metricData.distributionGenerator.setScales(
+          this.core.getXScale(),
+          this.core.getYScale()
+        );
         metricData.distributionGenerator.resize(width, height);
       }
     }
 
     if (this.eventMarkers) {
+      this.eventMarkers.setScales(
+        this.core.getXScale(),
+        this.core.getYScale()
+      );
       this.eventMarkers.resize(width, height);
     }
 
     this.render();
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:resize:complete',message:'Resize complete, rendered',data:{width,height},timestamp:Date.now(),sessionId:'debug-session',runId:'resize-test',hypothesisId:'H10'})}).catch(()=>{});
+    // #endregion
   }
 
   /**
@@ -711,6 +737,7 @@ export class ChartView {
     // #endregion
 
     // Disable live mode when user zooms
+    const wasLiveMode = this.config.liveMode;
     this.config.liveMode = false;
 
     // Update duration
@@ -720,12 +747,27 @@ export class ChartView {
     this.sharedRange.setRange(range);
 
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:after',message:'Live mode disabled, calling callback',data:{liveModeAfter:this.config.liveMode,newDuration:this.durationSeconds,hasCallback:!!this.onRangeSelectedCallback},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:after',message:'Live mode disabled, calling callback',data:{liveModeAfter:this.config.liveMode,newDuration:this.durationSeconds,hasCallback:!!this.onRangeSelectedCallback,wasLiveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
     // #endregion
 
     // Notify that a new range was selected
     if (this.onRangeSelectedCallback) {
       this.onRangeSelectedCallback(range);
+    }
+
+    // Auto-re-enable live mode after a brief delay (3 seconds)
+    // This allows user to brush without immediately returning to live mode
+    if (wasLiveMode) {
+      setTimeout(() => {
+        // Only re-enable if user hasn't manually disabled it via checkbox
+        const checkbox = document.getElementById('live-mode') as HTMLInputElement;
+        if (checkbox && checkbox.checked) {
+          this.config.liveMode = true;
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:autoReEnable',message:'Auto-re-enabled live mode after brush',data:{liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H7'})}).catch(()=>{});
+          // #endregion
+        }
+      }, 3000);
     }
   }
 
