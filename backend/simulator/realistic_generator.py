@@ -113,50 +113,62 @@ class RealisticMetricsGenerator:
     def _daily_pattern(self, timestamp: int, cfg: Dict) -> float:
         """
         Generate daily cycle with business hours emphasis.
-        
+
+        Uses fractional hours for smooth transitions instead of discrete jumps.
+
         Pattern:
         - Night (11pm-6am): baseline
-        - Morning surge (8-9am): ramp up
-        - Lunch dip (12-1pm): slight decrease
-        - Afternoon peak (1-4pm): maximum
-        - Evening decline (5-8pm): gradual drop
+        - Morning surge (6-9am): gradual ramp up
+        - Daytime plateau (9am-4pm): sustained activity with lunch dip
+        - Evening decline (4-8pm): gradual drop
+        - Late evening (8-11pm): low activity
         """
-        hour = (timestamp // 3600) % 24
-        
-        business_hours_cfg = self.config['time_patterns']['business_hours']
+        # Use fractional hour for smooth transitions
+        hour = (timestamp % 86400) / 3600.0
+
         peak_hour = cfg['peak_hour']
         impact = cfg['business_hours_impact']
         strength = cfg['daily_pattern_strength']
-        
-        # Business hours intensity curve
-        if 6 <= hour < 8:
-            # Early morning ramp
-            intensity = 0.2 + 0.3 * (hour - 6) / 2
-        elif 8 <= hour < 9:
-            # Morning surge
-            intensity = 0.5 + 0.3 * (hour - 8)
-        elif 9 <= hour < 12:
-            # Morning plateau
-            intensity = 0.8 + 0.1 * np.sin((hour - 9) * np.pi / 3)
-        elif 12 <= hour < 13:
-            # Lunch dip
-            intensity = 0.75
-        elif 13 <= hour < 16:
-            # Afternoon peak
-            intensity = 0.9 + 0.1 * np.exp(-((hour - peak_hour) ** 2) / 2)
-        elif 16 <= hour < 19:
-            # Evening decline
-            intensity = 0.8 - 0.5 * (hour - 16) / 3
-        elif 19 <= hour < 23:
-            # Late evening
-            intensity = 0.3 - 0.2 * (hour - 19) / 4
-        else:
-            # Night
+
+        # Smooth daily curve using sine-based interpolation
+        # This creates gradual transitions instead of discrete jumps
+        if hour < 6:
+            # Night (midnight to 6am): low baseline
             intensity = 0.1
-        
+        elif hour < 9:
+            # Morning ramp (6am to 9am): smooth rise
+            t = (hour - 6) / 3.0  # 0 to 1 over 3 hours
+            intensity = 0.1 + 0.7 * (0.5 - 0.5 * np.cos(np.pi * t))
+        elif hour < 12:
+            # Morning plateau (9am to noon): high with slight variation
+            t = (hour - 9) / 3.0
+            intensity = 0.8 + 0.05 * np.sin(np.pi * t)
+        elif hour < 13:
+            # Lunch dip (noon to 1pm): slight decrease
+            t = (hour - 12)
+            intensity = 0.85 - 0.1 * np.sin(np.pi * t)
+        elif hour < 16:
+            # Afternoon peak (1pm to 4pm): highest activity
+            t = (hour - 13) / 3.0
+            base = 0.85 + 0.15 * np.sin(np.pi * t)
+            # Peak around configured peak_hour
+            peak_factor = np.exp(-((hour - peak_hour) ** 2) / 2)
+            intensity = base + 0.05 * peak_factor
+        elif hour < 19:
+            # Evening decline (4pm to 7pm): smooth drop
+            t = (hour - 16) / 3.0  # 0 to 1 over 3 hours
+            intensity = 0.85 - 0.55 * (0.5 - 0.5 * np.cos(np.pi * t))
+        elif hour < 23:
+            # Late evening (7pm to 11pm): gradual fade to night
+            t = (hour - 19) / 4.0  # 0 to 1 over 4 hours
+            intensity = 0.3 - 0.2 * t
+        else:
+            # Late night (11pm to midnight): low
+            intensity = 0.1
+
         # Convert intensity to multiplier effect
         component = (impact - 1.0) * intensity * strength
-        
+
         return component
     
     def _hourly_pattern(self, timestamp: int, cfg: Dict) -> float:
@@ -282,3 +294,27 @@ def reset_generator() -> None:
     """Reset the singleton instance (useful after bootstrap)."""
     global _generator_instance
     _generator_instance = None
+
+
+def reset_for_live_streaming() -> None:
+    """
+    Reset generator for live streaming while preserving noise state.
+
+    After bootstrap, the generator has start_time from days ago.
+    This resets start_time to now while keeping the noise state
+    so live data flows smoothly from historical data.
+    """
+    global _generator_instance
+    if _generator_instance is not None:
+        # Preserve the noise state for continuity
+        preserved_noise = _generator_instance.noise_state.copy()
+        preserved_capacity = _generator_instance.capacity_state
+        preserved_health = _generator_instance.health_state
+
+        # Create new instance starting from now
+        _generator_instance = RealisticMetricsGenerator(start_time=int(time.time()))
+
+        # Restore the noise state
+        _generator_instance.noise_state = preserved_noise
+        _generator_instance.capacity_state = preserved_capacity
+        _generator_instance.health_state = preserved_health

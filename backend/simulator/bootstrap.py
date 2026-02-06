@@ -17,7 +17,7 @@ Aggregation tiers:
 import time
 from typing import Dict, List
 
-from simulator.realistic_generator import get_generator, reset_generator
+from simulator.realistic_generator import get_generator, reset_for_live_streaming
 from simulator.event_generator import get_event_generator
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
@@ -48,54 +48,55 @@ def bootstrap_historical_data(days: int = 90) -> Dict[str, int]:
     print("  12-hour: 30-90 days\n")
     
     now = int(time.time())
-    metrics_generator = get_generator(start_time=now - (days * 86400))
+    start_time = now - (days * 86400)
+    metrics_generator = get_generator(start_time=start_time)
     event_generator = get_event_generator()
     metrics_store = get_metrics_store()
     events_store = get_events_store()
-    
-    # Define time tiers (working backwards from now)
+
+    # Define time tiers in CHRONOLOGICAL order (oldest to newest)
+    # This ensures noise state flows naturally through time
     tiers = [
+        {"name": "12-hour", "duration": 5184000, "interval": 43200},     # 30-90 days ago
+        {"name": "6-hour", "duration": 1987200, "interval": 21600},      # 7-30 days ago
+        {"name": "1-hour", "duration": 518400, "interval": 3600},        # 1-7 days ago
+        {"name": "15-min", "duration": 72000, "interval": 900},          # 4-24 hrs ago
+        {"name": "5-min", "duration": 10800, "interval": 300},           # 1-4 hrs ago
+        {"name": "1-min", "duration": 3540, "interval": 60},             # 1 min - 1 hr ago
         {"name": "Raw (10s)", "duration": 60, "interval": 10},           # Last 1 min
-        {"name": "1-min", "duration": 3540, "interval": 60},             # 1 min - 1 hr
-        {"name": "5-min", "duration": 10800, "interval": 300},           # 1-4 hrs
-        {"name": "15-min", "duration": 72000, "interval": 900},          # 4-24 hrs
-        {"name": "1-hour", "duration": 518400, "interval": 3600},        # 1-7 days
-        {"name": "6-hour", "duration": 1987200, "interval": 21600},      # 7-30 days
-        {"name": "12-hour", "duration": 5184000, "interval": 43200},     # 30-90 days
     ]
-    
-    # Generate tiered metrics
+
+    # Generate ALL metrics together in chronological order
+    # This ensures consistent correlations and smooth noise across metrics
     all_metrics = metrics_generator.get_all_metrics()
     total_observations = 0
-    
-    for metric in all_metrics:
-        print(f"  Generating {metric}...")
-        observations = []
-        
-        # Calculate tier boundaries
-        tier_end = now
-        
-        for tier in tiers:
-            tier_start = tier_end - tier["duration"]
-            
-            # Generate observations for this tier
-            num_points = tier["duration"] // tier["interval"]
-            
-            for i in range(num_points):
-                timestamp = tier_start + (i * tier["interval"])
-                
-                # Generate value at this timestamp
-                # For aggregated tiers, use single sample (prototype simplification)
+    observations_by_metric = {m: [] for m in all_metrics}
+
+    # Calculate tier boundaries (working forward from start)
+    tier_start = start_time
+
+    for tier in tiers:
+        tier_end = tier_start + tier["duration"]
+        num_points = tier["duration"] // tier["interval"]
+
+        print(f"  Generating {tier['name']}: {num_points} points per metric...")
+
+        # Generate all timestamps for this tier
+        for i in range(num_points):
+            timestamp = tier_start + (i * tier["interval"])
+
+            # Generate ALL metrics at this timestamp (maintains correlations)
+            for metric in all_metrics:
                 obs = metrics_generator.generate_observation(metric, timestamp)
-                observations.append(obs)
-            
-            tier_end = tier_start
-            
-            print(f"    {tier['name']}: {num_points} points")
-        
-        # Store all observations for this metric
-        metrics_store.insert_batch(observations)
-        total_observations += len(observations)
+                observations_by_metric[metric].append(obs)
+
+        tier_start = tier_end
+
+    # Store observations
+    for metric in all_metrics:
+        metrics_store.insert_batch(observations_by_metric[metric])
+        total_observations += len(observations_by_metric[metric])
+        print(f"    {metric}: {len(observations_by_metric[metric])} observations")
     
     print(f"\n  Total stored: {total_observations} metric observations")
     
@@ -117,10 +118,11 @@ def bootstrap_historical_data(days: int = 90) -> Dict[str, int]:
     
     events_store.insert_batch(events)
     print(f"  Stored {len(events)} historical events\n")
-    
-    # Reset generator so live streaming starts from current time
-    reset_generator()
-    
+
+    # Reset generator for live streaming while preserving noise state.
+    # This ensures live data flows smoothly from where historical data ended.
+    reset_for_live_streaming()
+
     return {
         "observations": total_observations,
         "events": len(events),
