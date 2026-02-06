@@ -1,0 +1,149 @@
+{
+  "generator_settings": {
+    "description": "Realistic WiFi network monitoring data generation parameters",
+    "data_quality": "research_based",
+    "target_realism": "enterprise_wifi_network"
+  },
+
+  "time_to_connect": {
+    "description": "Connection establishment latency in milliseconds",
+    "baseline": 35,
+    "min": 15,
+    "max": 200,
+    "smoothness": 0.97,
+    "business_hours_impact": 1.5,
+    "daily_pattern_strength": 0.4,
+    "weekly_pattern_strength": 0.25,
+    "peak_hour": 14,
+    "weekend_reduction": 0.6,
+    "capacity_sensitivity": 0.25,
+    "health_sensitivity": 0.2,
+    "typical_variance_pct": 3
+  },
+
+  "throughput": {
+    "description": "Network throughput in Mbps (WiFi 6 capable)",
+    "baseline": 480,
+    "min": 150,
+    "max": 850,
+    "smoothness": 0.97,
+    "business_hours_impact": 0.9,
+    "daily_pattern_strength": 0.35,
+    "weekly_pattern_strength": 0.2,
+    "peak_hour": 14,
+    "weekend_reduction": 0.7,
+    "capacity_sensitivity": -0.2,
+    "health_sensitivity": 0.15,
+    "typical_variance_pct": 2.5
+  },
+
+  "coverage": {
+    "description": "Signal strength in dBm (more negative = weaker)",
+    "baseline": -55,
+    "min": -75,
+    "max": -35,
+    "smoothness": 0.98,
+    "business_hours_impact": 0.995,
+    "daily_pattern_strength": 0.05,
+    "weekly_pattern_strength": 0.02,
+    "peak_hour": 14,
+    "weekend_reduction": 0.99,
+    "capacity_sensitivity": -0.02,
+    "health_sensitivity": 0.05,
+    "typical_variance_pct": 1
+  },
+
+  "capacity": {
+    "description": "Network capacity utilization percentage",
+    "baseline": 42,
+    "min": 12,
+    "max": 78,
+    "smoothness": 0.96,
+    "business_hours_impact": 1.5,
+    "daily_pattern_strength": 0.45,
+    "weekly_pattern_strength": 0.3,
+    "peak_hour": 14,
+    "weekend_reduction": 0.45,
+    "capacity_sensitivity": 0,
+    "health_sensitivity": -0.05,
+    "typical_variance_pct": 3
+  },
+
+  "roaming": {
+    "description": "Roaming handoff time in milliseconds",
+    "baseline": 55,
+    "min": 25,
+    "max": 150,
+    "smoothness": 0.96,
+    "business_hours_impact": 1.2,
+    "daily_pattern_strength": 0.25,
+    "weekly_pattern_strength": 0.15,
+    "peak_hour": 14,
+    "weekend_reduction": 0.65,
+    "capacity_sensitivity": 0.15,
+    "health_sensitivity": 0.2,
+    "typical_variance_pct": 4
+  },
+
+  "successful_connects": {
+    "description": "Connection success rate percentage",
+    "baseline": 98.2,
+    "min": 94,
+    "max": 99.8,
+    "smoothness": 0.98,
+    "business_hours_impact": 0.99,
+    "daily_pattern_strength": 0.12,
+    "weekly_pattern_strength": 0.06,
+    "peak_hour": 14,
+    "weekend_reduction": 0.98,
+    "capacity_sensitivity": -0.08,
+    "health_sensitivity": 0.25,
+    "typical_variance_pct": 0.3
+  },
+
+  "ap_health": {
+    "description": "Access point health score",
+    "baseline": 92,
+    "min": 72,
+    "max": 99,
+    "smoothness": 0.98,
+    "business_hours_impact": 0.97,
+    "daily_pattern_strength": 0.2,
+    "weekly_pattern_strength": 0.1,
+    "peak_hour": 14,
+    "weekend_reduction": 1.01,
+    "capacity_sensitivity": -0.1,
+    "health_sensitivity": 0,
+    "typical_variance_pct": 1
+  },
+
+  "time_patterns": {
+    "business_hours": {
+      "start": 8,
+      "end": 18,
+      "morning_surge_hour": 9,
+      "lunch_dip_hour": 12,
+      "afternoon_peak_hour": 14,
+      "evening_decline_hour": 17
+    },
+    "hourly_cycles": {
+      "enabled": false,
+      "period_minutes": 60,
+      "amplitude": 0.02
+    },
+    "weekly_cycles": {
+      "enabled": true,
+      "weekday_pattern": [0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 0.75],
+      "description": "Sunday through Saturday multipliers"
+    }
+  },
+
+  "correlation_matrix": {
+    "description": "How metrics influence each other",
+    "capacity_degrades_at": 80,
+    "health_degrades_at": 75,
+    "capacity_on_latency": 0.8,
+    "capacity_on_throughput": -0.7,
+    "health_on_all": 0.6
+  }
+}

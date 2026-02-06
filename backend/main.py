@@ -11,7 +11,7 @@ import asyncio
 import time
 import uvicorn
 
-from simulator.realistic_generator import get_generator
+from simulator.realistic_generator import get_generator, NETWORK_PROFILES
 from simulator.event_generator import get_event_generator
 from simulator.bootstrap import bootstrap_historical_data
 from storage.metrics_store import get_metrics_store
@@ -98,10 +98,18 @@ async def run_backend():
     4. Start metric streaming
     5. Start event streaming
     """
+    import os
+
     print("\n" + "="*60)
     print("Network Monitoring Backend")
-    print("="*60 + "\n")
-    
+    print("="*60)
+
+    # Show available profiles
+    current_profile = os.environ.get("NETWORK_PROFILE", "enterprise").lower()
+    print(f"\nAvailable network profiles: {', '.join(NETWORK_PROFILES.keys())}")
+    print(f"Current profile: {current_profile}")
+    print("(Set NETWORK_PROFILE env var to switch, e.g.: NETWORK_PROFILE=hospital python main.py)\n")
+
     # Clear and regenerate historical data on each startup
     # This ensures timestamps are always current for the prototype
     print("Clearing existing data...")

@@ -1,0 +1,149 @@
+{
+  "generator_settings": {
+    "description": "Hospital/24x7 facility - always active, critical infrastructure, high reliability",
+    "data_quality": "research_based",
+    "target_realism": "hospital_24x7"
+  },
+
+  "time_to_connect": {
+    "description": "Connection establishment latency in milliseconds - must be reliable",
+    "baseline": 28,
+    "min": 10,
+    "max": 120,
+    "smoothness": 0.98,
+    "business_hours_impact": 1.2,
+    "daily_pattern_strength": 0.2,
+    "weekly_pattern_strength": 0.08,
+    "peak_hour": 10,
+    "weekend_reduction": 0.92,
+    "capacity_sensitivity": 0.2,
+    "health_sensitivity": 0.15,
+    "typical_variance_pct": 2
+  },
+
+  "throughput": {
+    "description": "Network throughput in Mbps (WiFi 6 capable) - consistent performance needed",
+    "baseline": 520,
+    "min": 200,
+    "max": 900,
+    "smoothness": 0.98,
+    "business_hours_impact": 0.94,
+    "daily_pattern_strength": 0.2,
+    "weekly_pattern_strength": 0.08,
+    "peak_hour": 10,
+    "weekend_reduction": 0.95,
+    "capacity_sensitivity": -0.15,
+    "health_sensitivity": 0.12,
+    "typical_variance_pct": 2
+  },
+
+  "coverage": {
+    "description": "Signal strength in dBm - well-designed hospital coverage",
+    "baseline": -52,
+    "min": -70,
+    "max": -32,
+    "smoothness": 0.99,
+    "business_hours_impact": 0.998,
+    "daily_pattern_strength": 0.03,
+    "weekly_pattern_strength": 0.01,
+    "peak_hour": 10,
+    "weekend_reduction": 0.995,
+    "capacity_sensitivity": -0.01,
+    "health_sensitivity": 0.03,
+    "typical_variance_pct": 0.8
+  },
+
+  "capacity": {
+    "description": "Network capacity utilization percentage - 24/7 baseline load",
+    "baseline": 38,
+    "min": 20,
+    "max": 70,
+    "smoothness": 0.97,
+    "business_hours_impact": 1.25,
+    "daily_pattern_strength": 0.25,
+    "weekly_pattern_strength": 0.1,
+    "peak_hour": 10,
+    "weekend_reduction": 0.88,
+    "capacity_sensitivity": 0,
+    "health_sensitivity": -0.04,
+    "typical_variance_pct": 2.5
+  },
+
+  "roaming": {
+    "description": "Roaming handoff time in milliseconds - optimized for mobile carts/devices",
+    "baseline": 42,
+    "min": 20,
+    "max": 100,
+    "smoothness": 0.97,
+    "business_hours_impact": 1.15,
+    "daily_pattern_strength": 0.18,
+    "weekly_pattern_strength": 0.08,
+    "peak_hour": 10,
+    "weekend_reduction": 0.9,
+    "capacity_sensitivity": 0.1,
+    "health_sensitivity": 0.15,
+    "typical_variance_pct": 3
+  },
+
+  "successful_connects": {
+    "description": "Connection success rate percentage - critical for medical devices",
+    "baseline": 99.2,
+    "min": 96,
+    "max": 99.95,
+    "smoothness": 0.99,
+    "business_hours_impact": 0.998,
+    "daily_pattern_strength": 0.06,
+    "weekly_pattern_strength": 0.03,
+    "peak_hour": 10,
+    "weekend_reduction": 0.995,
+    "capacity_sensitivity": -0.05,
+    "health_sensitivity": 0.2,
+    "typical_variance_pct": 0.2
+  },
+
+  "ap_health": {
+    "description": "Access point health score - well-maintained infrastructure",
+    "baseline": 96,
+    "min": 80,
+    "max": 100,
+    "smoothness": 0.99,
+    "business_hours_impact": 0.99,
+    "daily_pattern_strength": 0.1,
+    "weekly_pattern_strength": 0.05,
+    "peak_hour": 10,
+    "weekend_reduction": 1.005,
+    "capacity_sensitivity": -0.08,
+    "health_sensitivity": 0,
+    "typical_variance_pct": 0.8
+  },
+
+  "time_patterns": {
+    "business_hours": {
+      "start": 6,
+      "end": 20,
+      "morning_surge_hour": 7,
+      "lunch_dip_hour": 12,
+      "afternoon_peak_hour": 10,
+      "evening_decline_hour": 19
+    },
+    "hourly_cycles": {
+      "enabled": false,
+      "period_minutes": 60,
+      "amplitude": 0.02
+    },
+    "weekly_cycles": {
+      "enabled": true,
+      "weekday_pattern": [0.88, 1.0, 1.0, 1.0, 1.0, 1.0, 0.9],
+      "description": "Sunday through Saturday - minimal weekend reduction, 24/7 operation"
+    }
+  },
+
+  "correlation_matrix": {
+    "description": "How metrics influence each other - tighter tolerances",
+    "capacity_degrades_at": 65,
+    "health_degrades_at": 80,
+    "capacity_on_latency": 0.6,
+    "capacity_on_throughput": -0.5,
+    "health_on_all": 0.5
+  }
+}

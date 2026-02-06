@@ -6,32 +6,71 @@ Generates WiFi network metrics with:
 - Autocorrelated noise for smoothness
 - Metric correlations and cascading effects
 - Time-varying distributions
+
+Network profiles (set via NETWORK_PROFILE environment variable):
+- enterprise: Standard office environment (default)
+- campus: University with class schedules and dorm usage
+- hospital: 24/7 facility with high reliability requirements
 """
 import json
+import os
 import time
 from pathlib import Path
 from typing import Dict, List
 import numpy as np
 
+# Available network profiles
+NETWORK_PROFILES = {
+    "enterprise": "config_enterprise.json",
+    "campus": "config_campus.json",
+    "hospital": "config_hospital.json",
+}
+DEFAULT_PROFILE = "enterprise"
+
+
+def get_config_path() -> Path:
+    """
+    Get config file path based on NETWORK_PROFILE environment variable.
+
+    Set NETWORK_PROFILE to: enterprise, campus, or hospital
+    Defaults to enterprise if not set or invalid.
+    """
+    profile = os.environ.get("NETWORK_PROFILE", DEFAULT_PROFILE).lower()
+
+    if profile not in NETWORK_PROFILES:
+        print(f"Warning: Unknown NETWORK_PROFILE '{profile}', using '{DEFAULT_PROFILE}'")
+        profile = DEFAULT_PROFILE
+
+    config_file = NETWORK_PROFILES[profile]
+    config_path = Path(__file__).parent / config_file
+
+    # Fall back to default config.json if profile file doesn't exist
+    if not config_path.exists():
+        print(f"Warning: Config file {config_file} not found, using config.json")
+        config_path = Path(__file__).parent / "config.json"
+
+    print(f"Using network profile: {profile} ({config_path.name})")
+    return config_path
+
 
 class RealisticMetricsGenerator:
     """Generate realistic network metrics with proper time series characteristics."""
-    
+
     def __init__(self, start_time: int = None, config_path: str = None):
         """
         Initialize metrics generator.
-        
+
         Args:
             start_time: Unix timestamp to start from (defaults to current time)
-            config_path: Path to config JSON file
+            config_path: Path to config JSON file (uses NETWORK_PROFILE env var if None)
         """
         self.start_time = start_time or int(time.time())
         self.current_offset = 0
-        
-        # Load configuration
+
+        # Load configuration based on profile or explicit path
         if config_path is None:
-            config_path = Path(__file__).parent / "config.json"
-        
+            config_path = get_config_path()
+
         with open(config_path, 'r') as f:
             self.config = json.load(f)
         

@@ -1,0 +1,149 @@
+{
+  "generator_settings": {
+    "description": "University campus WiFi network - class schedules, dorm usage, high mobility",
+    "data_quality": "research_based",
+    "target_realism": "university_campus"
+  },
+
+  "time_to_connect": {
+    "description": "Connection establishment latency in milliseconds",
+    "baseline": 45,
+    "min": 15,
+    "max": 250,
+    "smoothness": 0.95,
+    "business_hours_impact": 1.8,
+    "daily_pattern_strength": 0.5,
+    "weekly_pattern_strength": 0.4,
+    "peak_hour": 11,
+    "weekend_reduction": 0.7,
+    "capacity_sensitivity": 0.35,
+    "health_sensitivity": 0.25,
+    "typical_variance_pct": 5
+  },
+
+  "throughput": {
+    "description": "Network throughput in Mbps (WiFi 6 capable)",
+    "baseline": 420,
+    "min": 100,
+    "max": 800,
+    "smoothness": 0.95,
+    "business_hours_impact": 0.82,
+    "daily_pattern_strength": 0.45,
+    "weekly_pattern_strength": 0.35,
+    "peak_hour": 11,
+    "weekend_reduction": 0.75,
+    "capacity_sensitivity": -0.3,
+    "health_sensitivity": 0.2,
+    "typical_variance_pct": 4
+  },
+
+  "coverage": {
+    "description": "Signal strength in dBm (more negative = weaker)",
+    "baseline": -58,
+    "min": -80,
+    "max": -35,
+    "smoothness": 0.97,
+    "business_hours_impact": 0.99,
+    "daily_pattern_strength": 0.08,
+    "weekly_pattern_strength": 0.04,
+    "peak_hour": 11,
+    "weekend_reduction": 0.98,
+    "capacity_sensitivity": -0.03,
+    "health_sensitivity": 0.08,
+    "typical_variance_pct": 1.5
+  },
+
+  "capacity": {
+    "description": "Network capacity utilization percentage",
+    "baseline": 48,
+    "min": 15,
+    "max": 88,
+    "smoothness": 0.94,
+    "business_hours_impact": 1.7,
+    "daily_pattern_strength": 0.55,
+    "weekly_pattern_strength": 0.45,
+    "peak_hour": 11,
+    "weekend_reduction": 0.6,
+    "capacity_sensitivity": 0,
+    "health_sensitivity": -0.08,
+    "typical_variance_pct": 5
+  },
+
+  "roaming": {
+    "description": "Roaming handoff time in milliseconds - higher due to student mobility",
+    "baseline": 70,
+    "min": 25,
+    "max": 200,
+    "smoothness": 0.94,
+    "business_hours_impact": 1.4,
+    "daily_pattern_strength": 0.4,
+    "weekly_pattern_strength": 0.3,
+    "peak_hour": 11,
+    "weekend_reduction": 0.7,
+    "capacity_sensitivity": 0.25,
+    "health_sensitivity": 0.3,
+    "typical_variance_pct": 6
+  },
+
+  "successful_connects": {
+    "description": "Connection success rate percentage",
+    "baseline": 97.5,
+    "min": 92,
+    "max": 99.5,
+    "smoothness": 0.97,
+    "business_hours_impact": 0.985,
+    "daily_pattern_strength": 0.18,
+    "weekly_pattern_strength": 0.1,
+    "peak_hour": 11,
+    "weekend_reduction": 0.97,
+    "capacity_sensitivity": -0.12,
+    "health_sensitivity": 0.3,
+    "typical_variance_pct": 0.5
+  },
+
+  "ap_health": {
+    "description": "Access point health score",
+    "baseline": 90,
+    "min": 68,
+    "max": 99,
+    "smoothness": 0.97,
+    "business_hours_impact": 0.96,
+    "daily_pattern_strength": 0.25,
+    "weekly_pattern_strength": 0.15,
+    "peak_hour": 11,
+    "weekend_reduction": 1.02,
+    "capacity_sensitivity": -0.15,
+    "health_sensitivity": 0,
+    "typical_variance_pct": 1.5
+  },
+
+  "time_patterns": {
+    "business_hours": {
+      "start": 8,
+      "end": 22,
+      "morning_surge_hour": 9,
+      "lunch_dip_hour": 12,
+      "afternoon_peak_hour": 14,
+      "evening_decline_hour": 21
+    },
+    "hourly_cycles": {
+      "enabled": false,
+      "period_minutes": 60,
+      "amplitude": 0.02
+    },
+    "weekly_cycles": {
+      "enabled": true,
+      "weekday_pattern": [0.6, 0.95, 1.0, 1.0, 1.0, 0.9, 0.65],
+      "description": "Sunday through Saturday - lower on weekends but dorms still active"
+    }
+  },
+
+  "correlation_matrix": {
+    "description": "How metrics influence each other",
+    "capacity_degrades_at": 75,
+    "health_degrades_at": 72,
+    "capacity_on_latency": 0.85,
+    "capacity_on_throughput": -0.75,
+    "health_on_all": 0.65
+  }
+}
