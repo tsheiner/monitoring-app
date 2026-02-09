@@ -25,9 +25,6 @@ export class SharedRange {
    * Set new time range and notify subscribers.
    */
   setRange(range: [number, number]): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SharedRange.ts:setRange',message:'Setting new range',data:{oldRange:this.range,newRange:range,duration:range[1]-range[0],callbackCount:this.callbacks.size,stack:new Error().stack},timestamp:Date.now(),sessionId:'debug-session',runId:'live-resize-bug',hypothesisId:'H11'})}).catch(()=>{});
-    // #endregion
     this.range = range;
     this.notifyChange();
   }
@@ -62,10 +59,6 @@ export class SharedRange {
     const newEnd = end + durationSeconds;
     const newStart = newEnd - windowSize;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SharedRange.ts:slide',message:'Sliding range for live mode',data:{oldStart:start,oldEnd:end,windowSize,durationSeconds,newStart,newEnd,stack:new Error().stack},timestamp:Date.now(),sessionId:'debug-session',runId:'live-resize-bug',hypothesisId:'H11'})}).catch(()=>{});
-    // #endregion
-    
     this.setRange([newStart, newEnd]);
   }
   
@@ -74,10 +67,6 @@ export class SharedRange {
    */
   expandTo(timestamp: number): void {
     const [start, end] = this.range;
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'SharedRange.ts:expandTo',message:'Attempting to expand range',data:{timestamp,currentStart:start,currentEnd:end,willExpand:timestamp>end,stack:new Error().stack},timestamp:Date.now(),sessionId:'debug-session',runId:'live-resize-bug',hypothesisId:'H11'})}).catch(()=>{});
-    // #endregion
     
     if (timestamp > end) {
       const windowSize = end - start;

@@ -302,12 +302,6 @@ main {
   font-size: 11px;
 }
 
-/* Hide brush control */
-
-/* .brush-context {
-  display: none !important;
-} */
-
 /* Responsive */
 
 @media (max-width: 768px) {

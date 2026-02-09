@@ -109,9 +109,8 @@ class MonitoringApp {
     const config: ChartConfig = {
       width: containerWidth,
       height: chartHeight,
-      // Bottom margin: 120px to accommodate x-axis labels, range text, brush (40px), and brush axis
-      // Even if brush is hidden via CSS, the space is pre-allocated in the SVG
-      margin: { top: 20, right: 50, bottom: 120, left: 70 },
+      // Margins: top/right/left for axes, bottom for x-axis labels and range text
+      margin: { top: 20, right: 50, bottom: 40, left: 70 },
       metric: "multi", // Not used in multi-metric mode
       timeRange: [now - initialTimeRange, now],
       showDistribution: true,
@@ -138,14 +137,6 @@ class MonitoringApp {
 
     // Setup API callbacks
     this.setupAPICallbacks();
-
-    // Register callback for brush range selection
-    this.chart.onRangeSelected(async (range) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:onRangeSelected',message:'Brush triggered range change in main',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],currentTimeRangeSeconds:this.currentTimeRangeSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H4'})}).catch(()=>{});
-      // #endregion
-      await this.loadDataForRange(range[0], range[1]);
-    });
 
     // Load initial data
     this.loadData();
@@ -194,10 +185,6 @@ class MonitoringApp {
         );
         fetchedData.push({ metric, data: metricData });
       }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange',message:'Data fetched, setting chart range',data:{start,end,duration,metricsCount:fetchedData.length,obsCountsPerMetric:fetchedData.map(f=>({metric:f.metric.name,obsCount:f.data.observations.length,distSeriesLen:(f.data.distribution_series||[]).length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix-v5',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
 
       // 2. Set chart range (clears old data) — synchronous, no repaint yet
       this.chart.setTimeRange(duration, end);
@@ -377,9 +364,6 @@ class MonitoringApp {
     if (!metric) return;
 
     metric.enabled = !metric.enabled;
-    // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:toggleMetric',message:'Metric toggled',data:{metricName,enabled:metric.enabled,totalEnabled:this.metrics.filter(m=>m.enabled).length},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
 
     // Update UI
     const toggle = document.querySelector(

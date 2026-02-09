@@ -40,7 +40,6 @@ export class ChartView {
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
   private hasLoadedData: boolean = false; // Track if historical data loaded
-  private onRangeSelectedCallback?: (range: [number, number]) => void;
 
   // Track chart start time for growth phase
   private chartStartTime: number;
@@ -74,11 +73,6 @@ export class ChartView {
     // Subscribe to range changes
     this.sharedRange.onChange((range) => {
       this.onRangeChange(range);
-    });
-
-    // Wire up brush control to update time range
-    this.core.onBrushChange((range) => {
-      this.handleBrushSelection(range);
     });
   }
 
@@ -144,9 +138,6 @@ export class ChartView {
     this.metrics.delete(metricName);
 
     // If we're back to single metric, may need to recreate distribution
-    // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:removeMetric',message:'After removing metric, checking distribution recreation',data:{removedMetric:metricName,remainingCount:this.metrics.size,showDist:this.config.showDistribution,remainingMetrics:Array.from(this.metrics.keys()),remainingDistSeries:Array.from(this.metrics.values()).map(m=>({hasGen:!!m.distributionGenerator,seriesLen:m.distributionSeries.length}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     if (this.metrics.size === 1 && this.config.showDistribution) {
       const [remainingMetric, remainingData] = Array.from(
         this.metrics.entries(),
@@ -242,10 +233,6 @@ export class ChartView {
       metricData.distributionSeries = rawSeries;
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData',message:'Data loaded for metric',data:{metricName,obsCount:observations.length,lastObsTs:observations.length>0?observations[observations.length-1].timestamp:null,distSeriesLen:metricData.distributionSeries.length,firstDistTs:metricData.distributionSeries[0]?.timestamp,lastDistTs:metricData.distributionSeries[metricData.distributionSeries.length-1]?.timestamp,currentRange:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix-v2',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
-
     // Calculate Y domain for this metric's raw data
     if (observations.length > 0) {
       const values = observations.map((obs) => obs.value);
@@ -260,59 +247,6 @@ export class ChartView {
 
     // Mark that we've loaded historical data
     this.hasLoadedData = true;
-
-    // Update brush context range - compute global min/max across ALL metrics
-    // to prevent brush from shrinking when individual metrics are loaded
-    if (observations.length > 0) {
-      let globalMinTime = observations[0].timestamp;
-      let globalMaxTime = observations[observations.length - 1].timestamp;
-
-      // Check all metrics to find true global min/max
-      for (const [name, metricData] of this.metrics) {
-        const allObs = metricData.dataTarget.getAll();
-        if (allObs.length > 0) {
-          globalMinTime = Math.min(globalMinTime, allObs[0].timestamp);
-          globalMaxTime = Math.max(globalMaxTime, allObs[allObs.length - 1].timestamp);
-        }
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      // Add buffer equal to requested duration for sliding
-      const bufferDuration = this.durationSeconds;
-      
-      // Constrain brush to reasonable data boundaries:
-      // - Start: Earlier of (globalMinTime - buffer) or (90 days ago)
-      // - End: Later of (now) or (globalMaxTime)
-      const ninetyDaysAgo = now - (90 * 86400);
-      const brushStart = Math.max(ninetyDaysAgo, globalMinTime - bufferDuration);
-      const brushEnd = Math.max(globalMaxTime, now);
-
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext',message:'Updating brush context from ALL metrics',data:{metricName,obsCount:observations.length,globalMinTime,globalMaxTime,now,bufferDuration,brushStart,brushEnd,currentRange:this.sharedRange.getRange(),metricsChecked:this.metrics.size,ninetyDaysAgo},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
-
-      // Only expand the brush context, never shrink it
-      const currentBrushRange = this.core.getFullTimeRange();
-      const expandedBrushStart = Math.min(currentBrushRange[0], brushStart);
-      const expandedBrushEnd = Math.max(currentBrushRange[1], brushEnd);
-
-      this.core.updateFullTimeRange([expandedBrushStart, expandedBrushEnd]);
-
-      // ONLY update brush selection during initial load or when in live mode
-      // Skip updating during brush-initiated interactions to avoid fighting
-      if (this.config.liveMode) {
-        const currentRange = this.sharedRange.getRange();
-        this.core.updateBrushSelection(currentRange);
-
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:updated',message:'Brush selection updated (live mode)',data:{metricsLoaded:this.metrics.size,currentRangeUsed:currentRange,liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
-      } else {
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:loadHistoricalData:brushContext:skipped',message:'Skipping brush selection update (user brushing)',data:{liveMode:this.config.liveMode,metricsSize:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test-fixed',hypothesisId:'H4'})}).catch(()=>{});
-        // #endregion
-      }
-    }
 
     // Compute global Y domain across all visible metrics (normalized to 0-100)
     this.updateGlobalYDomain();
@@ -384,27 +318,7 @@ export class ChartView {
         for (const [name, data] of this.metrics) {
           data.dataTarget.pruneOutsideRange(pruneStart, newRange[1]);
         }
-
-        // Update brush context
-        const allObs = metricData.dataTarget.getAll();
-        if (allObs.length > 0) {
-          const minTime = allObs[0].timestamp;
-          const maxTime = allObs[allObs.length - 1].timestamp;
-          const bufferDuration = this.durationSeconds;
-          const brushStart = minTime - bufferDuration;
-          const brushEnd = Math.max(maxTime, now);
-
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:appendLiveData:brushUpdate',message:'Updating brush context from live slide',data:{metricName,obsTs:observation.timestamp,now,currentRangeEnd:currentRange[1],newRangeStart:newRange[0],newRangeEnd:newRange[1],brushStart,brushEnd},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H5'})}).catch(()=>{});
-          // #endregion
-
-          this.core.updateFullTimeRange([brushStart, brushEnd]);
-        }
       }
-    } else {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:appendLiveData:notLiveMode',message:'Live data arrived but not in live mode',data:{metricName,obsTs:observation.timestamp,liveModeFlag:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion
     }
 
     // Update Y domain
@@ -471,9 +385,6 @@ export class ChartView {
 
     // Clear data for all metrics before changing range
     for (const [name, metricData] of this.metrics) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:setTimeRange:clearingData',message:'CLEARING data in setTimeRange',data:{metric:name,dataCountBeforeClear:metricData.dataTarget.count(),distSeriesLen:metricData.distributionSeries.length,durationSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       metricData.dataTarget.clear();
       metricData.distributionSeries = [];
       if (metricData.distributionGenerator) {
@@ -551,18 +462,10 @@ export class ChartView {
    * Handle range change.
    */
   private onRangeChange(range: [number, number]): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:onRangeChange',message:'Range changed, updating X domain',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],hasLoadedData:this.hasLoadedData,liveMode:this.config.liveMode,currentDurationSeconds:this.durationSeconds,sharedRangeValue:this.sharedRange.getRange()},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H8'})}).catch(()=>{});
-    // #endregion
-
     console.log(
       `Range changed: ${new Date(range[0] * 1000).toISOString()} to ${new Date(range[1] * 1000).toISOString()}`,
     );
     this.core.updateXDomain(range);
-
-    if (this.hasLoadedData && this.config.liveMode) {
-      this.core.updateBrushSelection(range);
-    }
 
     this.render();
   }
@@ -627,9 +530,6 @@ export class ChartView {
     // Render each metric
     for (const [metricName, metricData] of this.metrics) {
       const observations = metricData.dataTarget.getInRange(range[0], range[1]);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:render',message:'Rendering metric',data:{metricName,obsCount:observations.length,totalInBuffer:metricData.dataTarget.count(),metricsSize:this.metrics.size,rangeStart:range[0],rangeEnd:range[1],distSeriesLen:metricData.distributionSeries.length,hasDistGen:!!metricData.distributionGenerator,showDist:this.config.showDistribution,firstDistTs:metricData.distributionSeries[0]?.timestamp,lastDistTs:metricData.distributionSeries[metricData.distributionSeries.length-1]?.timestamp},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
@@ -687,10 +587,6 @@ export class ChartView {
    * Resize chart.
    */
   resize(width: number, height: number): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:resize',message:'Resizing chart',data:{oldWidth:this.config.width,oldHeight:this.config.height,newWidth:width,newHeight:height,metricsCount:this.metrics.size},timestamp:Date.now(),sessionId:'debug-session',runId:'resize-test',hypothesisId:'H10'})}).catch(()=>{});
-    // #endregion
-
     this.config.width = width;
     this.config.height = height;
 
@@ -722,60 +618,6 @@ export class ChartView {
     }
 
     this.render();
-
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:resize:complete',message:'Resize complete, rendered',data:{width,height},timestamp:Date.now(),sessionId:'debug-session',runId:'resize-test',hypothesisId:'H10'})}).catch(()=>{});
-    // #endregion
-  }
-
-  /**
-   * Handle brush selection for range zooming.
-   */
-  private handleBrushSelection(range: [number, number]): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection',message:'Brush selection received from user',data:{rangeStart:range[0],rangeEnd:range[1],duration:range[1]-range[0],liveModeBeforeDisable:this.config.liveMode,currentDurationSeconds:this.durationSeconds},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
-
-    // Disable live mode when user zooms
-    const wasLiveMode = this.config.liveMode;
-    this.config.liveMode = false;
-
-    // Update duration
-    this.durationSeconds = range[1] - range[0];
-
-    // Update the shared range
-    this.sharedRange.setRange(range);
-
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:after',message:'Live mode disabled, calling callback',data:{liveModeAfter:this.config.liveMode,newDuration:this.durationSeconds,hasCallback:!!this.onRangeSelectedCallback,wasLiveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
-
-    // Notify that a new range was selected
-    if (this.onRangeSelectedCallback) {
-      this.onRangeSelectedCallback(range);
-    }
-
-    // Auto-re-enable live mode after a brief delay (3 seconds)
-    // This allows user to brush without immediately returning to live mode
-    if (wasLiveMode) {
-      setTimeout(() => {
-        // Only re-enable if user hasn't manually disabled it via checkbox
-        const checkbox = document.getElementById('live-mode') as HTMLInputElement;
-        if (checkbox && checkbox.checked) {
-          this.config.liveMode = true;
-          // #region agent log
-          fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:handleBrushSelection:autoReEnable',message:'Auto-re-enabled live mode after brush',data:{liveMode:this.config.liveMode},timestamp:Date.now(),sessionId:'debug-session',runId:'brush-test',hypothesisId:'H7'})}).catch(()=>{});
-          // #endregion
-        }
-      }, 3000);
-    }
-  }
-
-  /**
-   * Register callback for when user selects a new time range via brush.
-   */
-  onRangeSelected(callback: (range: [number, number]) => void): void {
-    this.onRangeSelectedCallback = callback;
   }
 
   /**
