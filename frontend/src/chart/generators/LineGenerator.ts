@@ -57,6 +57,19 @@ export class LineGenerator implements Generator {
       (d) => d.timestamp >= range[0] && d.timestamp <= range[1],
     );
 
+    // #region agent log
+    if (visibleData.length > 0) {
+      const xPixels = visibleData.map(d => this.xScale(new Date(d.timestamp * 1000)));
+      const yPixels = visibleData.map(d => this.yScale(d.value));
+      const xRange = this.xScale.range();
+      const yRange = this.yScale.range();
+      const outOfBoundsX = xPixels.filter(x => x < xRange[0] || x > xRange[1]);
+      const outOfBoundsY = yPixels.filter(y => y < yRange[1] || y > yRange[0]);
+      const hasClipPath = !!this.path.attr('clip-path');
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'LineGenerator.ts:redraw',message:'Drawing line with coordinates',data:{visibleCount:visibleData.length,xRange,yRange,xPixelRange:[Math.min(...xPixels),Math.max(...xPixels)],yPixelRange:[Math.min(...yPixels),Math.max(...yPixels)],outOfBoundsXCount:outOfBoundsX.length,outOfBoundsYCount:outOfBoundsY.length,sampleOutOfBoundsX:outOfBoundsX.slice(0,3),sampleOutOfBoundsY:outOfBoundsY.slice(0,3),hasClipPath},timestamp:Date.now(),runId:'zoom-overflow-debug',hypothesisId:'H4'})}).catch(()=>{});
+    }
+    // #endregion
+
     // Create line generator with smooth interpolation
     const line = d3
       .line<Observation>()

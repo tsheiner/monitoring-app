@@ -30,10 +30,22 @@ export class APIClient {
     start: number,
     end: number,
   ): Promise<MetricResponse> {
-    const url = `${HTTP_BASE_URL}/api/metrics/${metric}?start=${start}&end=${end}`;
+    // Round timestamps to integers (backend expects int, not float)
+    const startInt = Math.floor(start);
+    const endInt = Math.ceil(end);
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'APIClient.ts:fetchMetricHistory',message:'Fetching metric history',data:{metric,startRaw:start,endRaw:end,startInt,endInt,duration:endInt-startInt,startDate:new Date(startInt*1000).toISOString(),endDate:new Date(endInt*1000).toISOString()},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    
+    const url = `${HTTP_BASE_URL}/api/metrics/${metric}?start=${startInt}&end=${endInt}`;
     const response = await fetch(url);
 
     if (!response.ok) {
+      // #region agent log
+      const errorText = await response.text();
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'APIClient.ts:fetchMetricHistory:error',message:'HTTP error from backend',data:{metric,start:startInt,end:endInt,status:response.status,statusText:response.statusText,errorBody:errorText.substring(0,200)},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -48,7 +60,11 @@ export class APIClient {
     end: number,
     eventType?: string,
   ): Promise<EventsResponse> {
-    let url = `${HTTP_BASE_URL}/api/events?start=${start}&end=${end}`;
+    // Round timestamps to integers (backend expects int, not float)
+    const startInt = Math.floor(start);
+    const endInt = Math.ceil(end);
+    
+    let url = `${HTTP_BASE_URL}/api/events?start=${startInt}&end=${endInt}`;
     if (eventType) {
       url += `&event_type=${eventType}`;
     }

@@ -98,6 +98,33 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+.jump-button {
+  background: #4E8DB8;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.jump-button:hover {
+  background: #5e9dc8;
+}
+
+.jump-button:active {
+  background: #3e7da8;
+}
+
+.jump-button:disabled {
+  background: #4a4a4a;
+  color: #888;
+  cursor: not-allowed;
+}
+
+
 /* Main Content */
 
 main {

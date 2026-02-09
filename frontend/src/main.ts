@@ -30,6 +30,7 @@ class MonitoringApp {
   private currentTimeRangeSeconds: number = 3600; // Start with 1 hour
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
+  private dataFetchDebounceTimer: number | null = null;
 
   // Metric configuration
   private metrics: MetricInfo[] = [
@@ -138,6 +139,24 @@ class MonitoringApp {
     // Setup API callbacks
     this.setupAPICallbacks();
 
+    // Wire up data fetching when user pans/zooms to new range
+    // Debounce to avoid firing dozens of requests during a pan gesture
+    this.chart.onDataNeeded((range) => {
+      // Clear any pending fetch
+      if (this.dataFetchDebounceTimer !== null) {
+        clearTimeout(this.dataFetchDebounceTimer);
+      }
+
+      // Schedule new fetch after 500ms of no pan/zoom activity
+      this.dataFetchDebounceTimer = window.setTimeout(async () => {
+        console.log(
+          `Fetching data for pan/zoom range: ${range[0]} to ${range[1]}`,
+        );
+        await this.loadDataForRange(range[0], range[1]);
+        this.dataFetchDebounceTimer = null;
+      }, 500);
+    });
+
     // Load initial data
     this.loadData();
 
@@ -160,6 +179,10 @@ class MonitoringApp {
   }
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange:entry',message:'Loading data for range',data:{start,end,duration:end-start,startDate:new Date(start*1000).toISOString(),endDate:new Date(end*1000).toISOString(),isValidRange:start<end},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    
     try {
       const duration = end - start;
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
@@ -215,6 +238,11 @@ class MonitoringApp {
       );
       this.updateStats(totalObs, this.allEvents.length);
     } catch (error) {
+      // #region agent log
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange:error',message:'Failed to load data',data:{start,end,duration:end-start,error:errorMsg},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
+      
       console.error("Error loading data:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -263,6 +291,28 @@ class MonitoringApp {
         label.textContent = `${group.label} ${count}`;
       }
     }
+  }
+
+  /**
+   * Jump to "now" - sets time range to [now - duration, now] and enables live mode.
+   * This is called by the "Jump to Now" button.
+   */
+  private async jumpToNow(): Promise<void> {
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - this.currentTimeRangeSeconds;
+    this.chart.setTimeRange(this.currentTimeRangeSeconds, now);
+    this.chart.setLiveMode(true);
+
+    // Update the live mode checkbox UI
+    const liveModeCheckbox = document.getElementById(
+      "live-mode",
+    ) as HTMLInputElement;
+    if (liveModeCheckbox) {
+      liveModeCheckbox.checked = true;
+    }
+
+    // CRITICAL: Fetch data for the new range
+    await this.loadDataForRange(start, now);
   }
 
   private setupControls(): void {
@@ -356,6 +406,14 @@ class MonitoringApp {
     ) as HTMLInputElement;
     liveModeCheckbox.addEventListener("change", () => {
       this.chart.setLiveMode(liveModeCheckbox.checked);
+    });
+
+    // Jump to Now button
+    const jumpToNowButton = document.getElementById(
+      "jump-to-now",
+    ) as HTMLButtonElement;
+    jumpToNowButton.addEventListener("click", () => {
+      this.jumpToNow();
     });
   }
 

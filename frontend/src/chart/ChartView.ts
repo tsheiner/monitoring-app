@@ -31,6 +31,7 @@ interface MetricData {
   currentDistribution: Distribution | null;
   color: string;
   normalizedYDomain: [number, number]; // For independent normalization
+  bufferedRange: [number, number] | null; // Track what time range is buffered
 }
 
 export class ChartView {
@@ -40,6 +41,7 @@ export class ChartView {
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
   private hasLoadedData: boolean = false; // Track if historical data loaded
+  private onDataNeededCallback?: (range: [number, number]) => void;
 
   // Track chart start time for growth phase
   private chartStartTime: number;
@@ -73,6 +75,11 @@ export class ChartView {
     // Subscribe to range changes
     this.sharedRange.onChange((range) => {
       this.onRangeChange(range);
+    });
+
+    // Wire up zoom/pan callback from ChartCore
+    this.core.onRangeChange((range, userInitiated) => {
+      this.handleZoomPanRangeChange(range, userInitiated);
     });
   }
 
@@ -115,7 +122,8 @@ export class ChartView {
       distributionSeries: [],
       currentDistribution: null,
       color,
-      normalizedYDomain: [0, 1],
+      normalizedYDomain: [Infinity, -Infinity], // Will be set to actual data range on first load
+      bufferedRange: null,
     });
 
     console.log(
@@ -190,6 +198,23 @@ export class ChartView {
     metricData.dataTarget.push(observations);
     metricData.currentDistribution = distribution;
 
+    // Update buffered range for this metric
+    if (observations.length > 0) {
+      const newStart = observations[0].timestamp;
+      const newEnd = observations[observations.length - 1].timestamp;
+      
+      if (metricData.bufferedRange) {
+        // Expand existing range
+        metricData.bufferedRange = [
+          Math.min(metricData.bufferedRange[0], newStart),
+          Math.max(metricData.bufferedRange[1], newEnd)
+        ];
+      } else {
+        // Initialize range
+        metricData.bufferedRange = [newStart, newEnd];
+      }
+    }
+
     // Clamp distribution series to match the actual extent of the data.
     // Left edge: clamp to range[0] (historical data typically starts at/before range).
     // Right edge: clamp to the last observation's timestamp, NOT range[1].
@@ -206,14 +231,19 @@ export class ChartView {
 
       // Keep points within generous buffer of visible range
       const inRange = rawSeries.filter(
-        (dp) => dp.timestamp >= (range[0] - buffer) && dp.timestamp <= (lastObsTime + buffer),
+        (dp) =>
+          dp.timestamp >= range[0] - buffer &&
+          dp.timestamp <= lastObsTime + buffer,
       );
 
       if (inRange.length > 0) {
         const padded: DistributionPoint[] = [];
 
         // Always add left edge point at range[0]
-        padded.push({ timestamp: range[0], distribution: inRange[0].distribution });
+        padded.push({
+          timestamp: range[0],
+          distribution: inRange[0].distribution,
+        });
 
         // Add interior points
         for (const dp of inRange) {
@@ -223,7 +253,10 @@ export class ChartView {
         }
 
         // Add right edge point at last observation (not range[1])
-        padded.push({ timestamp: lastObsTime, distribution: inRange[inRange.length - 1].distribution });
+        padded.push({
+          timestamp: lastObsTime,
+          distribution: inRange[inRange.length - 1].distribution,
+        });
 
         metricData.distributionSeries = padded;
       } else {
@@ -235,14 +268,28 @@ export class ChartView {
 
     // Calculate Y domain for this metric's raw data
     if (observations.length > 0) {
-      const values = observations.map((obs) => obs.value);
-      const minVal = Math.min(...values);
-      const maxVal = Math.max(...values);
+      // Get ALL buffered data to calculate stable Y-domain
+      const allBufferedData = metricData.dataTarget.getAll();
+      
+      if (allBufferedData.length > 0) {
+        const values = allBufferedData.map((obs) => obs.value);
+        const minVal = Math.min(...values);
+        const maxVal = Math.max(...values);
 
-      // Store the normalization domain for this metric
-      metricData.normalizedYDomain = [minVal, maxVal];
+        // Update domain ONLY if it expands (never shrink during pan)
+        if (metricData.normalizedYDomain[0] === Infinity) {
+          // First time: initialize with actual data range
+          metricData.normalizedYDomain = [minVal, maxVal];
+        } else {
+          // Expand domain to include new data (but never shrink)
+          metricData.normalizedYDomain = [
+            Math.min(metricData.normalizedYDomain[0], minVal),
+            Math.max(metricData.normalizedYDomain[1], maxVal)
+          ];
+        }
 
-      console.log(`Metric ${metricName} Y domain: [${minVal}, ${maxVal}]`);
+        console.log(`Metric ${metricName} Y domain: [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}] (from ${allBufferedData.length} buffered points)`);
+      }
     }
 
     // Mark that we've loaded historical data
@@ -266,6 +313,16 @@ export class ChartView {
    * Update global Y domain (always 0-100 for normalized display).
    */
   private updateGlobalYDomain(): void {
+    // #region agent log
+    const currentRange = this.sharedRange.getRange();
+    const allMetricsData = Array.from(this.metrics.entries()).map(([name, data]) => ({
+      name,
+      bufferCount: data.dataTarget.getAll().length,
+      domain: data.normalizedYDomain
+    }));
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:updateGlobalYDomain',message:'Y-domain recalculation',data:{metricCount:this.metrics.size,visibleRange:currentRange,allMetricsData},timestamp:Date.now(),runId:'pan-rescale-debug',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    
     if (this.metrics.size > 1) {
       // Multiple metrics: use normalized 0-100 range
       this.core.updateYDomain([0, 100]);
@@ -339,12 +396,18 @@ export class ChartView {
       const series = metricData.distributionSeries;
 
       // Slide left edge to new range start
-      series[0] = { timestamp: newRange[0], distribution: series[0].distribution };
+      series[0] = {
+        timestamp: newRange[0],
+        distribution: series[0].distribution,
+      };
 
       // Prune distribution points that fell off the left edge
       while (series.length > 2 && series[1].timestamp < newRange[0]) {
         series.splice(1, 1);
-        series[0] = { timestamp: newRange[0], distribution: series[1].distribution };
+        series[0] = {
+          timestamp: newRange[0],
+          distribution: series[1].distribution,
+        };
       }
 
       // Extend right edge to include the new live observation, using the
@@ -397,11 +460,35 @@ export class ChartView {
     // Update scales and render to ensure chart is not blank
     this.updateGlobalYDomain();
     for (const [name, metricData] of this.metrics) {
-      metricData.lineGenerator.setScales(this.core.getXScale(), this.core.getYScale());
+      metricData.lineGenerator.setScales(
+        this.core.getXScale(),
+        this.core.getYScale(),
+      );
     }
     this.render();
 
     // Note: The caller should reload historical data for the new range
+  }
+
+  /**
+   * Update time range without clearing data (for pan/zoom operations).
+   * This preserves buffered data and only updates the visible range.
+   * The caller is responsible for fetching any missing data.
+   */
+  updateTimeRangeNonDestructive(start: number, end: number): void {
+    this.durationSeconds = end - start;
+    this.chartStartTime = start;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:updateTimeRangeNonDestructive',message:'Pan/zoom range update',data:{start,end,duration:end-start,willUpdateYDomain:true},timestamp:Date.now(),runId:'pan-rescale-debug',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
+    
+    // Update shared range without clearing buffers
+    this.sharedRange.setRange([start, end]);
+    
+    // Update Y domain and render with existing data
+    this.updateGlobalYDomain();
+    this.render();
   }
 
   /**
@@ -465,9 +552,95 @@ export class ChartView {
     console.log(
       `Range changed: ${new Date(range[0] * 1000).toISOString()} to ${new Date(range[1] * 1000).toISOString()}`,
     );
-    this.core.updateXDomain(range);
+
+    // Use setTimeRange to update without triggering zoom events
+    this.core.setTimeRange(range);
 
     this.render();
+  }
+
+  /**
+   * Handle zoom/pan range changes from user interaction.
+   * Implements live mode auto-detection.
+   */
+  private handleZoomPanRangeChange(
+    range: [number, number],
+    userInitiated: boolean,
+  ): void {
+    if (!userInitiated) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    const [start, end] = range;
+
+    // Auto-detect live mode: if right edge is within 1 minute of "now", enable live mode
+    const isAtNow = end >= now - 60;
+    const wasLiveMode = this.config.liveMode;
+    this.config.liveMode = isAtNow;
+
+    if (wasLiveMode !== this.config.liveMode) {
+      console.log(
+        `Live mode ${this.config.liveMode ? "enabled" : "disabled"} (at now: ${isAtNow})`,
+      );
+
+      // Update UI checkbox if it exists
+      const checkbox = document.getElementById("live-mode") as HTMLInputElement;
+      if (checkbox) {
+        checkbox.checked = this.config.liveMode;
+      }
+    }
+
+    // Update time range without clearing data (non-destructive)
+    this.updateTimeRangeNonDestructive(start, end);
+
+    // Check if we have data coverage for the range
+    const hasDataForRange = this.checkDataCoverage(range);
+
+    if (!hasDataForRange && this.onDataNeededCallback) {
+      // Need to fetch missing data
+      console.log(`Need to fetch data for range: ${start} to ${end}`);
+      this.onDataNeededCallback(range);
+    }
+    // Note: Data renders immediately with what's in buffer
+    // Fetch happens asynchronously in background if needed
+  }
+
+  /**
+   * Check if we have data coverage for the given range.
+   * Returns true only if we have data that covers the edges of the range
+   * (allowing for small gaps in the middle).
+   */
+  private checkDataCoverage(range: [number, number]): boolean {
+    if (this.metrics.size === 0) return true;
+
+    const [rangeStart, rangeEnd] = range;
+    const edgeThreshold = 60; // 60 seconds tolerance at edges
+
+    // Check if at least one metric has data covering both edges of the range
+    for (const [name, metricData] of this.metrics) {
+      const data = metricData.dataTarget.getAll();
+      if (data.length === 0) continue;
+
+      const bufferStart = data[0].timestamp;
+      const bufferEnd = data[data.length - 1].timestamp;
+
+      // Check if buffer covers the left edge of the requested range
+      const coversLeftEdge = bufferStart <= rangeStart + edgeThreshold;
+      // Check if buffer covers the right edge of the requested range
+      const coversRightEdge = bufferEnd >= rangeEnd - edgeThreshold;
+
+      if (coversLeftEdge && coversRightEdge) {
+        return true; // At least one metric has full coverage
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Register callback for when more data is needed (e.g., when panning to new range).
+   */
+  onDataNeeded(callback: (range: [number, number]) => void): void {
+    this.onDataNeededCallback = callback;
   }
 
   /**
@@ -581,7 +754,10 @@ export class ChartView {
         }
       }
     }
-  }
+    // Redraw event markers if present
+    if (this.eventMarkers && this.config.showEvents) {
+      this.eventMarkers.redraw(range);
+    }  }
 
   /**
    * Resize chart.
@@ -596,24 +772,21 @@ export class ChartView {
     for (const [name, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
-        this.core.getYScale()
+        this.core.getYScale(),
       );
       metricData.lineGenerator.resize(width, height);
-      
+
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.setScales(
           this.core.getXScale(),
-          this.core.getYScale()
+          this.core.getYScale(),
         );
         metricData.distributionGenerator.resize(width, height);
       }
     }
 
     if (this.eventMarkers) {
-      this.eventMarkers.setScales(
-        this.core.getXScale(),
-        this.core.getYScale()
-      );
+      this.eventMarkers.setScales(this.core.getXScale(), this.core.getYScale());
       this.eventMarkers.resize(width, height);
     }
 
