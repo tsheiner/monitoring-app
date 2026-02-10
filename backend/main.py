@@ -193,7 +193,7 @@ async def run_backend():
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
-        port=8001,
+        port=5011,
         log_level="info"
     )
     server = uvicorn.Server(config)
