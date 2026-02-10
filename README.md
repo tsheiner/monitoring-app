@@ -10,6 +10,7 @@ This prototype demonstrates a self-healing network monitoring system with:
 - **Event correlation** (device restarts, config changes, AI actions)
 - **Distribution visualization** (percentile ribbons showing variance over time)
 - **Real-time + historical** (seamless past → present timeline)
+- **Continuous operation** (maintains 30-day rolling window for shared demo access)
 
 Built for executive demos and technical validation, not production deployment.
 
@@ -78,6 +79,83 @@ npm run dev
 ```
 
 Open browser to `http://localhost:5173`
+
+## Continuous Operation (Production Deployment)
+
+For running the app continuously under pm2 or similar process managers:
+
+### Configuration
+
+The backend supports continuous operation mode that preserves data across restarts:
+
+**Environment Variables**:
+- `SKIP_BOOTSTRAP=true` - Keeps existing data instead of regenerating on restart
+- `NETWORK_PROFILE` - Network simulation profile (enterprise/hospital/campus)
+
+**pm2 Configuration Example**:
+
+```javascript
+{
+  name: 'monitoring-app-backend',
+  cwd: '/opt/monitoring-app/backend',
+  script: '/opt/monitoring-app/backend/venv/bin/python',
+  args: 'main.py',
+  env: {
+    PYTHONUNBUFFERED: '1',
+    SKIP_BOOTSTRAP: 'true'        // Preserve data across restarts
+  },
+  cron_restart: '0 3 * * 0'       // Weekly restart (Sunday 3am)
+}
+```
+
+### How It Works
+
+**First Run** (no existing data):
+- Generates 30 days of synthetic historical data
+- Starts live metric generation (every 10s)
+- Begins event simulation
+
+**Subsequent Restarts** (with `SKIP_BOOTSTRAP=true`):
+- Preserves all accumulated data
+- Resumes live generation from current time
+- Shows data age in startup logs
+
+**Automatic Maintenance**:
+- Daily cleanup at 3am (deletes data older than 30 days)
+- Weekly pm2 restart (refreshes 30-day history window)
+- Storage bounded to ~30 days, ~40-60MB
+
+### Fresh Start (Manual Reset)
+
+To clear all data and regenerate from scratch:
+
+```bash
+# Stop the backend
+pm2 stop monitoring-app-backend
+
+# Delete database files
+rm /opt/monitoring-app/backend/data/metrics.csv
+rm /opt/monitoring-app/backend/data/events.db
+
+# Restart (will regenerate fresh data)
+pm2 start monitoring-app-backend
+```
+
+### Storage Management
+
+**Database Files**:
+- `backend/data/metrics.csv` - Time-series metrics (TinyFlux)
+- `backend/data/events.db` - Discrete events (SQLite)
+
+**Growth Pattern**:
+- ~10-15MB per week with 10s resolution
+- Bounded to 30 days by daily cleanup
+- Weekly restart provides fresh synthetic history
+
+**Tips for Long-Running Deployments**:
+- Monitor disk space (50-100MB buffer recommended)
+- Check logs for cleanup execution (`pm2 logs`)
+- Adjust `cron_restart` frequency based on demo needs
 
 ## Tech Stack
 
