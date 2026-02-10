@@ -199,12 +199,12 @@ async def run_backend():
     server = uvicorn.Server(config)
     
     print("\n" + "="*60)
-    print("FastAPI HTTP server starting on http://0.0.0.0:8001")
-    print("API docs available at http://localhost:8001/docs")
+    print("FastAPI HTTP server starting on http://0.0.0.0:5011")
+    print("API docs available at http://localhost:5011/docs")
     print("="*60 + "\n")
     
     # Start WebSocket server
-    ws_server = get_websocket_server(host="0.0.0.0", port=8000)
+    ws_server = get_websocket_server(host="0.0.0.0", port=5010)
     await ws_server.start()
     
     # Start all services in parallel

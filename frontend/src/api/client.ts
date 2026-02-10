@@ -10,8 +10,8 @@ import {
   EventMessage,
 } from "../chart/types";
 
-const HTTP_BASE_URL = "http://localhost:8001";
-const WS_URL = "ws://localhost:8000";
+const HTTP_BASE_URL = "http://localhost:5011";
+const WS_URL = "ws://localhost:5010";
 
 export class APIClient {
   private ws: WebSocket | null = null;
