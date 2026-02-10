@@ -241,6 +241,28 @@ class EventsStore:
         cursor.execute("DELETE FROM events")
         self.conn.commit()
     
+    def delete_older_than(self, cutoff_timestamp: int) -> int:
+        """
+        Delete all events older than the cutoff timestamp.
+        
+        Args:
+            cutoff_timestamp: Unix timestamp - delete everything before this
+            
+        Returns:
+            Number of events deleted
+        """
+        cursor = self.conn.cursor()
+        
+        # Get count of old events
+        cursor.execute("SELECT COUNT(*) FROM events WHERE timestamp < ?", (cutoff_timestamp,))
+        count = cursor.fetchone()[0]
+        
+        # Delete old events
+        cursor.execute("DELETE FROM events WHERE timestamp < ?", (cutoff_timestamp,))
+        self.conn.commit()
+        
+        return count
+    
     def close(self) -> None:
         """Close database connection."""
         self.conn.close()

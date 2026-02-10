@@ -93,6 +93,42 @@ async def stream_events_loop():
     print("Event generator started (random events every 5 min)")
 
 
+async def cleanup_old_data_loop():
+    """
+    Periodically delete data older than 30 days to maintain rolling window.
+    
+    Runs every hour to keep storage bounded during continuous operation.
+    """
+    metrics_store = get_metrics_store()
+    events_store = get_events_store()
+    
+    # Cleanup interval: every hour
+    cleanup_interval = 3600
+    
+    # Retention period: 30 days
+    retention_seconds = 30 * 24 * 3600
+    
+    print(f"Data cleanup task started (runs every {cleanup_interval/3600:.0f} hour, keeps {retention_seconds/86400:.0f} days)")
+    
+    while True:
+        try:
+            await asyncio.sleep(cleanup_interval)
+            
+            # Calculate cutoff timestamp
+            cutoff = int(time.time()) - retention_seconds
+            
+            # Delete old data
+            metrics_deleted = metrics_store.delete_older_than(cutoff)
+            events_deleted = events_store.delete_older_than(cutoff)
+            
+            if metrics_deleted > 0 or events_deleted > 0:
+                print(f"Cleanup: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}")
+            
+        except Exception as e:
+            print(f"Error in cleanup loop: {e}")
+            await asyncio.sleep(60)
+
+
 async def run_backend():
     """
     Run the complete backend system.
@@ -175,7 +211,8 @@ async def run_backend():
     await asyncio.gather(
         server.serve(),  # HTTP API
         stream_metrics_loop(),
-        stream_events_loop()
+        stream_events_loop(),
+        cleanup_old_data_loop()  # Periodic cleanup to maintain 30-day window
     )
 
 

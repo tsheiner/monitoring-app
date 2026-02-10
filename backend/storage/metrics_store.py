@@ -265,6 +265,29 @@ class MetricsStore:
         Tag = TagQuery()
         self.db.remove(Tag.metric == metric)
     
+    def delete_older_than(self, cutoff_timestamp: int) -> int:
+        """
+        Delete all observations older than the cutoff timestamp.
+        
+        Args:
+            cutoff_timestamp: Unix timestamp - delete everything before this
+            
+        Returns:
+            Number of observations deleted
+        """
+        Time = TimeQuery()
+        cutoff_dt = datetime.fromtimestamp(cutoff_timestamp, tz=timezone.utc)
+        
+        # Get count before deletion
+        old_count = len(self.db)
+        
+        # Delete old data
+        self.db.remove(Time < cutoff_dt)
+        
+        # Return count of deleted items
+        new_count = len(self.db)
+        return old_count - new_count
+    
     def close(self) -> None:
         """Close database connection."""
         self.db.close()
