@@ -39,7 +39,51 @@ export class DistributionRibbonGenerator implements Generator {
   }
 
   redraw(range: [number, number]): void {
-    if (!this.xScale || !this.yScale || this.data.length === 0) return;
+    if (!this.xScale || !this.yScale || this.data.length === 0) {
+      console.log(`📊 DistributionRibbon.redraw skipped: xScale=${!!this.xScale}, yScale=${!!this.yScale}, data.length=${this.data.length}`);
+      return;
+    }
+
+    // Debug: Check Y-scale domain and look for outliers
+    const yDomain = this.yScale.domain();
+    const dataValues = this.data.flatMap(dp => [
+      dp.distribution.p1, dp.distribution.p50, dp.distribution.p99
+    ]);
+    const dataMin = Math.min(...dataValues);
+    const dataMax = Math.max(...dataValues);
+    
+    console.log(`📊 DistributionRibbon rendering ${this.data.length} points, Y-scale: [${yDomain[0].toFixed(2)}, ${yDomain[1].toFixed(2)}], data range: [${dataMin.toFixed(2)}, ${dataMax.toFixed(2)}]`);
+    
+    // Log first and last distribution points to check for time gaps
+    if (this.data.length > 0) {
+      const first = this.data[0];
+      const last = this.data[this.data.length - 1];
+      const xDomain = this.xScale.domain();
+      const chartStart = xDomain[0].getTime() / 1000;
+      const chartEnd = xDomain[1].getTime() / 1000;
+      const gapToChartEnd = chartEnd - last.timestamp;
+      
+      console.log(`📊 Distribution time range: first=${new Date(first.timestamp*1000).toISOString()}, last=${new Date(last.timestamp*1000).toISOString()}, chart ends at ${new Date(chartEnd*1000).toISOString()}, gap=${gapToChartEnd.toFixed(0)}s`);
+      console.log(`📊 Last distribution point: p1=${last.distribution.p1.toFixed(2)}, p50=${last.distribution.p50.toFixed(2)}, p99=${last.distribution.p99.toFixed(2)}`);
+    }
+    
+    if (dataMin < yDomain[0] || dataMax > yDomain[1]) {
+      console.warn(`⚠️ Distribution data outside Y-scale: data [${dataMin.toFixed(2)}, ${dataMax.toFixed(2)}], scale [${yDomain[0].toFixed(2)}, ${yDomain[1].toFixed(2)}]`);
+      
+      // Find the outlier points
+      const outliers = this.data.filter(dp => 
+        dp.distribution.p1 < yDomain[0] || 
+        dp.distribution.p99 > yDomain[1]
+      );
+      console.warn(`🔍 Outlier distribution points (${outliers.length}):`, 
+        outliers.slice(0, 3).map(dp => ({
+          ts: new Date(dp.timestamp * 1000).toISOString(),
+          p1: dp.distribution.p1.toFixed(2),
+          p50: dp.distribution.p50.toFixed(2),
+          p99: dp.distribution.p99.toFixed(2)
+        }))
+      );
+    }
 
     // Clear existing paths
     this.group.selectAll("*").remove();

@@ -335,13 +335,16 @@ def reset_generator() -> None:
     _generator_instance = None
 
 
-def reset_for_live_streaming() -> None:
+def reset_for_live_streaming(start_time: int = None) -> None:
     """
     Reset generator for live streaming while preserving noise state.
 
     After bootstrap, the generator has start_time from days ago.
-    This resets start_time to now while keeping the noise state
-    so live data flows smoothly from historical data.
+    This resets start_time to the specified time (or now) while keeping 
+    the noise state so live data flows smoothly from historical data.
+    
+    Args:
+        start_time: Timestamp to start from (defaults to current time)
     """
     global _generator_instance
     if _generator_instance is not None:
@@ -350,8 +353,9 @@ def reset_for_live_streaming() -> None:
         preserved_capacity = _generator_instance.capacity_state
         preserved_health = _generator_instance.health_state
 
-        # Create new instance starting from now
-        _generator_instance = RealisticMetricsGenerator(start_time=int(time.time()))
+        # Create new instance starting from specified time (or now)
+        new_start = start_time if start_time is not None else int(time.time())
+        _generator_instance = RealisticMetricsGenerator(start_time=new_start)
 
         # Restore the noise state
         _generator_instance.noise_state = preserved_noise

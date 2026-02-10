@@ -255,3 +255,10 @@ def get_events_store(db_path: str = "data/events.db") -> EventsStore:
     if _store_instance is None:
         _store_instance = EventsStore(db_path)
     return _store_instance
+
+def reset_events_store() -> None:
+    """Reset the singleton instance (called after clearing data)."""
+    global _store_instance
+    if _store_instance is not None:
+        _store_instance.close()
+        _store_instance = None

@@ -25,6 +25,7 @@ async def stream_metrics_loop():
     Continuously generate and broadcast metric observations.
     
     Generates all 7 metrics every 10 seconds and broadcasts via WebSocket.
+    Uses real wall clock time for live observations.
     """
     generator = get_generator()
     metrics_store = get_metrics_store()
@@ -34,9 +35,12 @@ async def stream_metrics_loop():
     
     while True:
         try:
-            # Generate observation for each metric
+            # Use actual current time for live observations
+            current_time = int(time.time())
+            
+            # Generate observation for each metric at current time
             for metric in generator.get_all_metrics():
-                observation = generator.generate_observation(metric)
+                observation = generator.generate_observation(metric, timestamp=current_time)
                 
                 # Store it
                 metrics_store.insert_observation(observation)
@@ -44,8 +48,9 @@ async def stream_metrics_loop():
                 # Broadcast it
                 await ws_server.broadcast_metric(observation)
             
-            # Advance time
-            generator.tick(10)
+            # No need to tick() - we use actual wall clock time
+            # The generator's internal state (noise, correlations) is preserved
+            # but timestamps come from real time
             
             # Wait 10 seconds before next batch
             await asyncio.sleep(10)
@@ -113,17 +118,40 @@ async def run_backend():
     # Clear and regenerate historical data on each startup
     # This ensures timestamps are always current for the prototype
     print("Clearing existing data...")
-    metrics_store = get_metrics_store()
-    events_store = get_events_store()
     
-    # Clear all data
-    for metric in ["time_to_connect", "throughput", "coverage", "capacity", 
-                   "roaming", "successful_connects", "ap_health"]:
-        metrics_store.delete_all(metric)
-    events_store.delete_all()
+    # Delete database files entirely to ensure clean slate
+    import os
+    from pathlib import Path
     
-    # Bootstrap with 90 days of tiered historical data
-    bootstrap_historical_data(days=90)
+    # Get absolute paths
+    backend_dir = Path(__file__).parent
+    db_files = [
+        backend_dir / "data" / "metrics.csv",
+        backend_dir / "data" / "events.db"
+    ]
+    
+    for db_file in db_files:
+        print(f"  Checking {db_file}...")
+        if db_file.exists():
+            print(f"    File exists, deleting...")
+            db_file.unlink()
+            print(f"    Deleted!")
+        else:
+            print(f"    File does not exist, skipping")
+    
+    # Reset singleton instances to get fresh database connections
+    from storage.metrics_store import reset_metrics_store
+    from storage.events_store import reset_events_store
+    reset_metrics_store()
+    reset_events_store()
+    
+    # Bootstrap tiered historical data ending at current time
+    # Duration is determined by tier configuration (~30 days)
+    from simulator.realistic_generator import reset_for_live_streaming
+    bootstrap_historical_data()
+    
+    # Reset generator to start live streaming (preserves noise state for continuity)
+    reset_for_live_streaming()
     
     # Start HTTP API server in background task (same process!)
     config = uvicorn.Config(

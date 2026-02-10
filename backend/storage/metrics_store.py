@@ -6,7 +6,7 @@ Stores time-series observations and provides range queries with distribution com
 import os
 from typing import List, Dict, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 from tinyflux import TinyFlux, Point, TagQuery, TimeQuery
@@ -34,8 +34,9 @@ class MetricsStore:
         Args:
             observation: Dict with timestamp, metric, value
         """
+        # Use UTC for all timestamps to avoid timezone confusion
         point = Point(
-            time=datetime.fromtimestamp(observation["timestamp"]),
+            time=datetime.fromtimestamp(observation["timestamp"], tz=timezone.utc),
             tags={"metric": observation["metric"]},
             fields={"value": observation["value"]}
         )
@@ -48,9 +49,10 @@ class MetricsStore:
         Args:
             observations: List of observation dicts
         """
+        # Use UTC for all timestamps to avoid timezone confusion
         points = [
             Point(
-                time=datetime.fromtimestamp(obs["timestamp"]),
+                time=datetime.fromtimestamp(obs["timestamp"], tz=timezone.utc),
                 tags={"metric": obs["metric"]},
                 fields={"value": obs["value"]}
             )
@@ -77,10 +79,9 @@ class MetricsStore:
         """
         Tag = TagQuery()
         Time = TimeQuery()
-        
-        # Convert Unix timestamps to datetime for TinyFlux
-        start_dt = datetime.fromtimestamp(start)
-        end_dt = datetime.fromtimestamp(end)
+        # Use UTC for all timestamps to avoid timezone confusion
+        start_dt = datetime.fromtimestamp(start, tz=timezone.utc)
+        end_dt = datetime.fromtimestamp(end, tz=timezone.utc)
         
         results = self.db.search(
             (Tag.metric == metric) & 
@@ -278,3 +279,10 @@ def get_metrics_store(db_path: str = "data/metrics.csv") -> MetricsStore:
     if _store_instance is None:
         _store_instance = MetricsStore(db_path)
     return _store_instance
+
+def reset_metrics_store() -> None:
+    """Reset the singleton instance (called after clearing data)."""
+    global _store_instance
+    if _store_instance is not None:
+        _store_instance.close()
+        _store_instance = None

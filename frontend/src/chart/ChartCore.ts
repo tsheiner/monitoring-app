@@ -144,10 +144,12 @@ export class ChartCore {
    * Update Y scale domain.
    */
   updateYDomain(domain: [number, number]): void {
-    // #region agent log
     const previousDomain = this.yScale.domain();
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:updateYDomain',message:'Y-scale domain update',data:{previousDomain,inputDomain:domain,domainChanged:domain[0]!==previousDomain[0]||domain[1]!==previousDomain[1]},timestamp:Date.now(),runId:'pan-rescale-debug',hypothesisId:'H3'})}).catch(()=>{});
-    // #endregion
+    const domainChanged = domain[0] !== previousDomain[0] || domain[1] !== previousDomain[1];
+    
+    if (domainChanged) {
+      console.log(`⚠️ Y-domain CHANGED: [${previousDomain[0].toFixed(2)}, ${previousDomain[1].toFixed(2)}] → [${domain[0].toFixed(2)}, ${domain[1].toFixed(2)}]`);
+    }
     
     // Add 10% padding to both ends
     const padding = (domain[1] - domain[0]) * 0.1;
@@ -175,6 +177,14 @@ export class ChartCore {
    */
   getChartGroup(): d3.Selection<SVGGElement, unknown, null, undefined> {
     return this.contentGroup;
+  }
+
+  /**
+   * Get unclipped chart group for elements that should extend beyond boundaries.
+   * Use this for event markers, tooltips, etc.
+   */
+  getUnclippedChartGroup(): d3.Selection<SVGGElement, unknown, null, undefined> {
+    return this.chartGroup;
   }
 
   /**

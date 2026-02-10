@@ -147,14 +147,23 @@ class MonitoringApp {
         clearTimeout(this.dataFetchDebounceTimer);
       }
 
-      // Schedule new fetch after 500ms of no pan/zoom activity
+      // Schedule new fetch after 300ms of no pan/zoom activity
       this.dataFetchDebounceTimer = window.setTimeout(async () => {
+        const [visibleStart, visibleEnd] = range;
+        const duration = visibleEnd - visibleStart;
+        
+        // Add 100% padding on each side (3x total: 1 past + 1 visible + 1 future)
+        // This means user can pan 1 full screen in either direction without fetch
+        const paddingAmount = duration;
+        const fetchStart = visibleStart - paddingAmount;
+        const fetchEnd = visibleEnd + paddingAmount;
+        
         console.log(
-          `Fetching data for pan/zoom range: ${range[0]} to ${range[1]}`,
+          `Fetching data with buffer: visible [${visibleStart}, ${visibleEnd}], fetching [${fetchStart}, ${fetchEnd}]`,
         );
-        await this.loadDataForRange(range[0], range[1]);
+        await this.loadDataForRangeIncremental(fetchStart, fetchEnd);
         this.dataFetchDebounceTimer = null;
-      }, 500);
+      }, 300);
     });
 
     // Load initial data
@@ -247,6 +256,52 @@ class MonitoringApp {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
       this.showError(`Failed to load historical data: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Load data incrementally for pan/zoom - only fetches missing data, preserves buffer.
+   * Used during pan/zoom interactions to provide smooth scrolling.
+   */
+  private async loadDataForRangeIncremental(start: number, end: number): Promise<void> {
+    try {
+      const enabledMetrics = this.metrics.filter((m) => m.enabled);
+
+      // Fetch data for each enabled metric
+      for (const metric of enabledMetrics) {
+        console.log(
+          `Incrementally fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
+        );
+        const metricData = await this.api.fetchMetricHistory(
+          metric.name,
+          start,
+          end,
+        );
+        console.log(
+          `Received ${metricData.observations.length} observations for ${metric.name}`,
+        );
+        
+        // Load data incrementally (appends to buffer, doesn't clear)
+        this.chart.loadHistoricalData(
+          metric.name,
+          metricData.observations,
+          metricData.distribution,
+          metricData.distribution_series,
+        );
+      }
+
+      // Load events for the extended range
+      const eventsData = await this.api.fetchEvents(start, end);
+      // Merge with existing events, removing duplicates
+      const existingIds = new Set(this.allEvents.map(e => `${e.timestamp}-${e.event_type}`));
+      const newEvents = eventsData.events.filter(e => !existingIds.has(`${e.timestamp}-${e.event_type}`));
+      this.allEvents = [...this.allEvents, ...newEvents];
+      this.updateEventDisplay();
+
+      console.log(`Incremental fetch complete: now have ${this.allEvents.length} total events`);
+    } catch (error) {
+      console.error("Error loading incremental data:", error);
+      // Don't show error to user - this is background prefetch
     }
   }
 

@@ -65,7 +65,7 @@ export class ChartView {
     // Initialize event markers if enabled
     if (config.showEvents) {
       this.eventMarkers = new EventMarkersGenerator(
-        this.core.getChartGroup(),
+        this.core.getUnclippedChartGroup(), // Use unclipped group so markers aren't cut off
         config.colors.event,
         config.colors.eventHover,
       );
@@ -195,8 +195,33 @@ export class ChartView {
       `Loading ${observations.length} observations for ${metricName}, has distribution series: ${distributionSeries?.length > 0}`,
     );
 
+    // Debug: Log actual min/max of incoming observations
+    if (observations.length > 0) {
+      const obsValues = observations.map(o => o.value);
+      const obsMin = Math.min(...obsValues);
+      const obsMax = Math.max(...obsValues);
+      const firstTs = observations[0].timestamp;
+      const lastTs = observations[observations.length - 1].timestamp;
+      const currentRange = this.config.timeRangeEnd ? [this.config.timeRangeEnd - this.config.timeRangeSeconds, this.config.timeRangeEnd] : null;
+      const gapToEnd = currentRange ? currentRange[1] - lastTs : 0;
+      
+      console.log(`📥 Incoming observations: min=${obsMin.toFixed(2)}, max=${obsMax.toFixed(2)}, first 3: [${obsValues.slice(0,3).map(v=>v.toFixed(2)).join(', ')}], last 3: [${obsValues.slice(-3).map(v=>v.toFixed(2)).join(', ')}]`);
+      console.log(`⏰ Time range: data [${new Date(firstTs*1000).toISOString()} to ${new Date(lastTs*1000).toISOString()}], chart range ${currentRange ? `[${new Date(currentRange[0]*1000).toISOString()} to ${new Date(currentRange[1]*1000).toISOString()}]` : 'not set'}, gap to chart end: ${gapToEnd.toFixed(0)}s`);
+    }
+
     metricData.dataTarget.push(observations);
     metricData.currentDistribution = distribution;
+    
+    // Debug: Check for suspicious jumps in data
+    if (observations.length > 1) {
+      const values = observations.map(o => o.value);
+      const maxJump = Math.max(...values.map((v, i) => 
+        i > 0 ? Math.abs(v - values[i-1]) : 0
+      ));
+      if (maxJump > 5) {
+        console.warn(`⚠️ Large value jump detected: ${maxJump.toFixed(2)} in ${metricName}. First 3: ${values.slice(0,3).map(v=>v.toFixed(2))}, Last 3: ${values.slice(-3).map(v=>v.toFixed(2))}`);
+      }
+    }
 
     // Update buffered range for this metric
     if (observations.length > 0) {
@@ -215,80 +240,75 @@ export class ChartView {
       }
     }
 
-    // Clamp distribution series to match the actual extent of the data.
-    // Left edge: clamp to range[0] (historical data typically starts at/before range).
-    // Right edge: clamp to the last observation's timestamp, NOT range[1].
-    // This prevents the ribbon from projecting flat through time gaps where
-    // no data exists (e.g., between historical data end and live "now").
+    // Merge/update distribution series (don't replace - we want full buffered range)
     const rawSeries = distributionSeries || [];
-    if (rawSeries.length > 0 && observations.length > 0) {
-      const range = this.sharedRange.getRange();
-      const duration = range[1] - range[0];
-      const buffer = duration * 0.05;
-
-      // Right edge = last observation timestamp (where actual data ends)
-      const lastObsTime = observations[observations.length - 1].timestamp;
-
-      // Keep points within generous buffer of visible range
-      const inRange = rawSeries.filter(
-        (dp) =>
-          dp.timestamp >= range[0] - buffer &&
-          dp.timestamp <= lastObsTime + buffer,
-      );
-
-      if (inRange.length > 0) {
-        const padded: DistributionPoint[] = [];
-
-        // Always add left edge point at range[0]
-        padded.push({
-          timestamp: range[0],
-          distribution: inRange[0].distribution,
-        });
-
-        // Add interior points
-        for (const dp of inRange) {
-          if (dp.timestamp > range[0] && dp.timestamp < lastObsTime) {
-            padded.push(dp);
-          }
+    if (rawSeries.length > 0) {
+      // For incremental fetches, merge new distribution points with existing ones
+      if (metricData.distributionSeries.length > 0) {
+        // Create a map of existing points by timestamp
+        const existingMap = new Map(
+          metricData.distributionSeries.map(dp => [dp.timestamp, dp])
+        );
+        
+        // Add/update with new points
+        for (const dp of rawSeries) {
+          existingMap.set(dp.timestamp, dp);
         }
-
-        // Add right edge point at last observation (not range[1])
-        padded.push({
-          timestamp: lastObsTime,
-          distribution: inRange[inRange.length - 1].distribution,
-        });
-
-        metricData.distributionSeries = padded;
+        
+        // Sort by timestamp and store
+        metricData.distributionSeries = Array.from(existingMap.values())
+          .sort((a, b) => a.timestamp - b.timestamp);
+        
+        console.log(`Merged distribution: ${rawSeries.length} new points, ${metricData.distributionSeries.length} total points`);
       } else {
+        // First load: use as-is
         metricData.distributionSeries = rawSeries;
       }
-    } else {
-      metricData.distributionSeries = rawSeries;
     }
 
-    // Calculate Y domain for this metric's raw data
+    // Calculate Y domain for this metric's raw data AND distribution percentiles
     if (observations.length > 0) {
       // Get ALL buffered data to calculate stable Y-domain
       const allBufferedData = metricData.dataTarget.getAll();
       
       if (allBufferedData.length > 0) {
         const values = allBufferedData.map((obs) => obs.value);
-        const minVal = Math.min(...values);
-        const maxVal = Math.max(...values);
+        let minVal = Math.min(...values);
+        let maxVal = Math.max(...values);
+        
+        // If distribution data is available, include percentiles in domain
+        // Use p10/p90 instead of p1/p99 to avoid over-expanding (keeps detail visible)
+        if (distributionSeries && distributionSeries.length > 0) {
+          const allP10 = distributionSeries.map(d => d.distribution.p10);
+          const allP90 = distributionSeries.map(d => d.distribution.p90);
+          minVal = Math.min(minVal, ...allP10);
+          maxVal = Math.max(maxVal, ...allP90);
+          console.log(`Including distribution in Y-domain: p10 min=${Math.min(...allP10).toFixed(2)}, p90 max=${Math.max(...allP90).toFixed(2)}`);
+        }
 
         // Update domain ONLY if it expands (never shrink during pan)
+        console.log(`🔍 Before Y-domain update: current=[${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}], new data=[${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`);
+        
         if (metricData.normalizedYDomain[0] === Infinity) {
           // First time: initialize with actual data range
           metricData.normalizedYDomain = [minVal, maxVal];
+          console.log(`✅ First time initialization: [${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`);
         } else {
           // Expand domain to include new data (but never shrink)
+          const oldDomain = [...metricData.normalizedYDomain];
           metricData.normalizedYDomain = [
             Math.min(metricData.normalizedYDomain[0], minVal),
             Math.max(metricData.normalizedYDomain[1], maxVal)
           ];
+          const changed = oldDomain[0] !== metricData.normalizedYDomain[0] || oldDomain[1] !== metricData.normalizedYDomain[1];
+          if (changed) {
+            console.log(`🔄 Y-domain expanded: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`);
+          } else {
+            console.log(`✓ Y-domain unchanged (new data within existing range)`);
+          }
         }
 
-        console.log(`Metric ${metricName} Y domain: [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}] (from ${allBufferedData.length} buffered points)`);
+        console.log(`Metric ${metricName} Y domain: [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}] (from ${allBufferedData.length} buffered points, min: ${minVal.toFixed(2)}, max: ${maxVal.toFixed(2)})`);
       }
     }
 
@@ -313,6 +333,9 @@ export class ChartView {
    * Update global Y domain (always 0-100 for normalized display).
    */
   private updateGlobalYDomain(): void {
+    // Debug: log call stack to see WHO is calling this
+    console.log('📊 updateGlobalYDomain called from:', new Error().stack?.split('\n')[2]?.trim());
+    
     // #region agent log
     const currentRange = this.sharedRange.getRange();
     const allMetricsData = Array.from(this.metrics.entries()).map(([name, data]) => ({
@@ -358,6 +381,22 @@ export class ChartView {
     }
 
     metricData.dataTarget.push([observation]);
+    
+    // Check if this new observation EXPANDS the Y-domain
+    const oldDomain = metricData.normalizedYDomain;
+    const domainExpanded = 
+      observation.value < oldDomain[0] || 
+      observation.value > oldDomain[1];
+    
+    // Only update Y-domain if it actually expanded
+    if (domainExpanded) {
+      metricData.normalizedYDomain = [
+        Math.min(oldDomain[0], observation.value),
+        Math.max(oldDomain[1], observation.value)
+      ];
+      console.log(`📈 Y-domain EXPANDED by live data: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`);
+      this.updateGlobalYDomain();
+    }
 
     // If in live mode, slide the window forward (once for all metrics)
     if (this.config.liveMode) {
@@ -377,9 +416,6 @@ export class ChartView {
         }
       }
     }
-
-    // Update Y domain
-    this.updateGlobalYDomain();
 
     // Slide the distribution left edge to track the sliding window.
     // The right edge stays at the last meaningful data point (set by
@@ -479,15 +515,13 @@ export class ChartView {
     this.durationSeconds = end - start;
     this.chartStartTime = start;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:updateTimeRangeNonDestructive',message:'Pan/zoom range update',data:{start,end,duration:end-start,willUpdateYDomain:true},timestamp:Date.now(),runId:'pan-rescale-debug',hypothesisId:'H3'})}).catch(()=>{});
-    // #endregion
-    
     // Update shared range without clearing buffers
     this.sharedRange.setRange([start, end]);
     
-    // Update Y domain and render with existing data
-    this.updateGlobalYDomain();
+    // DON'T update Y domain here - it only changes when NEW data is loaded,
+    // not when panning. This prevents Y-axis jumping during pan.
+    // Y domain is updated in loadHistoricalData() and appendLiveData() only.
+    
     this.render();
   }
 
@@ -702,11 +736,12 @@ export class ChartView {
 
     // Render each metric
     for (const [metricName, metricData] of this.metrics) {
-      const observations = metricData.dataTarget.getInRange(range[0], range[1]);
+      // Get ALL buffered data (not just visible range) for pre-rendering
+      const allObservations = metricData.dataTarget.getAll();
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
-        const normalizedObs = observations.map((obs) => ({
+        const normalizedObs = allObservations.map((obs) => ({
           timestamp: obs.timestamp,
           value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
         }));
@@ -717,8 +752,8 @@ export class ChartView {
           metricData.distributionGenerator.hide();
         }
       } else {
-        // Single metric: use actual values
-        metricData.lineGenerator.update(observations, range);
+        // Single metric: use actual values for ALL buffered data
+        metricData.lineGenerator.update(allObservations, range);
 
         // FIX C: Explicitly show distribution when in single-metric mode.
         // It may have been hidden during a prior multi-metric render.
