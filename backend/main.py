@@ -95,38 +95,53 @@ async def stream_events_loop():
 
 async def cleanup_old_data_loop():
     """
-    Periodically delete data older than 30 days to maintain rolling window.
+    Delete data older than 30 days to maintain rolling window.
     
-    Runs every hour to keep storage bounded during continuous operation.
+    Runs once per day at 3:00 AM to minimize impact on performance.
+    For continuous operation, this keeps storage bounded while avoiding
+    frequent expensive delete operations on CSV storage.
     """
+    from datetime import datetime, timedelta
+    
     metrics_store = get_metrics_store()
     events_store = get_events_store()
-    
-    # Cleanup interval: every hour
-    cleanup_interval = 3600
     
     # Retention period: 30 days
     retention_seconds = 30 * 24 * 3600
     
-    print(f"Data cleanup task started (runs every {cleanup_interval/3600:.0f} hour, keeps {retention_seconds/86400:.0f} days)")
+    print(f"Data cleanup task started (runs daily at 3:00 AM, keeps {retention_seconds/86400:.0f} days)")
     
     while True:
         try:
-            await asyncio.sleep(cleanup_interval)
+            # Calculate next 3 AM
+            now = datetime.now()
+            next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
             
-            # Calculate cutoff timestamp
+            # If it's already past 3 AM today, schedule for tomorrow
+            if next_run <= now:
+                next_run += timedelta(days=1)
+            
+            # Wait until scheduled time
+            wait_seconds = (next_run - now).total_seconds()
+            print(f"Next cleanup scheduled for: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            await asyncio.sleep(wait_seconds)
+            
+            # Perform cleanup
+            print(f"\nRunning daily cleanup at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
             cutoff = int(time.time()) - retention_seconds
             
-            # Delete old data
             metrics_deleted = metrics_store.delete_older_than(cutoff)
             events_deleted = events_store.delete_older_than(cutoff)
             
-            if metrics_deleted > 0 or events_deleted > 0:
-                print(f"Cleanup: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}")
+            print(f"Cleanup complete: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}\n")
             
         except Exception as e:
             print(f"Error in cleanup loop: {e}")
-            await asyncio.sleep(60)
+            import traceback
+            traceback.print_exc()
+            # Wait 1 hour before retrying on error
+            await asyncio.sleep(3600)
 
 
 async def run_backend():
@@ -151,42 +166,63 @@ async def run_backend():
     print(f"Current profile: {current_profile}")
     print("(Set NETWORK_PROFILE env var to switch, e.g.: NETWORK_PROFILE=hospital python main.py)\n")
 
-    # Clear and regenerate historical data on each startup
-    # This ensures timestamps are always current for the prototype
-    print("Clearing existing data...")
+    # Check if we should skip bootstrap (for continuous operation)
+    skip_bootstrap = os.environ.get("SKIP_BOOTSTRAP", "false").lower() == "true"
     
-    # Delete database files entirely to ensure clean slate
-    import os
+    # Get absolute paths to database files
     from pathlib import Path
-    
-    # Get absolute paths
     backend_dir = Path(__file__).parent
     db_files = [
         backend_dir / "data" / "metrics.csv",
         backend_dir / "data" / "events.db"
     ]
     
-    for db_file in db_files:
-        print(f"  Checking {db_file}...")
-        if db_file.exists():
-            print(f"    File exists, deleting...")
-            db_file.unlink()
-            print(f"    Deleted!")
+    # Determine if this is first run (no data exists)
+    has_existing_data = any(db_file.exists() for db_file in db_files)
+    
+    if skip_bootstrap and has_existing_data:
+        # Continuous operation mode - keep existing data
+        print("\n" + "="*60)
+        print("CONTINUOUS OPERATION MODE")
+        print("="*60)
+        print("Existing data found and SKIP_BOOTSTRAP=true")
+        print("Preserving historical data and resuming live generation")
+        
+        # Show age of existing data
+        metrics_csv = db_files[0]
+        if metrics_csv.exists():
+            age_seconds = time.time() - metrics_csv.stat().st_mtime
+            age_hours = age_seconds / 3600
+            print(f"Data file last modified: {age_hours:.1f} hours ago")
+        print("="*60 + "\n")
+        
+    else:
+        # Fresh start - clear and regenerate
+        if skip_bootstrap and not has_existing_data:
+            print("\nSKIP_BOOTSTRAP=true but no existing data found")
+            print("Performing initial bootstrap...\n")
         else:
-            print(f"    File does not exist, skipping")
-    
-    # Reset singleton instances to get fresh database connections
-    from storage.metrics_store import reset_metrics_store
-    from storage.events_store import reset_events_store
-    reset_metrics_store()
-    reset_events_store()
-    
-    # Bootstrap tiered historical data ending at current time
-    # Duration is determined by tier configuration (~30 days)
-    from simulator.realistic_generator import reset_for_live_streaming
-    bootstrap_historical_data()
+            print("\nClearing existing data for fresh start...")
+        
+        # Delete database files entirely to ensure clean slate
+        for db_file in db_files:
+            if db_file.exists():
+                print(f"  Deleting {db_file.name}...")
+                db_file.unlink()
+        
+        # Reset singleton instances to get fresh database connections
+        from storage.metrics_store import reset_metrics_store
+        from storage.events_store import reset_events_store
+        reset_metrics_store()
+        reset_events_store()
+        
+        # Bootstrap tiered historical data ending at current time
+        # Duration is determined by tier configuration (~30 days)
+        bootstrap_historical_data()
+        print()
     
     # Reset generator to start live streaming (preserves noise state for continuity)
+    from simulator.realistic_generator import reset_for_live_streaming
     reset_for_live_streaming()
     
     # Start HTTP API server in background task (same process!)
