@@ -218,8 +218,19 @@ class MonitoringApp {
         fetchedData.push({ metric, data: metricData });
       }
 
-      // 2. Set chart range (clears old data) — synchronous, no repaint yet
-      this.chart.setTimeRange(duration, end);
+      // 2. Snap the right edge to the actual latest data point so the line
+      //    fills the full X axis (avoids gap when client "now" is ahead of data).
+      let latestDataTs = 0;
+      for (const { data } of fetchedData) {
+        if (data.observations.length > 0) {
+          const lastTs = data.observations[data.observations.length - 1].timestamp;
+          latestDataTs = Math.max(latestDataTs, lastTs);
+        }
+      }
+      const adjustedEnd = latestDataTs > 0 ? latestDataTs : end;
+
+      // Set chart range (clears old data) — synchronous, no repaint yet
+      this.chart.setTimeRange(duration, adjustedEnd);
 
       // 3. Load fetched data — synchronous, same JS tick as step 2.
       //    Browser won't repaint between clear and load, so no flash.

@@ -151,8 +151,8 @@ export class ChartCore {
       console.log(`⚠️ Y-domain CHANGED: [${previousDomain[0].toFixed(2)}, ${previousDomain[1].toFixed(2)}] → [${domain[0].toFixed(2)}, ${domain[1].toFixed(2)}]`);
     }
     
-    // Add 10% padding to both ends
-    const padding = (domain[1] - domain[0]) * 0.1;
+    // Add 25% padding to both ends for breathing room
+    const padding = (domain[1] - domain[0]) * 0.25;
     this.yScale.domain([domain[0] - padding, domain[1] + padding]);
     this.updateAxes();
   }
