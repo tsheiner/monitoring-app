@@ -145,5 +145,73 @@
     "capacity_on_latency": 0.85,
     "capacity_on_throughput": -0.75,
     "health_on_all": 0.65
+  },
+
+  "drivers": {
+    "description": "Campus drivers - higher volatility, class-schedule driven",
+    "client_load": {
+      "theta": 0.003,
+      "sigma": 0.006,
+      "normal_level": 0.50,
+      "description": "Student demand - more volatile than enterprise, class schedule peaks"
+    },
+    "rf_quality": {
+      "theta": 0.0005,
+      "sigma": 0.0015,
+      "normal_level": 0.87,
+      "description": "Campus RF - slightly noisier due to density and building materials"
+    },
+    "infra_health": {
+      "theta": 0.0003,
+      "sigma": 0.0008,
+      "normal_level": 0.93,
+      "description": "Campus infrastructure - slightly less maintained than enterprise"
+    }
+  },
+
+  "ap_topology": {
+    "description": "Campus AP topology - lecture halls, dorms, common areas",
+    "AP-Floor1-01": {
+      "role": "lecture_hall",
+      "floor": 1,
+      "load_baseline": 0.55,
+      "rf_baseline": 0.86,
+      "description": "Large lecture hall - very bursty with class changes"
+    },
+    "AP-Floor1-02": {
+      "role": "common_area",
+      "floor": 1,
+      "load_baseline": 0.40,
+      "rf_baseline": 0.88,
+      "description": "Student union common area"
+    },
+    "AP-Floor2-01": {
+      "role": "lab",
+      "floor": 2,
+      "load_baseline": 0.45,
+      "rf_baseline": 0.90,
+      "description": "Computer lab - steady moderate load during hours"
+    },
+    "AP-Floor2-02": {
+      "role": "study_area",
+      "floor": 2,
+      "load_baseline": 0.35,
+      "rf_baseline": 0.89,
+      "description": "Library study area"
+    },
+    "AP-Floor3-01": {
+      "role": "dorm",
+      "floor": 3,
+      "load_baseline": 0.50,
+      "rf_baseline": 0.84,
+      "description": "Dormitory floor - high evening/weekend usage"
+    },
+    "AP-Floor3-02": {
+      "role": "outdoor",
+      "floor": 3,
+      "load_baseline": 0.25,
+      "rf_baseline": 0.80,
+      "description": "Outdoor courtyard - weak signal, weather-affected"
+    }
   }
 }

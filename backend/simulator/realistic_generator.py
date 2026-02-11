@@ -1,23 +1,111 @@
 """
-Realistic metrics generator using research-based patterns.
+Driver-based metrics generator.
 
-Generates WiFi network metrics with:
-- Multi-frequency seasonality (daily + hourly + weekly)
-- Autocorrelated noise for smoothness
-- Metric correlations and cascading effects
-- Time-varying distributions
+Instead of generating metric values directly with noise, this simulator
+models three underlying continuous drivers that represent the physical
+reality of the network:
 
-Network profiles (set via NETWORK_PROFILE environment variable):
+- client_load: Demand from connected devices (0-1)
+- rf_quality: Radio frequency environment quality (0-1)
+- infra_health: Infrastructure hardware/software state (0-1)
+
+Metrics are DERIVED from these drivers via sensitivity functions. This
+produces naturally correlated, smooth, realistic traces because:
+
+1. Drivers evolve via Ornstein-Uhlenbeck process (smooth, mean-reverting)
+2. Multiple metrics respond to the same driver change (natural correlation)
+3. Events perturb drivers, which cascade to all affected metrics
+
+Three dimensions of the network (following network ops mental model):
+- Temporal: Time-of-day patterns drive the client_load daily rhythm
+- Physical: AP topology defines per-AP driver baselines and behavior
+- Logical: Network profile (enterprise/campus/hospital) sets overall character
+
+Network profiles are selected via NETWORK_PROFILE environment variable:
 - enterprise: Standard office environment (default)
 - campus: University with class schedules and dorm usage
 - hospital: 24/7 facility with high reliability requirements
 """
 import json
+import math
 import os
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 import numpy as np
+
+from simulator.perturbations import PerturbationManager, create_load_perturbation
+
+
+# --- Default driver parameters ---
+# These are used when the config file doesn't specify driver-specific values.
+# theta: mean reversion rate (1/s) — higher = faster return to mean
+# sigma: noise intensity — controls magnitude of random fluctuations
+# normal_level: the "normal" level used as reference for metric derivation
+DRIVER_DEFAULTS = {
+    "client_load": {
+        "theta": 0.002,       # ~6 min half-life: smooth but responsive
+        "sigma": 0.004,       # Stationary std ≈ 0.063
+        "normal_level": 0.45,
+    },
+    "rf_quality": {
+        "theta": 0.0005,      # ~23 min half-life: very slow drift
+        "sigma": 0.001,       # Stationary std ≈ 0.032
+        "normal_level": 0.90,
+    },
+    "infra_health": {
+        "theta": 0.0003,      # ~38 min half-life: persistent state
+        "sigma": 0.0005,      # Stationary std ≈ 0.020
+        "normal_level": 0.95,
+    },
+}
+
+
+# --- Metric sensitivity matrix ---
+# How each metric responds to driver deviations from normal.
+# Value = baseline + sum(sensitivity * driver_deviation * metric_range)
+# where driver_deviation = current_driver_value - normal_level
+#
+# Positive sensitivity: metric increases when driver increases
+# Negative sensitivity: metric decreases when driver increases
+METRIC_SENSITIVITIES = {
+    "capacity": {
+        "client_load": 0.70,       # Capacity directly tracks demand
+        "rf_quality": -0.05,       # Bad RF slightly reduces usable capacity
+        "infra_health": 0.15,      # Unhealthy infra reduces capacity
+    },
+    "throughput": {
+        "client_load": -0.25,      # High load = contention = lower throughput
+        "rf_quality": 0.20,        # Good RF = better throughput
+        "infra_health": 0.30,      # Healthy infra = better throughput
+    },
+    "time_to_connect": {
+        "client_load": 0.30,       # High load = longer connection setup
+        "rf_quality": -0.25,       # Bad RF = longer connections
+        "infra_health": -0.40,     # Unhealthy infra = much longer connections
+    },
+    "coverage": {
+        "client_load": -0.02,      # Negligible load effect on signal
+        "rf_quality": 0.50,        # RF quality is the primary driver
+        "infra_health": 0.05,      # Minor infra effect
+    },
+    "roaming": {
+        "client_load": 0.20,       # More clients = more contention during roam
+        "rf_quality": -0.20,       # Bad RF = worse roaming handoffs
+        "infra_health": -0.20,     # Unhealthy AP = worse handoffs
+    },
+    "successful_connects": {
+        "client_load": -0.08,      # High load = some failures
+        "rf_quality": 0.05,        # RF has minor effect
+        "infra_health": 0.30,      # Health is the big driver of failures
+    },
+    "ap_health": {
+        "client_load": -0.10,      # Overloaded AP degrades health score
+        "rf_quality": 0.05,        # RF has minor effect on health
+        "infra_health": 1.50,      # Direct mapping from driver to metric
+    },
+}
+
 
 # Available network profiles
 NETWORK_PROFILES = {
@@ -29,24 +117,17 @@ DEFAULT_PROFILE = "enterprise"
 
 
 def get_config_path() -> Path:
-    """
-    Get config file path based on NETWORK_PROFILE environment variable.
-
-    Set NETWORK_PROFILE to: enterprise, campus, or hospital
-    Defaults to enterprise if not set or invalid.
-    """
+    """Get config path based on NETWORK_PROFILE environment variable."""
     profile = os.environ.get("NETWORK_PROFILE", DEFAULT_PROFILE).lower()
 
     if profile not in NETWORK_PROFILES:
         print(f"Warning: Unknown NETWORK_PROFILE '{profile}', using '{DEFAULT_PROFILE}'")
         profile = DEFAULT_PROFILE
 
-    config_file = NETWORK_PROFILES[profile]
-    config_path = Path(__file__).parent / config_file
+    config_path = Path(__file__).parent / NETWORK_PROFILES[profile]
 
-    # Fall back to default config.json if profile file doesn't exist
     if not config_path.exists():
-        print(f"Warning: Config file {config_file} not found, using config.json")
+        print(f"Warning: Config file not found, using config.json")
         config_path = Path(__file__).parent / "config.json"
 
     print(f"Using network profile: {profile} ({config_path.name})")
@@ -54,257 +135,305 @@ def get_config_path() -> Path:
 
 
 class RealisticMetricsGenerator:
-    """Generate realistic network metrics with proper time series characteristics."""
+    """Generate realistic network metrics from underlying physical drivers."""
+
+    DRIVERS = ["client_load", "rf_quality", "infra_health"]
+
+    ENTITIES = [
+        "AP-Floor1-01", "AP-Floor1-02",
+        "AP-Floor2-01", "AP-Floor2-02",
+        "AP-Floor3-01", "AP-Floor3-02",
+    ]
 
     def __init__(self, start_time: int = None, config_path: str = None):
         """
-        Initialize metrics generator.
+        Initialize the driver-based metrics generator.
 
         Args:
-            start_time: Unix timestamp to start from (defaults to current time)
-            config_path: Path to config JSON file (uses NETWORK_PROFILE env var if None)
+            start_time: Unix timestamp to start from (defaults to now)
+            config_path: Path to config JSON (uses NETWORK_PROFILE if None)
         """
         self.start_time = start_time or int(time.time())
         self.current_offset = 0
 
-        # Load configuration based on profile or explicit path
+        # Load configuration
         if config_path is None:
             config_path = get_config_path()
-
         with open(config_path, 'r') as f:
             self.config = json.load(f)
-        
-        # Initialize noise state for autocorrelation (AR process)
-        # Each metric maintains its own noise history for smoothness
-        self.noise_state = {metric: 0.0 for metric in self.get_all_metrics()}
-        
-        # Capacity state for correlations
-        self.capacity_state = self.config['capacity']['baseline']
-        self.health_state = self.config['ap_health']['baseline']
-    
-    def generate_observation(self, metric: str, timestamp: int = None) -> Dict:
+
+        # AP topology from config
+        self._topology = self.config.get("ap_topology", {})
+
+        # Driver parameters (config overrides defaults)
+        self._driver_config = {}
+        cfg_drivers = self.config.get("drivers", {})
+        for driver in self.DRIVERS:
+            defaults = DRIVER_DEFAULTS[driver]
+            driver_cfg = cfg_drivers.get(driver, {})
+            self._driver_config[driver] = {
+                "theta": driver_cfg.get("theta", defaults["theta"]),
+                "sigma": driver_cfg.get("sigma", defaults["sigma"]),
+                "normal_level": driver_cfg.get("normal_level", defaults["normal_level"]),
+            }
+
+        # Per-AP driver state
+        self._driver_state: Dict[str, Dict[str, float]] = {}
+        self._last_update_time: Dict[str, int] = {}
+
+        # Initialize per-entity driver state
+        for entity in self.ENTITIES:
+            self._driver_state[entity] = {}
+            for driver in self.DRIVERS:
+                self._driver_state[entity][driver] = self._driver_mean(
+                    driver, entity, self.start_time
+                )
+            self._last_update_time[entity] = self.start_time
+
+        # Global state for queries without entity
+        self._driver_state["_global"] = {}
+        for driver in self.DRIVERS:
+            self._driver_state["_global"][driver] = self._driver_mean(
+                driver, None, self.start_time
+            )
+        self._last_update_time["_global"] = self.start_time
+
+        # Perturbation manager
+        self.perturbation_manager = PerturbationManager()
+
+        # RNG seeded from start_time for reproducibility within a session
+        self._rng = np.random.RandomState(abs(self.start_time) % (2**31))
+
+        # Track last load pattern injection time
+        self._last_load_check = self.start_time
+
+    def generate_observation(
+        self, metric: str, timestamp: int = None, entity: str = None
+    ) -> Dict:
         """
-        Generate a single observation for a metric at a timestamp.
-        
+        Generate a single metric observation by deriving from driver state.
+
         Args:
-            metric: Metric name
-            timestamp: Unix timestamp (defaults to current time)
-            
+            metric: Metric name (e.g., "throughput", "ap_health")
+            timestamp: Unix timestamp (defaults to current generator time)
+            entity: Optional AP entity for per-AP variation
+
         Returns:
             Observation dict with timestamp, metric, value
         """
         if metric not in self.get_all_metrics():
             raise ValueError(f"Unknown metric: {metric}")
-        
+
         ts = timestamp or (self.start_time + self.current_offset)
-        
-        # Update correlation states if generating capacity or health
-        if metric == 'capacity':
-            value = self._compute_value(metric, ts)
-            self.capacity_state = value
-        elif metric == 'ap_health':
-            value = self._compute_value(metric, ts)
-            self.health_state = value
-        else:
-            value = self._compute_value(metric, ts)
-        
-        return {
+        entity_key = entity or "_global"
+
+        # Ensure entity exists in state
+        if entity_key not in self._driver_state:
+            self._init_entity_state(entity_key, ts)
+
+        # Update drivers for this entity at this timestamp
+        drivers = self._update_drivers(entity_key, ts)
+
+        # Derive metric value from drivers
+        value = self._derive_metric(metric, drivers)
+
+        # Inject load patterns during business hours
+        self._maybe_inject_load_patterns(ts)
+
+        result = {
             "timestamp": ts,
             "metric": metric,
-            "value": round(value, 2)
+            "value": round(value, 2),
         }
-    
-    def _compute_value(self, metric: str, timestamp: int) -> float:
-        """
-        Compute metric value with realistic time series characteristics.
-        
-        Uses:
-        - Multi-frequency seasonality (daily, hourly, weekly)
-        - Autocorrelated noise (AR process)
-        - Metric correlations
-        """
-        cfg = self.config[metric]
-        
-        # 1. Calculate time-based components
-        base = cfg['baseline']
-        
-        # Daily pattern (24-hour cycle with business hours emphasis)
-        daily_component = self._daily_pattern(timestamp, cfg)
-        
-        # Hourly micro-variations (10-15 minute cycles)
-        hourly_component = self._hourly_pattern(timestamp, cfg)
-        
-        # Weekly pattern
-        weekly_component = self._weekly_pattern(timestamp, cfg)
-        
-        # 2. Combine seasonality
-        seasonal_value = base * (1.0 + daily_component + hourly_component + weekly_component)
-        
-        # 3. Apply correlations (capacity and health effects)
-        correlated_value = self._apply_correlations(metric, seasonal_value)
-        
-        # 4. Add autocorrelated noise for realistic smoothness
-        noisy_value = self._add_smooth_noise(metric, correlated_value, cfg)
-        
-        # 5. Clamp to realistic bounds
-        return np.clip(noisy_value, cfg['min'], cfg['max'])
-    
-    def _daily_pattern(self, timestamp: int, cfg: Dict) -> float:
-        """
-        Generate daily cycle with business hours emphasis.
+        if entity is not None:
+            result["entity"] = entity
 
-        Uses fractional hours for smooth transitions instead of discrete jumps.
+        return result
 
-        Pattern:
-        - Night (11pm-6am): baseline
-        - Morning surge (6-9am): gradual ramp up
-        - Daytime plateau (9am-4pm): sustained activity with lunch dip
-        - Evening decline (4-8pm): gradual drop
-        - Late evening (8-11pm): low activity
+    def _init_entity_state(self, entity_key: str, timestamp: int) -> None:
+        """Initialize driver state for a new entity."""
+        entity = entity_key if entity_key != "_global" else None
+        self._driver_state[entity_key] = {}
+        for driver in self.DRIVERS:
+            self._driver_state[entity_key][driver] = self._driver_mean(
+                driver, entity, timestamp
+            )
+        self._last_update_time[entity_key] = timestamp
+
+    def _update_drivers(self, entity_key: str, timestamp: int) -> Dict[str, float]:
         """
-        # Use fractional hour for smooth transitions
+        Update driver state using Ornstein-Uhlenbeck process and apply perturbations.
+
+        The OU process produces smooth, mean-reverting curves:
+        x(t+dt) = μ + (x(t) - μ) * exp(-θ*dt) + noise
+
+        Returns driver values with perturbation effects applied.
+        """
+        last_t = self._last_update_time.get(entity_key, timestamp)
+        dt = max(0, timestamp - last_t)
+        entity = entity_key if entity_key != "_global" else None
+
+        if dt > 0:
+            # OU process update for each driver
+            for driver in self.DRIVERS:
+                cfg = self._driver_config[driver]
+                theta = cfg["theta"]
+                sigma = cfg["sigma"]
+
+                # Time-varying mean
+                mu = self._driver_mean(driver, entity, timestamp)
+
+                # Current state
+                x = self._driver_state[entity_key][driver]
+
+                # Exact OU update (works for any dt, including large bootstrap gaps)
+                decay = math.exp(-theta * dt)
+
+                if theta > 0:
+                    noise_var = (sigma ** 2) / (2 * theta) * (1 - math.exp(-2 * theta * dt))
+                    noise_std = math.sqrt(max(0, noise_var))
+                else:
+                    noise_std = 0
+
+                x_new = mu + (x - mu) * decay + noise_std * self._rng.normal()
+                self._driver_state[entity_key][driver] = float(np.clip(x_new, 0.0, 1.0))
+
+            self._last_update_time[entity_key] = timestamp
+
+        # Build driver values with perturbation effects
+        drivers = {}
+        for driver in self.DRIVERS:
+            base = self._driver_state[entity_key][driver]
+            pert_effect = self.perturbation_manager.total_effect(driver, timestamp)
+            drivers[driver] = float(np.clip(base + pert_effect, 0.0, 1.0))
+
+        return drivers
+
+    def _driver_mean(self, driver: str, entity: Optional[str], timestamp: int) -> float:
+        """
+        Compute the time-varying mean for a driver, adjusted for AP topology.
+
+        The mean follows daily/weekly rhythms, shifted by per-AP characteristics.
+        """
         hour = (timestamp % 86400) / 3600.0
+        weekday = (timestamp // 86400 + 3) % 7  # 0=Sunday
 
-        peak_hour = cfg['peak_hour']
-        impact = cfg['business_hours_impact']
-        strength = cfg['daily_pattern_strength']
+        if driver == "client_load":
+            base_mean = self._client_load_daily(hour)
 
-        # Smooth daily curve using sine-based interpolation
-        # This creates gradual transitions instead of discrete jumps
-        if hour < 6:
-            # Night (midnight to 6am): low baseline
-            intensity = 0.1
-        elif hour < 9:
-            # Morning ramp (6am to 9am): smooth rise
-            t = (hour - 6) / 3.0  # 0 to 1 over 3 hours
-            intensity = 0.1 + 0.7 * (0.5 - 0.5 * np.cos(np.pi * t))
-        elif hour < 12:
-            # Morning plateau (9am to noon): high with slight variation
-            t = (hour - 9) / 3.0
-            intensity = 0.8 + 0.05 * np.sin(np.pi * t)
-        elif hour < 13:
-            # Lunch dip (noon to 1pm): slight decrease
-            t = (hour - 12)
-            intensity = 0.85 - 0.1 * np.sin(np.pi * t)
-        elif hour < 16:
-            # Afternoon peak (1pm to 4pm): highest activity
-            t = (hour - 13) / 3.0
-            base = 0.85 + 0.15 * np.sin(np.pi * t)
-            # Peak around configured peak_hour
-            peak_factor = np.exp(-((hour - peak_hour) ** 2) / 2)
-            intensity = base + 0.05 * peak_factor
-        elif hour < 19:
-            # Evening decline (4pm to 7pm): smooth drop
-            t = (hour - 16) / 3.0  # 0 to 1 over 3 hours
-            intensity = 0.85 - 0.55 * (0.5 - 0.5 * np.cos(np.pi * t))
-        elif hour < 23:
-            # Late evening (7pm to 11pm): gradual fade to night
-            t = (hour - 19) / 4.0  # 0 to 1 over 4 hours
-            intensity = 0.3 - 0.2 * t
+            # Weekend reduction
+            if weekday in (0, 6):
+                base_mean *= 0.4
+
+            # Per-AP topology offset
+            if entity and entity in self._topology:
+                ap_baseline = self._topology[entity].get("load_baseline", 0.45)
+                base_mean += (ap_baseline - 0.45)
+
+        elif driver == "rf_quality":
+            base_mean = self._driver_config["rf_quality"]["normal_level"]
+
+            # Slightly more interference during business hours (more devices)
+            if 9 <= hour <= 17:
+                base_mean -= 0.02
+
+            # Per-AP topology offset
+            if entity and entity in self._topology:
+                ap_rf = self._topology[entity].get("rf_baseline", 0.90)
+                base_mean += (ap_rf - 0.90)
+
+        elif driver == "infra_health":
+            # Infrastructure health has no daily pattern — it's event-driven
+            base_mean = self._driver_config["infra_health"]["normal_level"]
+
         else:
-            # Late night (11pm to midnight): low
-            intensity = 0.1
+            base_mean = 0.5
 
-        # Convert intensity to multiplier effect
-        component = (impact - 1.0) * intensity * strength
+        return float(np.clip(base_mean, 0.0, 1.0))
 
-        return component
-    
-    def _hourly_pattern(self, timestamp: int, cfg: Dict) -> float:
-        """Generate hourly micro-variations (10-15 minute cycles)."""
-        if not self.config['time_patterns']['hourly_cycles']['enabled']:
-            return 0.0
-        
-        period_seconds = self.config['time_patterns']['hourly_cycles']['period_minutes'] * 60
-        amplitude = self.config['time_patterns']['hourly_cycles']['amplitude']
-        
-        # Multiple harmonics for more realistic variation
-        cycle1 = np.sin(2 * np.pi * timestamp / period_seconds)
-        cycle2 = 0.3 * np.sin(4 * np.pi * timestamp / period_seconds + 0.5)
-        
-        return amplitude * (cycle1 + cycle2) * cfg['daily_pattern_strength']
-    
-    def _weekly_pattern(self, timestamp: int, cfg: Dict) -> float:
-        """Generate weekly cycle (weekend reduction)."""
-        if not self.config['time_patterns']['weekly_cycles']['enabled']:
-            return 0.0
-        
-        weekday = (timestamp // 86400 + 3) % 7  # 0=Sunday, 6=Saturday
-        weekday_multipliers = self.config['time_patterns']['weekly_cycles']['weekday_pattern']
-        
-        multiplier = weekday_multipliers[weekday]
-        strength = cfg['weekly_pattern_strength']
-        
-        return (multiplier - 1.0) * strength
-    
-    def _apply_correlations(self, metric: str, value: float) -> float:
+    def _client_load_daily(self, hour: float) -> float:
         """
-        Apply metric correlations (capacity and health effects).
-        
-        High capacity degrades latency and throughput.
-        Low health degrades everything.
+        Smooth daily curve for client_load driver.
+
+        Produces a realistic business-hours pattern with:
+        - Low overnight baseline (~0.08)
+        - Morning ramp-up (6-9)
+        - Morning plateau with slight variation (9-12)
+        - Lunch dip (12-13)
+        - Afternoon peak (13-16)
+        - Evening decline (16-19)
+        - Low evening/night (19-24)
+        """
+        if hour < 6:
+            return 0.08
+        elif hour < 9:
+            t = (hour - 6) / 3.0
+            return 0.08 + 0.40 * (0.5 - 0.5 * math.cos(math.pi * t))
+        elif hour < 12:
+            return 0.48 + 0.06 * math.sin(math.pi * (hour - 9) / 3.0)
+        elif hour < 13:
+            return 0.48 - 0.06 * math.sin(math.pi * (hour - 12))
+        elif hour < 16:
+            t = (hour - 13) / 3.0
+            return 0.48 + 0.18 * math.sin(math.pi * t)
+        elif hour < 19:
+            t = (hour - 16) / 3.0
+            return 0.56 - 0.40 * (0.5 - 0.5 * math.cos(math.pi * t))
+        elif hour < 23:
+            t = (hour - 19) / 4.0
+            return 0.16 - 0.08 * t
+        else:
+            return 0.08
+
+    def _derive_metric(self, metric: str, drivers: Dict[str, float]) -> float:
+        """
+        Derive a metric value from current driver levels.
+
+        Uses the sensitivity matrix to compute how far each driver's deviation
+        from normal shifts the metric from its baseline.
+
+        value = baseline + sum(sensitivity * deviation * metric_range)
         """
         cfg = self.config[metric]
-        corr_cfg = self.config['correlation_matrix']
-        
-        # Skip correlation for capacity and health themselves to avoid circular dependency
-        if metric in ['capacity', 'ap_health']:
-            return value
-        
-        # Capacity effects (when capacity > threshold)
-        capacity_sensitivity = cfg.get('capacity_sensitivity', 0)
-        if capacity_sensitivity != 0:
-            capacity_stress = max(0, self.capacity_state - corr_cfg['capacity_degrades_at'])
-            capacity_impact = capacity_sensitivity * (capacity_stress / 20.0)  # Scale to 0-1
-            value *= (1.0 + capacity_impact)
-        
-        # Health effects (when health < threshold)
-        health_sensitivity = cfg.get('health_sensitivity', 0)
-        if health_sensitivity != 0:
-            health_degradation = max(0, corr_cfg['health_degrades_at'] - self.health_state)
-            health_impact = health_sensitivity * (health_degradation / 25.0)  # Scale to 0-1
-            
-            # Health degrades performance (lower is worse)
-            if metric in ['time_to_connect', 'roaming']:
-                # For latency metrics, degradation increases value
-                value *= (1.0 + health_impact)
-            else:
-                # For performance metrics, degradation decreases value
-                value *= (1.0 - health_impact * 0.5)
-        
-        return value
-    
-    def _add_smooth_noise(self, metric: str, value: float, cfg: Dict) -> float:
-        """
-        Add autocorrelated noise using AR(1) process.
-        
-        This creates smooth, realistic variations instead of sawtooth patterns.
-        Smoothness parameter controls how much previous noise influences current.
-        """
-        smoothness = cfg['smoothness']  # 0 = white noise, 1 = perfectly smooth
-        variance_pct = cfg['typical_variance_pct'] / 100.0
-        
-        # Calculate noise scale based on absolute value to handle negative metrics (like dBm)
-        noise_scale = variance_pct * abs(value)
-        
-        # AR(1): new_noise = smoothness * old_noise + (1-smoothness) * random_shock
-        random_shock = np.random.normal(0, noise_scale)
-        new_noise = smoothness * self.noise_state[metric] + (1 - smoothness) * random_shock
-        
-        # Update state for next call
-        self.noise_state[metric] = new_noise
-        
-        return value + new_noise
-    
+        baseline = cfg["baseline"]
+        metric_range = cfg["max"] - cfg["min"]
+        sensitivities = METRIC_SENSITIVITIES[metric]
+
+        total_effect = 0.0
+        for driver, sensitivity in sensitivities.items():
+            normal = self._driver_config[driver]["normal_level"]
+            deviation = drivers.get(driver, normal) - normal
+            total_effect += sensitivity * deviation
+
+        value = baseline + total_effect * metric_range
+        return float(np.clip(value, cfg["min"], cfg["max"]))
+
+    def _maybe_inject_load_patterns(self, timestamp: int) -> None:
+        """Randomly inject load pattern perturbations during business hours."""
+        if timestamp - self._last_load_check < 10:
+            return
+        self._last_load_check = timestamp
+
+        hour = (timestamp % 86400) / 3600.0
+        if not (8 <= hour <= 18):
+            return
+
+        # Meeting room surge: ~3 per 10-hour business day
+        if self._rng.random() < 0.3 / 360:
+            p = create_load_perturbation("meeting_room_surge", timestamp)
+            if p:
+                self.perturbation_manager.add(p)
+
+        # Large download: ~1 per business day
+        if self._rng.random() < 0.1 / 360:
+            p = create_load_perturbation("large_download", timestamp)
+            if p:
+                self.perturbation_manager.add(p)
+
     def tick(self, interval_seconds: int = 10) -> None:
-        """
-        Advance time for the generator.
-        
-        Args:
-            interval_seconds: How much to advance
-        """
+        """Advance time for the generator."""
         self.current_offset += interval_seconds
-    
+
     @classmethod
     def get_all_metrics(cls) -> List[str]:
         """Get list of all available metric names."""
@@ -315,12 +444,14 @@ class RealisticMetricsGenerator:
             "capacity",
             "roaming",
             "successful_connects",
-            "ap_health"
+            "ap_health",
         ]
 
 
-# Singleton instance for easy access
+# --- Singleton access ---
+
 _generator_instance = None
+
 
 def get_generator(start_time: int = None) -> RealisticMetricsGenerator:
     """Get or create the global metrics generator instance."""
@@ -329,35 +460,36 @@ def get_generator(start_time: int = None) -> RealisticMetricsGenerator:
         _generator_instance = RealisticMetricsGenerator(start_time)
     return _generator_instance
 
+
 def reset_generator() -> None:
-    """Reset the singleton instance (useful after bootstrap)."""
+    """Reset the singleton instance."""
     global _generator_instance
     _generator_instance = None
 
 
 def reset_for_live_streaming(start_time: int = None) -> None:
     """
-    Reset generator for live streaming while preserving noise state.
+    Reset generator for live streaming while preserving driver state.
 
     After bootstrap, the generator has start_time from days ago.
-    This resets start_time to the specified time (or now) while keeping 
-    the noise state so live data flows smoothly from historical data.
-    
-    Args:
-        start_time: Timestamp to start from (defaults to current time)
+    This resets to current time while keeping driver state and perturbations
+    so live data flows smoothly from historical data.
     """
     global _generator_instance
     if _generator_instance is not None:
-        # Preserve the noise state for continuity
-        preserved_noise = _generator_instance.noise_state.copy()
-        preserved_capacity = _generator_instance.capacity_state
-        preserved_health = _generator_instance.health_state
+        # Preserve state for continuity
+        preserved_drivers = {
+            k: dict(v) for k, v in _generator_instance._driver_state.items()
+        }
+        preserved_perturbations = _generator_instance.perturbation_manager
 
-        # Create new instance starting from specified time (or now)
         new_start = start_time if start_time is not None else int(time.time())
         _generator_instance = RealisticMetricsGenerator(start_time=new_start)
 
-        # Restore the noise state
-        _generator_instance.noise_state = preserved_noise
-        _generator_instance.capacity_state = preserved_capacity
-        _generator_instance.health_state = preserved_health
+        # Restore preserved state
+        _generator_instance._driver_state = preserved_drivers
+        _generator_instance.perturbation_manager = preserved_perturbations
+
+        # Reset update times to new start
+        for key in _generator_instance._last_update_time:
+            _generator_instance._last_update_time[key] = new_start

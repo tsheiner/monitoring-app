@@ -145,5 +145,73 @@
     "capacity_on_latency": 0.8,
     "capacity_on_throughput": -0.7,
     "health_on_all": 0.6
+  },
+
+  "drivers": {
+    "description": "Underlying physical drivers that produce metric values via derivation",
+    "client_load": {
+      "theta": 0.002,
+      "sigma": 0.004,
+      "normal_level": 0.45,
+      "description": "Network demand from connected devices. Follows business hours rhythm."
+    },
+    "rf_quality": {
+      "theta": 0.0005,
+      "sigma": 0.001,
+      "normal_level": 0.90,
+      "description": "Radio frequency environment quality. Mostly stable, degrades with interference."
+    },
+    "infra_health": {
+      "theta": 0.0003,
+      "sigma": 0.0005,
+      "normal_level": 0.95,
+      "description": "Infrastructure hardware/software state. Event-driven, no daily pattern."
+    }
+  },
+
+  "ap_topology": {
+    "description": "Physical and logical characteristics of each access point",
+    "AP-Floor1-01": {
+      "role": "lobby",
+      "floor": 1,
+      "load_baseline": 0.30,
+      "rf_baseline": 0.88,
+      "description": "Main entrance lobby - high transient traffic, moderate sustained load"
+    },
+    "AP-Floor1-02": {
+      "role": "open_office",
+      "floor": 1,
+      "load_baseline": 0.50,
+      "rf_baseline": 0.90,
+      "description": "First floor open office area"
+    },
+    "AP-Floor2-01": {
+      "role": "conference",
+      "floor": 2,
+      "load_baseline": 0.35,
+      "rf_baseline": 0.91,
+      "description": "Conference room cluster - bursty during meetings"
+    },
+    "AP-Floor2-02": {
+      "role": "open_office",
+      "floor": 2,
+      "load_baseline": 0.50,
+      "rf_baseline": 0.89,
+      "description": "Second floor open office area"
+    },
+    "AP-Floor3-01": {
+      "role": "hallway",
+      "floor": 3,
+      "load_baseline": 0.20,
+      "rf_baseline": 0.93,
+      "description": "Third floor common area and hallway"
+    },
+    "AP-Floor3-02": {
+      "role": "dense_office",
+      "floor": 3,
+      "load_baseline": 0.60,
+      "rf_baseline": 0.82,
+      "description": "Dense cubicle area - problematic AP with weak RF and high demand"
+    }
   }
 }

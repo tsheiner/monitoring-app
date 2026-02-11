@@ -145,5 +145,73 @@
     "capacity_on_latency": 0.6,
     "capacity_on_throughput": -0.5,
     "health_on_all": 0.5
+  },
+
+  "drivers": {
+    "description": "Hospital drivers - very stable, 24/7 operation",
+    "client_load": {
+      "theta": 0.001,
+      "sigma": 0.002,
+      "normal_level": 0.35,
+      "description": "Medical device + staff demand - always on, shift-change driven"
+    },
+    "rf_quality": {
+      "theta": 0.0003,
+      "sigma": 0.0006,
+      "normal_level": 0.93,
+      "description": "Hospital RF - well-engineered, very stable"
+    },
+    "infra_health": {
+      "theta": 0.0002,
+      "sigma": 0.0003,
+      "normal_level": 0.97,
+      "description": "Hospital infrastructure - well-maintained, redundant systems"
+    }
+  },
+
+  "ap_topology": {
+    "description": "Hospital AP topology - patient areas, nursing stations, OR",
+    "AP-Floor1-01": {
+      "role": "emergency",
+      "floor": 1,
+      "load_baseline": 0.40,
+      "rf_baseline": 0.92,
+      "description": "Emergency department - unpredictable surges"
+    },
+    "AP-Floor1-02": {
+      "role": "lobby",
+      "floor": 1,
+      "load_baseline": 0.25,
+      "rf_baseline": 0.94,
+      "description": "Main lobby and registration"
+    },
+    "AP-Floor2-01": {
+      "role": "nursing_station",
+      "floor": 2,
+      "load_baseline": 0.35,
+      "rf_baseline": 0.93,
+      "description": "Nursing station - steady medical device traffic"
+    },
+    "AP-Floor2-02": {
+      "role": "patient_rooms",
+      "floor": 2,
+      "load_baseline": 0.30,
+      "rf_baseline": 0.91,
+      "description": "Patient room corridor"
+    },
+    "AP-Floor3-01": {
+      "role": "operating_room",
+      "floor": 3,
+      "load_baseline": 0.35,
+      "rf_baseline": 0.95,
+      "description": "Surgical suite - critical reliability requirements"
+    },
+    "AP-Floor3-02": {
+      "role": "admin",
+      "floor": 3,
+      "load_baseline": 0.30,
+      "rf_baseline": 0.90,
+      "description": "Administrative offices"
+    }
   }
 }

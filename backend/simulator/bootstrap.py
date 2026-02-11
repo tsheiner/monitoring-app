@@ -5,6 +5,10 @@ Generates initial historical data for all metrics and events using
 a tiered resolution approach to minimize storage while maintaining detail
 where it matters most (recent data).
 
+Events generated during bootstrap create perturbations that affect
+the metric values, establishing causal event-metric relationships
+in the historical data.
+
 Aggregation tiers:
 - Raw (10s): Last 1 minute
 - 1-min buckets: 1 min to 1 hour
@@ -15,10 +19,12 @@ Aggregation tiers:
 - 12-hour buckets: 30-90 days
 """
 import time
+import random
 from typing import Dict, List
 
 from simulator.realistic_generator import get_generator, reset_for_live_streaming
 from simulator.event_generator import get_event_generator
+from simulator.perturbations import create_perturbation_from_event
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
 
@@ -26,19 +32,15 @@ from storage.events_store import get_events_store
 def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     """
     Generate and store tiered historical data for all metrics and events.
-    
-    Uses aggregation strategy to minimize storage:
-    - Recent data has high resolution (10s intervals)
-    - Older data is aggregated (1min, 5min, 15min, 1hr, 6hr, 12hr intervals)
-    
-    The tiers are defined with clean durations (exact multiples of intervals)
-    rather than trying to hit an exact number of days. This makes the code
-    bulletproof for prototype usage.
-    
+
+    Events are generated first (or interleaved), and their perturbations
+    are registered with the metrics generator so that metric values
+    reflect the impact of events.
+
     Args:
         days: Ignored (kept for backwards compatibility). Actual duration
               is determined by tier configuration (~30 days).
-        
+
     Returns:
         Dict with counts of generated data
     """
@@ -52,13 +54,11 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     print("  6-hour: 6 days")
     print("  12-hour: 20 days")
     print("  Total: ~30 days\n")
-    
+
     # Always end at current time for live prototype
     now = int(time.time())
-    
+
     # Define time tiers in CHRONOLOGICAL order (oldest to newest)
-    # Each duration is an EXACT MULTIPLE of its interval for clean boundaries
-    # Total: ~30 days of history (simpler for prototype, can extend later)
     tiers = [
         {"name": "12-hour", "duration": 1728000, "interval": 43200},     # 20 days (40 intervals)
         {"name": "6-hour", "duration": 518400, "interval": 21600},       # 6 days (24 intervals)
@@ -69,39 +69,84 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         {"name": "Raw (10s)", "duration": 7200, "interval": 10},         # 2 hours (720 intervals)
     ]
 
-    # Calculate total duration from tiers
     total_duration = sum(t["duration"] for t in tiers)
     start_time = now - total_duration
-    
+
     print(f"Historical data range: {time.ctime(start_time)} to {time.ctime(now)}")
     print(f"Total duration: {total_duration:,} seconds ({total_duration/86400:.1f} days)\n")
-    
+
     # Initialize generators and storage
     metrics_generator = get_generator(start_time=start_time)
     event_generator = get_event_generator()
+    event_generator.set_metrics_generator(metrics_generator)
     metrics_store = get_metrics_store()
     events_store = get_events_store()
-    
-    # Generate ALL metrics together in chronological order
-    # This ensures consistent correlations and smooth noise across metrics
+
+    # --- Phase 1: Generate historical events with Poisson timing ---
+    # We generate ALL events first so their perturbations are registered
+    # before we generate metrics at those timestamps.
+    print("  Phase 1: Generating historical events...")
+
+    event_weights = {
+        "device_restart": 0.12,
+        "device_crash": 0.04,
+        "firmware_update": 0.08,
+        "config_change": 0.30,
+        "ai_action": 0.30,
+        "interference": 0.16,
+    }
+    event_types = list(event_weights.keys())
+    weights = list(event_weights.values())
+
+    avg_interval_seconds = 3600  # ~1 event per hour
+    events = []
+    current_time = start_time
+
+    while current_time < now:
+        interval = random.expovariate(1.0 / avg_interval_seconds)
+        interval = max(300, min(14400, interval))
+        current_time += int(interval)
+
+        if current_time >= now:
+            break
+
+        event_type = random.choices(event_types, weights=weights)[0]
+        event = event_generator.generate_event(
+            event_type=event_type,
+            register_perturbation=False  # We register manually with correct timestamp
+        )
+        event["timestamp"] = current_time
+
+        # Register perturbation with the correct historical timestamp
+        perturbation = create_perturbation_from_event(event)
+        if perturbation is not None:
+            metrics_generator.perturbation_manager.add(perturbation)
+
+        events.append(event)
+
+    events_store.insert_batch(events)
+    print(f"  Stored {len(events)} historical events (with perturbations)\n")
+
+    # --- Phase 2: Generate metrics across all tiers ---
+    # Perturbations are already registered, so metrics at event timestamps
+    # will reflect the event impact.
+    print("  Phase 2: Generating metrics with event correlations...")
+
     all_metrics = metrics_generator.get_all_metrics()
     total_observations = 0
     observations_by_metric = {m: [] for m in all_metrics}
 
-    # Calculate tier boundaries (working forward from start)
     tier_start = start_time
 
     for tier in tiers:
         tier_end = tier_start + tier["duration"]
         num_points = tier["duration"] // tier["interval"]
 
-        print(f"  Generating {tier['name']}: {num_points} points per metric...")
+        print(f"    {tier['name']}: {num_points} points per metric...")
 
-        # Generate all timestamps for this tier
         for i in range(num_points):
             timestamp = tier_start + (i * tier["interval"])
 
-            # Generate ALL metrics at this timestamp (maintains correlations)
             for metric in all_metrics:
                 obs = metrics_generator.generate_observation(metric, timestamp)
                 observations_by_metric[metric].append(obs)
@@ -113,52 +158,11 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         metrics_store.insert_batch(observations_by_metric[metric])
         total_observations += len(observations_by_metric[metric])
         print(f"    {metric}: {len(observations_by_metric[metric])} observations")
-    
+
     print(f"\n  Total stored: {total_observations} metric observations")
-    
-    # Generate historical events with randomized timing
-    # Uses Poisson process for natural event spacing
-    print("  Generating historical events...")
-    events = []
 
-    import random
-
-    # Event weights (some events are rarer than others)
-    event_weights = {
-        "device_restart": 0.15,
-        "device_crash": 0.05,  # Rare
-        "firmware_update": 0.10,
-        "config_change": 0.35,  # Common
-        "ai_action": 0.35,  # Common
-    }
-    event_types = list(event_weights.keys())
-    weights = list(event_weights.values())
-
-    # Average ~1 event per hour, but with random spacing
-    avg_interval_seconds = 3600  # 1 hour average
-    current_time = start_time
-
-    while current_time < now:
-        # Exponential distribution for inter-arrival times (Poisson process)
-        # This creates natural clustering - sometimes events come quickly,
-        # sometimes there are longer gaps
-        interval = random.expovariate(1.0 / avg_interval_seconds)
-        # Clamp to reasonable bounds (5 minutes to 4 hours)
-        interval = max(300, min(14400, interval))
-
-        current_time += int(interval)
-
-        if current_time >= now:
-            break
-
-        # Select event type based on weights
-        event_type = random.choices(event_types, weights=weights)[0]
-        event = event_generator.generate_event(event_type=event_type)
-        event["timestamp"] = current_time
-        events.append(event)
-
-    events_store.insert_batch(events)
-    print(f"  Stored {len(events)} historical events (randomized timing)\n")
+    # Clear perturbations from bootstrap so they don't affect live data
+    metrics_generator.perturbation_manager.clear()
 
     return {
         "observations": total_observations,
@@ -174,4 +178,3 @@ if __name__ == "__main__":
     print(f"  {stats['metrics']} metrics")
     print(f"  {stats['observations']} observations")
     print(f"  {stats['events']} events")
-    print(f"  {stats['hours']} hours of history")
