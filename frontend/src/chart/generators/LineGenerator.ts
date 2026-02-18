@@ -3,8 +3,8 @@
  */
 
 import * as d3 from "d3";
-import { Generator } from "./types";
-import { Observation } from "./types";
+import { Generator } from "../types";
+import { Observation } from "../types";
 
 export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -71,7 +71,7 @@ export class LineGenerator implements Generator {
     const visibleData = allData.filter(
       (d) => d.timestamp >= range[0] && d.timestamp <= range[1],
     );
-    
+
     const markers = this.markersGroup
       .selectAll<SVGCircleElement, Observation>("circle")
       .data(visibleData, (d) => d.timestamp.toString());

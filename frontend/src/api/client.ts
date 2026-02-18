@@ -5,6 +5,7 @@
 import {
   MetricResponse,
   EventsResponse,
+  BaselineResponse,
   WebSocketMessage,
   MetricMessage,
   EventMessage,
@@ -58,7 +59,7 @@ export class APIClient {
     }).catch(() => {});
     // #endregion
 
-    const url = `${HTTP_BASE_URL}/api/metrics/${metric}?start=${startInt}&end=${endInt}`;
+    const url = `${HTTP_BASE_URL}/api/metrics/${metric}?start=${startInt}&end=${endInt}&entity=_aggregated`;
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -119,8 +120,28 @@ export class APIClient {
     return response.json();
   }
 
-  /**
-   * Connect to WebSocket stream.
+  /**   * Fetch baseline distribution for a metric.
+   */
+  async fetchBaseline(
+    metric: string,
+    entity: string | null = null,
+    lookbackDays: number = 30,
+  ): Promise<BaselineResponse> {
+    let url = `${HTTP_BASE_URL}/api/metrics/${metric}/baseline?lookback_days=${lookbackDays}`;
+    if (entity) {
+      url += `&entity=${entity}`;
+    }
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**   * Connect to WebSocket stream.
    */
   connectWebSocket(): void {
     if (this.ws) {

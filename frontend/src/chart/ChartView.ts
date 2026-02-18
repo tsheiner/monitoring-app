@@ -18,17 +18,16 @@ import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
 import {
   ChartConfig,
   Observation,
-  Distribution,
   DistributionPoint,
   Event,
+  BaselineResponse,
 } from "./types";
 
 interface MetricData {
   dataTarget: DataTarget;
   lineGenerator: LineGenerator;
   distributionGenerator: DistributionRibbonGenerator | null;
-  distributionSeries: DistributionPoint[];
-  currentDistribution: Distribution | null;
+  baseline: BaselineResponse | null;
   color: string;
   normalizedYDomain: [number, number]; // For independent normalization
   bufferedRange: [number, number] | null; // Track what time range is buffered
@@ -119,8 +118,7 @@ export class ChartView {
       dataTarget,
       lineGenerator,
       distributionGenerator,
-      distributionSeries: [],
-      currentDistribution: null,
+      baseline: null,
       color,
       normalizedYDomain: [Infinity, -Infinity], // Will be set to actual data range on first load
       bufferedRange: null,
@@ -179,12 +177,7 @@ export class ChartView {
   /**
    * Load historical data for a specific metric.
    */
-  loadHistoricalData(
-    metricName: string,
-    observations: Observation[],
-    distribution: Distribution | null = null,
-    distributionSeries: DistributionPoint[] = [],
-  ): void {
+  loadHistoricalData(metricName: string, observations: Observation[]): void {
     const metricData = this.metrics.get(metricName);
     if (!metricData) {
       console.warn(`Cannot load data for unknown metric: ${metricName}`);
@@ -192,34 +185,43 @@ export class ChartView {
     }
 
     console.log(
-      `Loading ${observations.length} observations for ${metricName}, has distribution series: ${distributionSeries?.length > 0}`,
+      `Loading ${observations.length} observations for ${metricName}`,
     );
 
     // Debug: Log actual min/max of incoming observations
     if (observations.length > 0) {
-      const obsValues = observations.map(o => o.value);
+      const obsValues = observations.map((o) => o.value);
       const obsMin = Math.min(...obsValues);
       const obsMax = Math.max(...obsValues);
       const firstTs = observations[0].timestamp;
       const lastTs = observations[observations.length - 1].timestamp;
-      const currentRange = this.config.timeRangeEnd ? [this.config.timeRangeEnd - this.config.timeRangeSeconds, this.config.timeRangeEnd] : null;
-      const gapToEnd = currentRange ? currentRange[1] - lastTs : 0;
-      
-      console.log(`📥 Incoming observations: min=${obsMin.toFixed(2)}, max=${obsMax.toFixed(2)}, first 3: [${obsValues.slice(0,3).map(v=>v.toFixed(2)).join(', ')}], last 3: [${obsValues.slice(-3).map(v=>v.toFixed(2)).join(', ')}]`);
-      console.log(`⏰ Time range: data [${new Date(firstTs*1000).toISOString()} to ${new Date(lastTs*1000).toISOString()}], chart range ${currentRange ? `[${new Date(currentRange[0]*1000).toISOString()} to ${new Date(currentRange[1]*1000).toISOString()}]` : 'not set'}, gap to chart end: ${gapToEnd.toFixed(0)}s`);
+
+      console.log(
+        `📥 Incoming observations: min=${obsMin.toFixed(2)}, max=${obsMax.toFixed(2)}, first 3: [${obsValues
+          .slice(0, 3)
+          .map((v) => v.toFixed(2))
+          .join(", ")}], last 3: [${obsValues
+          .slice(-3)
+          .map((v) => v.toFixed(2))
+          .join(", ")}]`,
+      );
+      console.log(
+        `⏰ Time range: data [${new Date(firstTs * 1000).toISOString()} to ${new Date(lastTs * 1000).toISOString()}]`,
+      );
     }
 
     metricData.dataTarget.push(observations);
-    metricData.currentDistribution = distribution;
-    
+
     // Debug: Check for suspicious jumps in data
     if (observations.length > 1) {
-      const values = observations.map(o => o.value);
-      const maxJump = Math.max(...values.map((v, i) => 
-        i > 0 ? Math.abs(v - values[i-1]) : 0
-      ));
+      const values = observations.map((o) => o.value);
+      const maxJump = Math.max(
+        ...values.map((v, i) => (i > 0 ? Math.abs(v - values[i - 1]) : 0)),
+      );
       if (maxJump > 5) {
-        console.warn(`⚠️ Large value jump detected: ${maxJump.toFixed(2)} in ${metricName}. First 3: ${values.slice(0,3).map(v=>v.toFixed(2))}, Last 3: ${values.slice(-3).map(v=>v.toFixed(2))}`);
+        console.warn(
+          `⚠️ Large value jump detected: ${maxJump.toFixed(2)} in ${metricName}. First 3: ${values.slice(0, 3).map((v) => v.toFixed(2))}, Last 3: ${values.slice(-3).map((v) => v.toFixed(2))}`,
+        );
       }
     }
 
@@ -227,12 +229,12 @@ export class ChartView {
     if (observations.length > 0) {
       const newStart = observations[0].timestamp;
       const newEnd = observations[observations.length - 1].timestamp;
-      
+
       if (metricData.bufferedRange) {
         // Expand existing range
         metricData.bufferedRange = [
           Math.min(metricData.bufferedRange[0], newStart),
-          Math.max(metricData.bufferedRange[1], newEnd)
+          Math.max(metricData.bufferedRange[1], newEnd),
         ];
       } else {
         // Initialize range
@@ -240,75 +242,51 @@ export class ChartView {
       }
     }
 
-    // Merge/update distribution series (don't replace - we want full buffered range)
-    const rawSeries = distributionSeries || [];
-    if (rawSeries.length > 0) {
-      // For incremental fetches, merge new distribution points with existing ones
-      if (metricData.distributionSeries.length > 0) {
-        // Create a map of existing points by timestamp
-        const existingMap = new Map(
-          metricData.distributionSeries.map(dp => [dp.timestamp, dp])
-        );
-        
-        // Add/update with new points
-        for (const dp of rawSeries) {
-          existingMap.set(dp.timestamp, dp);
-        }
-        
-        // Sort by timestamp and store
-        metricData.distributionSeries = Array.from(existingMap.values())
-          .sort((a, b) => a.timestamp - b.timestamp);
-        
-        console.log(`Merged distribution: ${rawSeries.length} new points, ${metricData.distributionSeries.length} total points`);
-      } else {
-        // First load: use as-is
-        metricData.distributionSeries = rawSeries;
-      }
-    }
-
-    // Calculate Y domain for this metric's raw data AND distribution percentiles
+    // Calculate Y domain for this metric's raw data
     if (observations.length > 0) {
       // Get ALL buffered data to calculate stable Y-domain
       const allBufferedData = metricData.dataTarget.getAll();
-      
+
       if (allBufferedData.length > 0) {
         const values = allBufferedData.map((obs) => obs.value);
-        let minVal = Math.min(...values);
-        let maxVal = Math.max(...values);
-        
-        // If distribution data is available, include percentiles in domain
-        // Use p10/p90 instead of p1/p99 to avoid over-expanding (keeps detail visible)
-        if (distributionSeries && distributionSeries.length > 0) {
-          const allP10 = distributionSeries.map(d => d.distribution.p10);
-          const allP90 = distributionSeries.map(d => d.distribution.p90);
-          minVal = Math.min(minVal, ...allP10);
-          maxVal = Math.max(maxVal, ...allP90);
-          console.log(`Including distribution in Y-domain: p10 min=${Math.min(...allP10).toFixed(2)}, p90 max=${Math.max(...allP90).toFixed(2)}`);
-        }
+        const minVal = Math.min(...values);
+        const maxVal = Math.max(...values);
 
         // Update domain ONLY if it expands (never shrink during pan)
-        console.log(`🔍 Before Y-domain update: current=[${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}], new data=[${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`);
-        
+        console.log(
+          `🔍 Before Y-domain update: current=[${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}], new data=[${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`,
+        );
+
         if (metricData.normalizedYDomain[0] === Infinity) {
           // First time: initialize with actual data range
           metricData.normalizedYDomain = [minVal, maxVal];
-          console.log(`✅ First time initialization: [${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`);
+          console.log(
+            `✅ First time initialization: [${minVal.toFixed(2)}, ${maxVal.toFixed(2)}]`,
+          );
         } else {
           // Expand domain to include new data (but never shrink)
           const oldDomain = [...metricData.normalizedYDomain];
           metricData.normalizedYDomain = [
             Math.min(metricData.normalizedYDomain[0], minVal),
-            Math.max(metricData.normalizedYDomain[1], maxVal)
+            Math.max(metricData.normalizedYDomain[1], maxVal),
           ];
-          const changed = oldDomain[0] !== metricData.normalizedYDomain[0] || oldDomain[1] !== metricData.normalizedYDomain[1];
+          const changed =
+            oldDomain[0] !== metricData.normalizedYDomain[0] ||
+            oldDomain[1] !== metricData.normalizedYDomain[1];
           if (changed) {
-            console.log(`🔄 Y-domain expanded: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`);
+            console.log(
+              `🔄 Y-domain expanded: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`,
+            );
           } else {
-            console.log(`✓ Y-domain unchanged (new data within existing range)`);
+            console.log(
+              `✓ Y-domain unchanged (new data within existing range)`,
+            );
           }
         }
 
-        console.log(`Metric ${metricName} Y domain: [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}] (from ${allBufferedData.length} buffered points, min: ${minVal.toFixed(2)}, max: ${maxVal.toFixed(2)})`);
+        console.log(
+          `Metric ${metricName} Y domain: [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}] (from ${allBufferedData.length} buffered points, min: ${minVal.toFixed(2)}, max: ${maxVal.toFixed(2)})`,
+        );
       }
     }
 
@@ -334,18 +312,38 @@ export class ChartView {
    */
   private updateGlobalYDomain(): void {
     // Debug: log call stack to see WHO is calling this
-    console.log('📊 updateGlobalYDomain called from:', new Error().stack?.split('\n')[2]?.trim());
-    
+    console.log(
+      "📊 updateGlobalYDomain called from:",
+      new Error().stack?.split("\n")[2]?.trim(),
+    );
+
     // #region agent log
     const currentRange = this.sharedRange.getRange();
-    const allMetricsData = Array.from(this.metrics.entries()).map(([name, data]) => ({
-      name,
-      bufferCount: data.dataTarget.getAll().length,
-      domain: data.normalizedYDomain
-    }));
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartView.ts:updateGlobalYDomain',message:'Y-domain recalculation',data:{metricCount:this.metrics.size,visibleRange:currentRange,allMetricsData},timestamp:Date.now(),runId:'pan-rescale-debug',hypothesisId:'H3'})}).catch(()=>{});
+    const allMetricsData = Array.from(this.metrics.entries()).map(
+      ([name, data]) => ({
+        name,
+        bufferCount: data.dataTarget.getAll().length,
+        domain: data.normalizedYDomain,
+      }),
+    );
+    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "ChartView.ts:updateGlobalYDomain",
+        message: "Y-domain recalculation",
+        data: {
+          metricCount: this.metrics.size,
+          visibleRange: currentRange,
+          allMetricsData,
+        },
+        timestamp: Date.now(),
+        runId: "pan-rescale-debug",
+        hypothesisId: "H3",
+      }),
+    }).catch(() => {});
     // #endregion
-    
+
     if (this.metrics.size > 1) {
       // Multiple metrics: use normalized 0-100 range
       this.core.updateYDomain([0, 100]);
@@ -381,20 +379,21 @@ export class ChartView {
     }
 
     metricData.dataTarget.push([observation]);
-    
+
     // Check if this new observation EXPANDS the Y-domain
     const oldDomain = metricData.normalizedYDomain;
-    const domainExpanded = 
-      observation.value < oldDomain[0] || 
-      observation.value > oldDomain[1];
-    
+    const domainExpanded =
+      observation.value < oldDomain[0] || observation.value > oldDomain[1];
+
     // Only update Y-domain if it actually expanded
     if (domainExpanded) {
       metricData.normalizedYDomain = [
         Math.min(oldDomain[0], observation.value),
-        Math.max(oldDomain[1], observation.value)
+        Math.max(oldDomain[1], observation.value),
       ];
-      console.log(`📈 Y-domain EXPANDED by live data: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`);
+      console.log(
+        `📈 Y-domain EXPANDED by live data: [${oldDomain[0].toFixed(2)}, ${oldDomain[1].toFixed(2)}] → [${metricData.normalizedYDomain[0].toFixed(2)}, ${metricData.normalizedYDomain[1].toFixed(2)}]`,
+      );
       this.updateGlobalYDomain();
     }
 
@@ -417,46 +416,7 @@ export class ChartView {
       }
     }
 
-    // Slide the distribution left edge to track the sliding window.
-    // The right edge stays at the last meaningful data point (set by
-    // loadHistoricalData) - we don't force-extend it to "now" because
-    // that would project the distribution flat through data gaps.
-    // As new live data arrives, we extend the right edge to match.
-    if (
-      this.metrics.size === 1 &&
-      this.config.showDistribution &&
-      this.config.liveMode &&
-      metricData.distributionSeries.length >= 2
-    ) {
-      const newRange = this.sharedRange.getRange();
-      const series = metricData.distributionSeries;
-
-      // Slide left edge to new range start
-      series[0] = {
-        timestamp: newRange[0],
-        distribution: series[0].distribution,
-      };
-
-      // Prune distribution points that fell off the left edge
-      while (series.length > 2 && series[1].timestamp < newRange[0]) {
-        series.splice(1, 1);
-        series[0] = {
-          timestamp: newRange[0],
-          distribution: series[1].distribution,
-        };
-      }
-
-      // Extend right edge to include the new live observation, using the
-      // last distribution values. This grows the ribbon incrementally as
-      // new data arrives.
-      const lastDistTs = series[series.length - 1].timestamp;
-      if (observation.timestamp > lastDistTs) {
-        series[series.length - 1] = {
-          timestamp: observation.timestamp,
-          distribution: series[series.length - 1].distribution,
-        };
-      }
-    }
+    // Baseline distributions are periodic and don't need sliding updates
 
     this.render();
   }
@@ -485,7 +445,6 @@ export class ChartView {
     // Clear data for all metrics before changing range
     for (const [name, metricData] of this.metrics) {
       metricData.dataTarget.clear();
-      metricData.distributionSeries = [];
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.hide();
       }
@@ -514,14 +473,14 @@ export class ChartView {
   updateTimeRangeNonDestructive(start: number, end: number): void {
     this.durationSeconds = end - start;
     this.chartStartTime = start;
-    
+
     // Update shared range without clearing buffers
     this.sharedRange.setRange([start, end]);
-    
+
     // DON'T update Y domain here - it only changes when NEW data is loaded,
     // not when panning. This prevents Y-axis jumping during pan.
     // Y domain is updated in loadHistoricalData() and appendLiveData() only.
-    
+
     this.render();
   }
 
@@ -678,54 +637,100 @@ export class ChartView {
   }
 
   /**
-   * Recompute distribution series from buffered data for a specific metric.
+   * Set baseline distribution for a metric.
+   * Caches the 24-hour baseline which will be used to generate distribution ribbons.
    */
-  private recomputeDistributionSeries(metricName: string): void {
+  setBaseline(metricName: string, baseline: BaselineResponse): void {
     const metricData = this.metrics.get(metricName);
-    if (!metricData) return;
-
-    const range = this.sharedRange.getRange();
-    const duration = range[1] - range[0];
-
-    // Determine bucket size based on duration
-    let bucketSize: number;
-    if (duration <= 3600) {
-      bucketSize = 300; // 5 minutes
-    } else if (duration <= 14400) {
-      bucketSize = 900; // 15 minutes
-    } else if (duration <= 86400) {
-      bucketSize = 3600; // 1 hour
-    } else {
-      bucketSize = 10800; // 3 hours
+    if (!metricData) {
+      console.warn(`Cannot set baseline for unknown metric: ${metricName}`);
+      return;
     }
 
-    // Compute distribution for each bucket
-    const newSeries: DistributionPoint[] = [];
-    for (let t = range[0]; t < range[1]; t += bucketSize) {
-      const bucketEnd = Math.min(t + bucketSize, range[1]);
-      const dist = metricData.dataTarget.computeDistributionInRange(
-        t,
-        bucketEnd,
-      );
+    metricData.baseline = baseline;
+    console.log(
+      `Set baseline for ${metricName} with ${baseline.hourly_distributions.length} hourly distributions`,
+    );
 
-      if (dist) {
-        newSeries.push({
-          timestamp: t + bucketSize / 2,
-          distribution: dist,
+    this.render();
+  }
+
+  /**
+   * Generate distribution points from baseline for the current time range.
+   * Maps the periodic 24-hour baseline to the visible time range,
+   * interpolating between hourly bins for smooth transitions.
+   */
+  private generateBaselineDistribution(
+    baseline: BaselineResponse,
+    range: [number, number],
+  ): DistributionPoint[] {
+    const duration = range[1] - range[0];
+    const numPoints = Math.min(100, Math.max(24, Math.floor(duration / 600))); // 1 point per 10 minutes, capped at 100
+    const step = duration / numPoints;
+    const distributionPoints: DistributionPoint[] = [];
+
+    // Build a lookup map for fast access
+    const hourMap = new Map<
+      number,
+      (typeof baseline.hourly_distributions)[0]
+    >();
+    for (const hd of baseline.hourly_distributions) {
+      hourMap.set(hd.hour, hd);
+    }
+
+    const percentileKeys = [
+      "p1",
+      "p5",
+      "p10",
+      "p25",
+      "p50",
+      "p75",
+      "p90",
+      "p95",
+      "p99",
+      "mean",
+      "stddev",
+    ] as const;
+
+    for (let i = 0; i <= numPoints; i++) {
+      const timestamp = range[0] + i * step;
+      const date = new Date(timestamp * 1000);
+      const hour = date.getHours();
+      const minuteFraction = (date.getMinutes() + date.getSeconds() / 60) / 60; // 0..1 within the hour
+
+      const currentDist = hourMap.get(hour);
+      const nextHour = (hour + 1) % 24;
+      const nextDist = hourMap.get(nextHour);
+
+      if (currentDist && nextDist) {
+        // Interpolate between this hour and the next for smooth transitions
+        const t = minuteFraction;
+        const interpolated: Record<string, number> = {};
+        for (const key of percentileKeys) {
+          const a =
+            (currentDist.distribution as Record<string, number>)[key] ?? 0;
+          const b = (nextDist.distribution as Record<string, number>)[key] ?? 0;
+          interpolated[key] = a + (b - a) * t;
+        }
+        // Preserve count from current hour
+        interpolated["count"] =
+          (currentDist.distribution as Record<string, number>)["count"] ?? 0;
+
+        distributionPoints.push({
+          timestamp,
+          distribution:
+            interpolated as unknown as DistributionPoint["distribution"],
+        });
+      } else if (currentDist) {
+        // No next hour available, use current as-is
+        distributionPoints.push({
+          timestamp,
+          distribution: currentDist.distribution,
         });
       }
     }
 
-    if (newSeries.length > 0) {
-      const firstDist = newSeries[0].distribution;
-      const lastDist = newSeries[newSeries.length - 1].distribution;
-
-      metricData.distributionSeries = [
-        { timestamp: range[0], distribution: firstDist },
-        ...newSeries,
-        { timestamp: range[1], distribution: lastDist },
-      ];
-    }
+    return distributionPoints;
   }
 
   /**
@@ -761,27 +766,12 @@ export class ChartView {
         if (metricData.distributionGenerator && this.config.showDistribution) {
           metricData.distributionGenerator.show();
 
-          if (metricData.distributionSeries.length > 0) {
-            // Distribution series is already clamped to range edges by
-            // loadHistoricalData and kept in sync by appendLiveData.
-            // Pass it directly - no filtering needed.
-            metricData.distributionGenerator.update(
-              metricData.distributionSeries,
+          if (metricData.baseline) {
+            // Generate distribution points from 24-hour baseline
+            const distributionPoints = this.generateBaselineDistribution(
+              metricData.baseline,
               range,
             );
-          } else if (metricData.currentDistribution) {
-            // Fallback: static distribution
-            const numPoints = 20;
-            const step = (range[1] - range[0]) / (numPoints - 1);
-            const distributionPoints = [];
-
-            for (let i = 0; i < numPoints; i++) {
-              distributionPoints.push({
-                timestamp: range[0] + i * step,
-                distribution: metricData.currentDistribution,
-              });
-            }
-
             metricData.distributionGenerator.update(distributionPoints, range);
           } else {
             metricData.distributionGenerator.hide();
@@ -792,7 +782,8 @@ export class ChartView {
     // Redraw event markers if present
     if (this.eventMarkers && this.config.showEvents) {
       this.eventMarkers.redraw(range);
-    }  }
+    }
+  }
 
   /**
    * Resize chart.

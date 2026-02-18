@@ -13,7 +13,9 @@ from .models import (
     Distribution,
     EventsResponse,
     Event,
-    MetricsListResponse
+    MetricsListResponse,
+    HourlyDistribution,
+    BaselineResponse
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
@@ -63,7 +65,8 @@ async def list_metrics():
 async def query_metric(
     metric: str,
     start: int = Query(..., description="Start timestamp (Unix seconds)"),
-    end: int = Query(..., description="End timestamp (Unix seconds)")
+    end: int = Query(..., description="End timestamp (Unix seconds)"),
+    entity: str = Query("_aggregated", description="Entity filter: specific AP name, '_aggregated' for mean across all APs, or '_all' for all entities")
 ):
     """
     Query metric observations in a time range with computed distribution.
@@ -72,6 +75,7 @@ async def query_metric(
         metric: Metric name
         start: Start timestamp
         end: End timestamp
+        entity: Entity filter (AP name, '_aggregated', or '_all')
         
     Returns:
         Observations and time-bucketed distribution statistics
@@ -86,24 +90,31 @@ async def query_metric(
     
     # Query storage
     store = get_metrics_store()
-    observations = store.query_range(metric, start, end)
-    distribution = store.compute_distribution(metric, start, end)
     
-    # Compute time-bucketed distributions
-    # Bucket size based on time range duration
-    duration = end - start
-    if duration <= 3600:  # <= 1 hour
-        bucket_size = 300  # 5 minutes
-    elif duration <= 14400:  # <= 4 hours
-        bucket_size = 900  # 15 minutes
-    elif duration <= 86400:  # <= 24 hours
-        bucket_size = 3600  # 1 hour
-    elif duration <= 259200:  # <= 3 days
-        bucket_size = 10800  # 3 hours
+    # Handle aggregation: if entity="_aggregated", compute mean across all entities per timestamp
+    if entity == "_aggregated":
+        all_observations = store.query_range(metric, start, end, entity=None)
+        # Group by timestamp and compute mean
+        from collections import defaultdict
+        timestamp_values = defaultdict(list)
+        for obs in all_observations:
+            timestamp_values[obs["timestamp"]].append(obs["value"])
+        
+        observations = [
+            {
+                "timestamp": ts,
+                "metric": metric,
+                "value": sum(values) / len(values),
+                "entity": None
+            }
+            for ts, values in sorted(timestamp_values.items())
+        ]
+    elif entity == "_all":
+        observations = store.query_range(metric, start, end, entity=None)
     else:
-        bucket_size = 21600  # 6 hours
+        observations = store.query_range(metric, start, end, entity=entity)
     
-    distribution_series = store.compute_distribution_series(metric, start, end, bucket_size)
+    distribution = store.compute_distribution(metric, start, end, entity=None if entity == "_aggregated" else entity if entity != "_all" else None)
     
     # Convert to response models
     obs_models = [
@@ -112,21 +123,85 @@ async def query_metric(
     
     dist_model = Distribution(**distribution) if distribution else None
     
-    from .models import DistributionPoint
-    dist_series_models = [
-        DistributionPoint(
-            timestamp=dp["timestamp"],
-            distribution=Distribution(**dp["distribution"])
-        ) for dp in distribution_series
-    ] if distribution_series else None
-    
     return MetricResponse(
         metric=metric,
         start=start,
         end=end,
         observations=obs_models,
-        distribution=dist_model,
-        distribution_series=dist_series_models
+        distribution=dist_model
+    )
+
+
+@app.get("/api/metrics/{metric}/baseline", response_model=BaselineResponse)
+async def query_baseline(
+    metric: str,
+    entity: Optional[str] = Query(None, description="AP entity (e.g., 'AP-Floor1-01') or None for global"),
+    lookback_days: int = Query(30, description="Days of history to include"),
+    tz: Optional[str] = Query(None, description="Timezone (e.g., 'America/New_York', 'UTC') or None for local")
+):
+    """
+    Query hourly baseline distribution for a metric.
+    
+    Returns 24 hourly distributions representing the typical daily pattern,
+    computed from historical data. Each hour includes percentile bands and
+    metadata about data quality (fallback_source, sample_count).
+    
+    Args:
+        metric: Metric name
+        entity: Optional AP entity filter
+        lookback_days: Number of days of history to analyze
+        tz: Optional timezone for hour-of-day grouping
+    
+    Returns:
+        24 hourly baseline distributions with fallback metadata
+    """
+    # Validate metric name
+    if metric not in MetricsGenerator.get_all_metrics():
+        raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
+    
+    # Validate lookback_days
+    if lookback_days < 1 or lookback_days > 90:
+        raise HTTPException(status_code=400, detail="lookback_days must be between 1 and 90")
+    
+    # Compute baseline
+    store = get_metrics_store()
+    hourly_baseline = store.compute_baseline_distribution(
+        metric=metric,
+        entity=entity,
+        lookback_days=lookback_days,
+        tz=tz
+    )
+    
+    # Convert to response model
+    hourly_models = [
+        HourlyDistribution(
+            hour=hb["hour"],
+            distribution=Distribution(
+                p1=hb["distribution"]["p1"],
+                p5=hb["distribution"]["p5"],
+                p10=hb["distribution"]["p10"],
+                p25=hb["distribution"]["p25"],
+                p50=hb["distribution"]["p50"],
+                p75=hb["distribution"]["p75"],
+                p90=hb["distribution"]["p90"],
+                p95=hb["distribution"]["p95"],
+                p99=hb["distribution"]["p99"],
+                mean=hb["distribution"]["mean"],
+                stddev=hb["distribution"]["stddev"],
+                count=hb.get("sample_count", 0)
+            ),
+            fallback_source=hb["fallback_source"],
+            sample_count=hb["sample_count"]
+        )
+        for hb in hourly_baseline
+    ]
+    
+    return BaselineResponse(
+        metric=metric,
+        entity=entity,
+        lookback_days=lookback_days,
+        timezone=tz or "local",
+        hourly_distributions=hourly_models
     )
 
 

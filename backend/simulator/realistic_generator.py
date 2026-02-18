@@ -434,6 +434,35 @@ class RealisticMetricsGenerator:
         """Advance time for the generator."""
         self.current_offset += interval_seconds
 
+    def generate_all_metrics_at(
+        self, timestamp: int, entity: str
+    ) -> Dict[str, float]:
+        """
+        Generate all metric values for one entity at one timestamp.
+
+        More efficient than calling generate_observation() for each metric,
+        because drivers are updated only once per (entity, timestamp).
+
+        Args:
+            timestamp: Unix timestamp
+            entity: AP entity name
+
+        Returns:
+            Dict mapping metric name to rounded value
+        """
+        # Ensure entity exists in state
+        if entity not in self._driver_state:
+            self._init_entity_state(entity, timestamp)
+
+        # Update drivers once for this entity/timestamp
+        drivers = self._update_drivers(entity, timestamp)
+
+        # Derive all metrics from the same driver state
+        result = {}
+        for metric in self.get_all_metrics():
+            result[metric] = round(self._derive_metric(metric, drivers), 2)
+        return result
+
     @classmethod
     def get_all_metrics(cls) -> List[str]:
         """Get list of all available metric names."""

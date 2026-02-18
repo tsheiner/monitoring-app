@@ -30,6 +30,21 @@ export interface DistributionPoint {
   distribution: Distribution;
 }
 
+export interface HourlyDistribution {
+  hour: number;
+  distribution: Distribution;
+  fallback_source: string;
+  sample_count: number;
+}
+
+export interface BaselineResponse {
+  metric: string;
+  entity: string | null;
+  lookback_days: number;
+  timezone: string;
+  hourly_distributions: HourlyDistribution[];
+}
+
 export interface Event {
   timestamp: number;
   event_type: string;

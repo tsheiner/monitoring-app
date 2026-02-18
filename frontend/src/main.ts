@@ -151,13 +151,13 @@ class MonitoringApp {
       this.dataFetchDebounceTimer = window.setTimeout(async () => {
         const [visibleStart, visibleEnd] = range;
         const duration = visibleEnd - visibleStart;
-        
+
         // Add 100% padding on each side (3x total: 1 past + 1 visible + 1 future)
         // This means user can pan 1 full screen in either direction without fetch
         const paddingAmount = duration;
         const fetchStart = visibleStart - paddingAmount;
         const fetchEnd = visibleEnd + paddingAmount;
-        
+
         console.log(
           `Fetching data with buffer: visible [${visibleStart}, ${visibleEnd}], fetching [${fetchStart}, ${fetchEnd}]`,
         );
@@ -189,9 +189,27 @@ class MonitoringApp {
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange:entry',message:'Loading data for range',data:{start,end,duration:end-start,startDate:new Date(start*1000).toISOString(),endDate:new Date(end*1000).toISOString(),isValidRange:start<end},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "main.ts:loadDataForRange:entry",
+        message: "Loading data for range",
+        data: {
+          start,
+          end,
+          duration: end - start,
+          startDate: new Date(start * 1000).toISOString(),
+          endDate: new Date(end * 1000).toISOString(),
+          isValidRange: start < end,
+        },
+        timestamp: Date.now(),
+        runId: "422-debug",
+        hypothesisId: "H1",
+      }),
+    }).catch(() => {});
     // #endregion
-    
+
     try {
       const duration = end - start;
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
@@ -223,7 +241,8 @@ class MonitoringApp {
       let latestDataTs = 0;
       for (const { data } of fetchedData) {
         if (data.observations.length > 0) {
-          const lastTs = data.observations[data.observations.length - 1].timestamp;
+          const lastTs =
+            data.observations[data.observations.length - 1].timestamp;
           latestDataTs = Math.max(latestDataTs, lastTs);
         }
       }
@@ -235,12 +254,18 @@ class MonitoringApp {
       // 3. Load fetched data — synchronous, same JS tick as step 2.
       //    Browser won't repaint between clear and load, so no flash.
       for (const { metric, data } of fetchedData) {
-        this.chart.loadHistoricalData(
-          metric.name,
-          data.observations,
-          data.distribution,
-          data.distribution_series,
-        );
+        this.chart.loadHistoricalData(metric.name, data.observations);
+      }
+
+      // 4. Fetch and set baseline for single-metric view
+      if (enabledMetrics.length === 1) {
+        const metric = enabledMetrics[0];
+        try {
+          const baseline = await this.api.fetchBaseline(metric.name, null, 30);
+          this.chart.setBaseline(metric.name, baseline);
+        } catch (error) {
+          console.warn(`Failed to fetch baseline for ${metric.name}:`, error);
+        }
       }
 
       // Track the actual range used for this data load
@@ -260,9 +285,23 @@ class MonitoringApp {
     } catch (error) {
       // #region agent log
       const errorMsg = error instanceof Error ? error.message : String(error);
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.ts:loadDataForRange:error',message:'Failed to load data',data:{start,end,duration:end-start,error:errorMsg},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H1'})}).catch(()=>{});
+      fetch(
+        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "main.ts:loadDataForRange:error",
+            message: "Failed to load data",
+            data: { start, end, duration: end - start, error: errorMsg },
+            timestamp: Date.now(),
+            runId: "422-debug",
+            hypothesisId: "H1",
+          }),
+        },
+      ).catch(() => {});
       // #endregion
-      
+
       console.error("Error loading data:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -274,7 +313,10 @@ class MonitoringApp {
    * Load data incrementally for pan/zoom - only fetches missing data, preserves buffer.
    * Used during pan/zoom interactions to provide smooth scrolling.
    */
-  private async loadDataForRangeIncremental(start: number, end: number): Promise<void> {
+  private async loadDataForRangeIncremental(
+    start: number,
+    end: number,
+  ): Promise<void> {
     try {
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
@@ -291,25 +333,37 @@ class MonitoringApp {
         console.log(
           `Received ${metricData.observations.length} observations for ${metric.name}`,
         );
-        
+
         // Load data incrementally (appends to buffer, doesn't clear)
-        this.chart.loadHistoricalData(
-          metric.name,
-          metricData.observations,
-          metricData.distribution,
-          metricData.distribution_series,
-        );
+        this.chart.loadHistoricalData(metric.name, metricData.observations);
+      }
+
+      // Fetch baseline for single-metric  view
+      if (enabledMetrics.length === 1) {
+        const metric = enabledMetrics[0];
+        try {
+          const baseline = await this.api.fetchBaseline(metric.name, null, 30);
+          this.chart.setBaseline(metric.name, baseline);
+        } catch (error) {
+          console.warn(`Failed to fetch baseline for ${metric.name}:`, error);
+        }
       }
 
       // Load events for the extended range
       const eventsData = await this.api.fetchEvents(start, end);
       // Merge with existing events, removing duplicates
-      const existingIds = new Set(this.allEvents.map(e => `${e.timestamp}-${e.event_type}`));
-      const newEvents = eventsData.events.filter(e => !existingIds.has(`${e.timestamp}-${e.event_type}`));
+      const existingIds = new Set(
+        this.allEvents.map((e) => `${e.timestamp}-${e.event_type}`),
+      );
+      const newEvents = eventsData.events.filter(
+        (e) => !existingIds.has(`${e.timestamp}-${e.event_type}`),
+      );
       this.allEvents = [...this.allEvents, ...newEvents];
       this.updateEventDisplay();
 
-      console.log(`Incremental fetch complete: now have ${this.allEvents.length} total events`);
+      console.log(
+        `Incremental fetch complete: now have ${this.allEvents.length} total events`,
+      );
     } catch (error) {
       console.error("Error loading incremental data:", error);
       // Don't show error to user - this is background prefetch
@@ -517,14 +571,38 @@ class MonitoringApp {
         rangeStart,
         rangeEnd,
       );
-      this.chart.loadHistoricalData(
-        metricName,
-        metricData.observations,
-        metricData.distribution,
-        metricData.distribution_series,
-      );
+      this.chart.loadHistoricalData(metricName, metricData.observations);
+
+      // Fetch baseline if this is now the only metric
+      const enabledCount = this.metrics.filter((m) => m.enabled).length;
+      if (enabledCount === 1) {
+        try {
+          const baseline = await this.api.fetchBaseline(metricName, null, 30);
+          this.chart.setBaseline(metricName, baseline);
+        } catch (error) {
+          console.warn(`Failed to fetch baseline for ${metricName}:`, error);
+        }
+      }
     } else {
       this.chart.removeMetric(metricName);
+
+      // If exactly one metric remains, fetch its baseline
+      const remaining = this.metrics.filter((m) => m.enabled);
+      if (remaining.length === 1) {
+        try {
+          const baseline = await this.api.fetchBaseline(
+            remaining[0].name,
+            null,
+            30,
+          );
+          this.chart.setBaseline(remaining[0].name, baseline);
+        } catch (error) {
+          console.warn(
+            `Failed to fetch baseline for ${remaining[0].name}:`,
+            error,
+          );
+        }
+      }
     }
   }
 

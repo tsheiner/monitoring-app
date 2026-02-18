@@ -1,91 +1,257 @@
 """
-Bootstrap historical data generation with tiered aggregation strategy.
+Bootstrap historical data generation with high-resolution simulation.
 
-Generates initial historical data for all metrics and events using
-a tiered resolution approach to minimize storage while maintaining detail
-where it matters most (recent data).
+Generates 30 days of clean historical data at 10-second resolution,
+computes baseline distributions from that clean data, then aggregates
+to tiered storage and retroactively applies perturbation events.
 
-Events generated during bootstrap create perturbations that affect
-the metric values, establishing causal event-metric relationships
-in the historical data.
+This mirrors how a real monitoring system works:
+1. High-resolution data is collected continuously
+2. Historical baselines are computed from clean operating data
+3. Data is aggregated over time (minute -> hour -> day averages)
+4. Anomalies (perturbation events) appear as deviations from baseline
 
-Aggregation tiers:
-- Raw (10s): Last 1 minute
-- 1-min buckets: 1 min to 1 hour
-- 5-min buckets: 1-4 hours
-- 15-min buckets: 4-24 hours
-- 1-hour buckets: 1-7 days
-- 6-hour buckets: 7-30 days
-- 12-hour buckets: 30-90 days
+Aggregation tiers (from most recent to oldest):
+- Raw (10s):    Last 2 hours     -- full resolution
+- 1-min:        2h to 3h ago     -- 6:1 compression
+- 5-min:        3h to 6h ago     -- 30:1 compression
+- 15-min:       6h to 18h ago    -- 90:1 compression
+- 1-hour:       18h to 3.75d ago -- 360:1 compression
+- 6-hour:       3.75d to 9.75d   -- 2160:1 compression
+- 12-hour:      9.75d to 29.75d  -- 4320:1 compression
 """
 import time
 import random
-from typing import Dict, List
+import json
+import os
+import math
+from typing import Dict, List, Tuple, Optional
+from pathlib import Path
+from datetime import datetime, timezone
+from collections import defaultdict
 
-from simulator.realistic_generator import get_generator, reset_for_live_streaming
+import numpy as np
+
+from simulator.realistic_generator import (
+    get_generator,
+    reset_for_live_streaming,
+    RealisticMetricsGenerator,
+    METRIC_SENSITIVITIES,
+)
 from simulator.event_generator import get_event_generator
-from simulator.perturbations import create_perturbation_from_event
+from simulator.perturbations import (
+    create_perturbation_from_event,
+    Perturbation,
+    PERTURBATION_TEMPLATES,
+)
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
 
 
+# Tier definitions: age boundaries from "now" and bucket interval
+# Listed newest-first for convenient age lookup
+TIERS = [
+    {"name": "raw",     "max_age": 7200,    "interval": 10},       # 0-2h
+    {"name": "1-min",   "max_age": 10800,   "interval": 60},       # 2-3h
+    {"name": "5-min",   "max_age": 21600,   "interval": 300},      # 3-6h
+    {"name": "15-min",  "max_age": 64800,   "interval": 900},      # 6-18h
+    {"name": "1-hour",  "max_age": 324000,  "interval": 3600},     # 18h-3.75d
+    {"name": "6-hour",  "max_age": 842400,  "interval": 21600},    # 3.75d-9.75d
+    {"name": "12-hour", "max_age": 2570400, "interval": 43200},    # 9.75d-29.75d
+]
+
+TOTAL_DURATION = TIERS[-1]["max_age"]  # ~29.75 days
+
+
+def _get_tier_interval(age: int) -> int:
+    """Get the storage interval for a given age (seconds from now)."""
+    for tier in TIERS:
+        if age <= tier["max_age"]:
+            return tier["interval"]
+    return TIERS[-1]["interval"]
+
+
+def _get_ap_list() -> List[str]:
+    """Get list of AP names from the active config."""
+    profile = os.environ.get("NETWORK_PROFILE", "enterprise")
+    config_file = f"simulator/config_{profile}.json"
+
+    try:
+        config_path = Path(config_file)
+        if not config_path.exists():
+            config_path = Path("simulator/config_enterprise.json")
+
+        with open(config_path, "r") as f:
+            config = json.load(f)
+
+        ap_topology = config.get("ap_topology", {})
+        ap_names = [k for k in ap_topology.keys() if k != "description"]
+        return ap_names if ap_names else ["_global"]
+    except Exception as e:
+        print(f"  Warning: Could not load AP topology from config: {e}")
+        return ["_global"]
+
+
 def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     """
-    Generate and store tiered historical data for all metrics and events.
+    Generate and store tiered historical data with pre-computed baselines.
 
-    Events are generated first (or interleaved), and their perturbations
-    are registered with the metrics generator so that metric values
-    reflect the impact of events.
+    Phase 1: Generate 30 days of clean 10s data in memory (no perturbations)
+    Phase 2: Compute hourly baseline distributions from clean data
+    Phase 3: Generate perturbation events and apply to bucket data
+    Phase 4: Write aggregated data to database
 
     Args:
-        days: Ignored (kept for backwards compatibility). Actual duration
-              is determined by tier configuration (~30 days).
+        days: Ignored (kept for backwards compatibility)
 
     Returns:
         Dict with counts of generated data
     """
-    print(f"\nBootstrapping tiered historical data...")
-    print("Aggregation strategy:")
-    print("  Raw (10s): Last 2 hours")
-    print("  1-min: Last hour")
-    print("  5-min: 3 hours")
-    print("  15-min: 12 hours")
-    print("  1-hour: 3 days")
-    print("  6-hour: 6 days")
-    print("  12-hour: 20 days")
-    print("  Total: ~30 days\n")
-
-    # Always end at current time for live prototype
     now = int(time.time())
+    start_time = now - TOTAL_DURATION
 
-    # Define time tiers in CHRONOLOGICAL order (oldest to newest)
-    tiers = [
-        {"name": "12-hour", "duration": 1728000, "interval": 43200},     # 20 days (40 intervals)
-        {"name": "6-hour", "duration": 518400, "interval": 21600},       # 6 days (24 intervals)
-        {"name": "1-hour", "duration": 259200, "interval": 3600},        # 3 days (72 intervals)
-        {"name": "15-min", "duration": 43200, "interval": 900},          # 12 hours (48 intervals)
-        {"name": "5-min", "duration": 10800, "interval": 300},           # 3 hours (36 intervals)
-        {"name": "1-min", "duration": 3600, "interval": 60},             # 1 hour (60 intervals)
-        {"name": "Raw (10s)", "duration": 7200, "interval": 10},         # 2 hours (720 intervals)
-    ]
+    print(f"\nBootstrapping historical data (high-resolution simulation)...")
+    print(f"  Historical range: {time.ctime(start_time)} to {time.ctime(now)}")
+    print(f"  Total duration: {TOTAL_DURATION:,}s ({TOTAL_DURATION / 86400:.1f} days)")
+    print(f"  Generation resolution: 10 seconds")
 
-    total_duration = sum(t["duration"] for t in tiers)
-    start_time = now - total_duration
+    ap_list = _get_ap_list()
+    print(f"  APs: {len(ap_list)} ({', '.join(ap_list)})")
 
-    print(f"Historical data range: {time.ctime(start_time)} to {time.ctime(now)}")
-    print(f"Total duration: {total_duration:,} seconds ({total_duration/86400:.1f} days)\n")
+    generator = get_generator(start_time=start_time)
+    all_metrics = generator.get_all_metrics()
 
-    # Initialize generators and storage
-    metrics_generator = get_generator(start_time=start_time)
-    event_generator = get_event_generator()
-    event_generator.set_metrics_generator(metrics_generator)
-    metrics_store = get_metrics_store()
-    events_store = get_events_store()
+    n_timestamps = TOTAL_DURATION // 10
+    print(f"  Timestamps: {n_timestamps:,} (x{len(ap_list)} APs x {len(all_metrics)} metrics)")
 
-    # --- Phase 1: Generate historical events with Poisson timing ---
-    # We generate ALL events first so their perturbations are registered
-    # before we generate metrics at those timestamps.
-    print("  Phase 1: Generating historical events...")
+    # ================================================================
+    # PHASE 1: Generate clean high-resolution data in memory
+    # ================================================================
+    print(f"\n  Phase 1: Generating {n_timestamps:,} clean observations per AP...")
+    phase1_start = time.time()
+
+    # Accumulators for baseline computation (sum across APs per timestamp)
+    # metric_sums[metric][t_idx] = sum of values across all APs
+    metric_sums = {m: np.zeros(n_timestamps) for m in all_metrics}
+
+    # Accumulator for tiered storage (bucket -> running sum and count)
+    # Key: (metric, ap, bucket_start) -> {"sum": float, "count": int}
+    bucket_accum = defaultdict(lambda: {"sum": 0.0, "count": 0})
+
+    for ap_idx, ap in enumerate(ap_list):
+        # Re-initialize entity state for clean generation from start
+        generator._init_entity_state(ap, start_time)
+        ap_start = time.time()
+
+        for t_idx in range(n_timestamps):
+            ts = start_time + t_idx * 10
+            age = now - ts
+
+            # Generate all metrics for this AP at this timestamp
+            # Note: perturbation_manager is empty -> clean data
+            values = generator.generate_all_metrics_at(ts, entity=ap)
+
+            for metric, value in values.items():
+                # Accumulate for baseline (will divide by n_aps later)
+                metric_sums[metric][t_idx] += value
+
+                # Accumulate into storage bucket
+                interval = _get_tier_interval(age)
+                bucket_start = (ts // interval) * interval
+                key = (metric, ap, bucket_start)
+                bucket_accum[key]["sum"] += value
+                bucket_accum[key]["count"] += 1
+
+        elapsed = time.time() - ap_start
+        print(f"    {ap}: {n_timestamps:,} timestamps in {elapsed:.1f}s")
+
+    phase1_elapsed = time.time() - phase1_start
+    print(f"  Phase 1 complete in {phase1_elapsed:.1f}s")
+
+    # ================================================================
+    # PHASE 2: Compute baseline distributions from clean aggregated data
+    # ================================================================
+    print(f"\n  Phase 2: Computing hourly baseline distributions...")
+    phase2_start = time.time()
+
+    n_aps = len(ap_list)
+    baselines = {}
+
+    # Pre-compute hour-of-day for each timestamp
+    hours_of_day = np.array([
+        datetime.fromtimestamp(start_time + t * 10).hour
+        for t in range(n_timestamps)
+    ])
+
+    for metric in all_metrics:
+        # Average across APs to get aggregated values
+        aggregated = metric_sums[metric] / n_aps
+
+        # Group by hour-of-day
+        hourly_bins = defaultdict(list)
+        for t_idx in range(n_timestamps):
+            hourly_bins[hours_of_day[t_idx]].append(float(aggregated[t_idx]))
+
+        # Compute percentiles for each hour
+        hourly_distributions = []
+        for hour in range(24):
+            values = np.array(hourly_bins.get(hour, []))
+            if len(values) < 5:
+                continue
+
+            hourly_distributions.append({
+                "hour": hour,
+                "distribution": {
+                    "p1": float(np.percentile(values, 1)),
+                    "p5": float(np.percentile(values, 5)),
+                    "p10": float(np.percentile(values, 10)),
+                    "p25": float(np.percentile(values, 25)),
+                    "p50": float(np.percentile(values, 50)),
+                    "p75": float(np.percentile(values, 75)),
+                    "p90": float(np.percentile(values, 90)),
+                    "p95": float(np.percentile(values, 95)),
+                    "p99": float(np.percentile(values, 99)),
+                    "mean": float(np.mean(values)),
+                    "stddev": float(np.std(values)),
+                },
+                "sample_count": len(values),
+                "fallback_source": "data",
+            })
+
+        baselines[metric] = hourly_distributions
+
+        # Print a diagnostic sample for noon hour
+        noon_dist = next((d for d in hourly_distributions if d["hour"] == 12), None)
+        if noon_dist:
+            p5 = noon_dist["distribution"]["p5"]
+            p95 = noon_dist["distribution"]["p95"]
+            sample_per_hour = noon_dist["sample_count"]
+            print(f"    {metric}: 24h bins, ~{sample_per_hour} samples/hour, noon p5-p95: [{p5:.2f}..{p95:.2f}]")
+        else:
+            print(f"    {metric}: 24h bins computed")
+
+    # Save baselines to JSON file
+    baselines_path = Path("data/baselines.json")
+    baselines_path.parent.mkdir(parents=True, exist_ok=True)
+    baselines_data = {
+        "generated_at": now,
+        "lookback_days": TOTAL_DURATION / 86400,
+        "n_aps": n_aps,
+        "ap_list": ap_list,
+        "metrics": baselines,
+    }
+    with open(baselines_path, "w") as f:
+        json.dump(baselines_data, f, indent=2)
+    print(f"  Baselines saved to {baselines_path}")
+
+    phase2_elapsed = time.time() - phase2_start
+    print(f"  Phase 2 complete in {phase2_elapsed:.1f}s")
+
+    # ================================================================
+    # PHASE 3: Generate perturbation events and modify bucket data
+    # ================================================================
+    print(f"\n  Phase 3: Generating retroactive perturbation events...")
+    phase3_start = time.time()
 
     event_weights = {
         "device_restart": 0.12,
@@ -111,69 +277,172 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
             break
 
         event_type = random.choices(event_types, weights=weights)[0]
-        event = event_generator.generate_event(
-            event_type=event_type,
-            register_perturbation=False  # We register manually with correct timestamp
-        )
-        event["timestamp"] = current_time
-
-        # Register perturbation with the correct historical timestamp
-        perturbation = create_perturbation_from_event(event)
-        if perturbation is not None:
-            metrics_generator.perturbation_manager.add(perturbation)
-
+        entity = random.choice(ap_list)
+        event = {
+            "timestamp": current_time,
+            "event_type": event_type,
+            "severity": _event_severity(event_type),
+            "entity": entity,
+            "message": f"{event_type} on {entity}",
+            "metadata": {},
+        }
         events.append(event)
 
+    # Apply perturbation effects to stored bucket data
+    perturbations_applied = 0
+    for event in events:
+        template = PERTURBATION_TEMPLATES.get(event["event_type"])
+        if template is None:
+            continue
+
+        pert = Perturbation(
+            start_time=event["timestamp"],
+            duration_seconds=template["duration_seconds"],
+            affected_metrics=dict(template["affected_metrics"]),
+            decay_type=template["decay_type"],
+            source_event_type=event["event_type"],
+            source_entity=event.get("entity", ""),
+        )
+
+        pert_start = event["timestamp"]
+        pert_end = pert_start + template["duration_seconds"]
+        ap = event.get("entity", ap_list[0])
+
+        for metric in all_metrics:
+            sensitivities = METRIC_SENSITIVITIES[metric]
+            cfg = generator.config[metric]
+            metric_range = cfg["max"] - cfg["min"]
+
+            # Compute average perturbation effect on this metric
+            n_samples = max(1, min(10, template["duration_seconds"] // 10))
+            total_metric_effect = 0.0
+            for s in range(n_samples):
+                sample_t = pert_start + s * (template["duration_seconds"] // n_samples)
+                driver_effect = 0.0
+                for driver, sensitivity in sensitivities.items():
+                    driver_pert = pert.effect_at(driver, sample_t)
+                    driver_effect += sensitivity * driver_pert
+                total_metric_effect += driver_effect * metric_range
+
+            avg_metric_effect = total_metric_effect / n_samples
+            if abs(avg_metric_effect) < 0.01:
+                continue
+
+            # Find the tier interval for this perturbation's age
+            age = now - pert_start
+            interval = _get_tier_interval(age)
+
+            # Find and modify overlapping buckets
+            first_bucket = (pert_start // interval) * interval
+            last_bucket = (pert_end // interval) * interval
+
+            for bucket_start in range(first_bucket, last_bucket + interval, interval):
+                key = (metric, ap, bucket_start)
+                if key not in bucket_accum:
+                    continue
+
+                acc = bucket_accum[key]
+                if acc["count"] == 0:
+                    continue
+
+                old_mean = acc["sum"] / acc["count"]
+
+                # Scale effect by overlap fraction
+                bucket_end = bucket_start + interval
+                overlap_start = max(pert_start, bucket_start)
+                overlap_end = min(pert_end, bucket_end)
+                overlap_frac = max(0, overlap_end - overlap_start) / interval
+
+                adjustment = avg_metric_effect * overlap_frac
+                new_value = float(np.clip(
+                    old_mean + adjustment,
+                    cfg["min"],
+                    cfg["max"]
+                ))
+                acc["sum"] = new_value * acc["count"]
+                perturbations_applied += 1
+
+    print(f"    Generated {len(events)} historical events")
+    print(f"    Applied {perturbations_applied} perturbation effects to stored buckets")
+
+    # Store events
+    events_store = get_events_store()
     events_store.insert_batch(events)
-    print(f"  Stored {len(events)} historical events (with perturbations)\n")
 
-    # --- Phase 2: Generate metrics across all tiers ---
-    # Perturbations are already registered, so metrics at event timestamps
-    # will reflect the event impact.
-    print("  Phase 2: Generating metrics with event correlations...")
+    phase3_elapsed = time.time() - phase3_start
+    print(f"  Phase 3 complete in {phase3_elapsed:.1f}s")
 
-    all_metrics = metrics_generator.get_all_metrics()
+    # ================================================================
+    # PHASE 4: Write aggregated data to database
+    # ================================================================
+    print(f"\n  Phase 4: Writing aggregated observations to database...")
+    phase4_start = time.time()
+
+    metrics_store = get_metrics_store()
     total_observations = 0
-    observations_by_metric = {m: [] for m in all_metrics}
+    observations_by_metric = defaultdict(int)
 
-    tier_start = start_time
+    # Convert bucket accumulators to observations
+    batch = []
+    for (metric, ap, bucket_start), acc in bucket_accum.items():
+        if acc["count"] == 0:
+            continue
+        mean_value = acc["sum"] / acc["count"]
+        batch.append({
+            "timestamp": bucket_start,
+            "metric": metric,
+            "value": round(mean_value, 2),
+            "entity": ap,
+        })
+        observations_by_metric[metric] += 1
+        total_observations += 1
 
-    for tier in tiers:
-        tier_end = tier_start + tier["duration"]
-        num_points = tier["duration"] // tier["interval"]
+        # Insert in batches of 10,000 to avoid memory pressure
+        if len(batch) >= 10000:
+            metrics_store.insert_batch(batch)
+            batch = []
 
-        print(f"    {tier['name']}: {num_points} points per metric...")
+    # Insert remaining
+    if batch:
+        metrics_store.insert_batch(batch)
 
-        for i in range(num_points):
-            timestamp = tier_start + (i * tier["interval"])
-
-            for metric in all_metrics:
-                obs = metrics_generator.generate_observation(metric, timestamp)
-                observations_by_metric[metric].append(obs)
-
-        tier_start = tier_end
-
-    # Store observations
     for metric in all_metrics:
-        metrics_store.insert_batch(observations_by_metric[metric])
-        total_observations += len(observations_by_metric[metric])
-        print(f"    {metric}: {len(observations_by_metric[metric])} observations")
+        count = observations_by_metric[metric]
+        print(f"    {metric}: {count} aggregated observations")
 
-    print(f"\n  Total stored: {total_observations} metric observations")
+    # Clear perturbations so they don't affect live streaming
+    generator.perturbation_manager.clear()
 
-    # Clear perturbations from bootstrap so they don't affect live data
-    metrics_generator.perturbation_manager.clear()
+    phase4_elapsed = time.time() - phase4_start
+    total_elapsed = time.time() - phase1_start
+    print(f"  Phase 4 complete in {phase4_elapsed:.1f}s")
+    print(f"\n  Bootstrap complete in {total_elapsed:.1f}s total")
+    print(f"  Total stored: {total_observations} aggregated observations")
+    print(f"  Events: {len(events)}")
 
     return {
         "observations": total_observations,
         "events": len(events),
         "metrics": len(all_metrics),
-        "duration_days": total_duration / 86400
+        "aps": len(ap_list),
+        "duration_days": TOTAL_DURATION / 86400,
     }
 
 
+def _event_severity(event_type: str) -> Optional[str]:
+    """Default severity for event type."""
+    return {
+        "device_restart": "warning",
+        "device_crash": "critical",
+        "firmware_update": "info",
+        "config_change": None,
+        "ai_action": "info",
+        "interference": "warning",
+    }.get(event_type)
+
+
 if __name__ == "__main__":
-    stats = bootstrap_historical_data(hours=24)
+    stats = bootstrap_historical_data()
     print("\nBootstrap complete:")
     print(f"  {stats['metrics']} metrics")
     print(f"  {stats['observations']} observations")

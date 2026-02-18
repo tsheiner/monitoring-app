@@ -10,6 +10,9 @@ Orchestrates:
 import asyncio
 import time
 import uvicorn
+import json
+import os
+from pathlib import Path
 
 from simulator.realistic_generator import get_generator, NETWORK_PROFILES
 from simulator.event_generator import get_event_generator
@@ -20,33 +23,70 @@ from server.websocket_server import get_websocket_server
 from server.http_api import app
 
 
+def _get_ap_list():
+    """Load AP names from config file."""
+    config_path = Path(__file__).parent / "simulator" / "config_enterprise.json"
+    
+    if not config_path.exists():
+        # Fallback if enterprise config missing
+        return ["AP-Floor1-01", "AP-Floor1-02", "AP-Floor2-01", 
+                "AP-Floor2-02", "AP-Floor3-01", "AP-Floor3-02"]
+    
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    # Extract AP names from ap_topology section
+    # Each AP is a key in the ap_topology dict (skip metadata keys like "description")
+    ap_names = []
+    if "ap_topology" in config:
+        for key in config["ap_topology"].keys():
+            if key.startswith("AP-"):
+                ap_names.append(key)
+    
+    return ap_names if ap_names else ["_global"]
+
+
 async def stream_metrics_loop():
     """
     Continuously generate and broadcast metric observations.
     
-    Generates all 7 metrics every 10 seconds and broadcasts via WebSocket.
+    Generates observations for all metrics across all APs at each tick,
+    stores them, and broadcasts them to connected WebSocket clients.
     Uses real wall clock time for live observations.
     """
     generator = get_generator()
     metrics_store = get_metrics_store()
     ws_server = get_websocket_server()
     
-    print("Starting metric streaming loop (10 sec interval)...")
+    # Load AP list from config
+    ap_list = _get_ap_list()
+    
+    print(f"Starting metric streaming loop (10 sec interval) for {len(ap_list)} APs...")
     
     while True:
         try:
             # Use actual current time for live observations
             current_time = int(time.time())
             
-            # Generate observation for each metric at current time
+            # Generate observation for each metric at current time for each AP
             for metric in generator.get_all_metrics():
-                observation = generator.generate_observation(metric, timestamp=current_time)
+                ap_observations = []
+                for ap_name in ap_list:
+                    observation = generator.generate_observation(metric, timestamp=current_time, entity=ap_name)
+                    
+                    # Store it
+                    metrics_store.insert_observation(observation)
+                    ap_observations.append(observation)
                 
-                # Store it
-                metrics_store.insert_observation(observation)
-                
-                # Broadcast it
-                await ws_server.broadcast_metric(observation)
+                # Broadcast aggregated value (mean across all APs)
+                mean_value = sum(obs["value"] for obs in ap_observations) / len(ap_observations)
+                aggregated_observation = {
+                    "timestamp": current_time,
+                    "metric": metric,
+                    "value": mean_value,
+                    "entity": None  # Aggregated data has no specific entity
+                }
+                await ws_server.broadcast_metric(aggregated_observation)
             
             # No need to tick() - we use actual wall clock time
             # The generator's internal state (noise, correlations) is preserved
