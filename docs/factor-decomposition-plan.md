@@ -299,6 +299,54 @@ Note: classifiers are defined once at the top level (shared pool), and metrics r
 
 Note: Classifier baselines are *computed* in Phase 1 (as part of the bootstrap). This phase is about *exposing* them through the API. It can be done alongside or after Phase 3.
 
+### Phase 5: Classifier UI — Crosshair Tooltip
+
+**Goal**: Surface classifier data to the user via a chart crosshair tooltip. The left sidebar remains unchanged — it continues to serve its existing role as metric identity/toggle/chart legend.
+
+**Reference mock**: `docs/references/classifierTooltip.png` (pending)
+
+#### Tooltip behavior
+
+When the cursor is inside the chart area:
+- A vertical crosshair line tracks cursor x (= time coordinate)
+- A horizontal hairline tracks cursor y
+- A tooltip appears showing, for every visible metric, its value at the cursor's time position
+- The metric **nearest the cursor's y position** is the "active" metric — its classifier breakdown is expanded inline in the tooltip; all other metrics show name + value only
+
+#### Tooltip content (active metric section)
+
+For the active metric, below the metric name + value, list each classifier on its own row:
+- Classifier name
+- Current value (e.g., `0.982`)
+- Status indicator: green / yellow / red dot, derived from bootstrap thresholds
+
+No contribution bars, no percentages — value + status is sufficient and always meaningful regardless of whether the metric is in or out of range.
+
+The primary contributor (classifier in worst status, or if tied, highest `|weight × deviation|`) is visually distinguished — bold name or slightly more prominent status dot.
+
+#### Active metric selection with hysteresis
+
+Naively tracking the instantaneous nearest metric causes rapid tooltip cycling when metrics are close together. Instead:
+
+- Track `activeMetric` as stable state, separate from the live nearest-metric computation
+- On each mousemove, compute which metric line is nearest to cursor y at cursor x
+- If nearest ≠ `activeMetric`, start a debounce timer (~150ms)
+- If nearest changes again before the timer fires, reset the timer
+- Only update `activeMetric` when the timer fires — i.e., cursor has been stably closer to a different metric for the full debounce window
+
+This means transient cursor passes near another metric do not trigger a swap. Only deliberate repositioning does.
+
+#### Interaction states
+- **Hover**: crosshair + tooltip visible
+- **Pan (click-drag)**: crosshair and tooltip suppressed; drag gesture owns the interaction entirely
+- **Live edge**: when streaming live data, suppress or freeze tooltip for the rightmost portion of the chart that is still being filled
+
+#### Frontend files affected
+- `frontend/src/chart/ChartView.ts` — mousemove handler, crosshair rendering, active metric state + hysteresis timer
+- `frontend/src/chart/types.ts` — extend `Observation` with optional `classifiers` field
+- `frontend/src/main.ts` — tooltip DOM element management
+- `frontend/index.html` — tooltip container element (if not already present)
+
 ## Design Decisions (Resolved)
 
 1. **Classifier sharing across metrics**: Classifiers that represent the same infrastructure (e.g., DHCP) are **shared OU processes** referenced by multiple metrics. A single DHCP state drives both successful_connects and time_to_connect. These are facts about the real world — they affect all metrics to which they are relevant. A perturbation to the DHCP classifier simultaneously and causally degrades all dependent metrics.
@@ -317,5 +365,6 @@ Note: Classifier baselines are *computed* in Phase 1 (as part of the bootstrap).
 | Phase 2: Perturbation retargeting | Medium | perturbations.py, realistic_generator.py, event_generator.py |
 | Phase 3: API exposure | Small-medium | models.py, http_api.py, websocket_server.py |
 | Phase 4: Classifier baseline API | Small | http_api.py, websocket_server.py |
+| Phase 5: Classifier UI — crosshair tooltip | Medium | ChartView.ts, types.ts, main.ts, index.html |
 
-Total: ~3-4 working sessions. Phase 1 is the largest (classifier simulation, bootstrap integration, driver cleanup). Phases 3-4 could be combined.
+Total: ~4-5 working sessions. Phase 1 is the largest (classifier simulation, bootstrap integration, driver cleanup). Phases 3-4 could be combined. Phase 5 is frontend-only and can be developed independently once Phase 3 is complete.
