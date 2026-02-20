@@ -1,8 +1,17 @@
 """
 Pydantic models for API request/response validation.
 """
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 from pydantic import BaseModel, Field
+
+
+class ClassifierStatus(BaseModel):
+    """Status of a single classifier contributing to a metric value."""
+    name: str = Field(..., description="Classifier name (e.g., 'dhcp', 'dns', 'association')")
+    value: float = Field(..., description="Classifier value (e.g., success rate)")
+    status: Literal["green", "yellow", "red"] = Field(..., description="Health status based on bootstrap-derived thresholds")
+    contribution: float = Field(..., description="Weight/contribution to parent metric (0.0-1.0)")
+    weight: Optional[float] = Field(None, description="Optional classifier weight in metric calculation")
 
 
 class MetricObservation(BaseModel):
@@ -11,6 +20,7 @@ class MetricObservation(BaseModel):
     metric: str = Field(..., description="Metric name")
     value: float = Field(..., description="Observed value")
     entity: Optional[str] = Field(None, description="Entity name (AP, switch, etc.) or null for aggregated")
+    classifiers: Optional[List[ClassifierStatus]] = Field(None, description="Optional classifier breakdown for this observation")
 
 
 class Distribution(BaseModel):

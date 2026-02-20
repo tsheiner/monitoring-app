@@ -311,6 +311,57 @@ chart.subscribe("throughput"); // Internally filters broadcast
 
 ---
 
+## ADR-011: Classifier Storage Strategy
+
+**Date**: 2026-02-20
+
+**Context**: FD-010 requires storing classifier breakdown data alongside metric observations. Each observation may include an optional list of classifier objects (name, value, status, contribution, weight). TinyFlux fields only accept numeric values, preventing direct JSON serialization in the CSV.
+
+**Options Considered**:
+
+1. **Escaped JSON in TinyFlux fields** - Store classifiers as JSON string in fields
+2. **Sidecar JSON file** - Keep TinyFlux for scalar metrics, separate JSON file for classifiers
+3. **Migrate to SQLite with JSON column** - Full migration from TinyFlux to SQLite
+
+**Decision**: **Sidecar JSON file** (Option 2)
+
+**Rationale**:
+
+- TinyFlux fields validate as numeric-only, blocking in-field JSON storage
+- Sidecar approach preserves TinyFlux efficiency for time-series queries
+- No schema migration risk - backward compatible with existing data
+- Classifiers keyed by `(timestamp, metric, entity)` for fast lookup
+- File: `{db_path}.classifiers.json` (e.g., `data/metrics.csv.classifiers.json`)
+- SQLite migration deferred until classifier queries become performance bottleneck
+
+**Implementation**:
+
+```python
+# MetricsStore loads/saves sidecar file
+self.classifiers_path = f"{db_path}.classifiers.json"
+self._classifiers_cache = self._load_classifiers()
+
+# Insert stores classifiers separately
+key = f"{timestamp}:{metric}:{entity}"
+self._classifiers_cache[key] = classifiers
+
+# Query merges classifier data back into observations
+if key in self._classifiers_cache:
+    obs["classifiers"] = self._classifiers_cache[key]
+```
+
+**Consequences**:
+
+- ✅ Backward compatible - old data works unchanged
+- ✅ No TinyFlux schema changes
+- ✅ Fast sidecar lookup via in-memory cache
+- ✅ Minimal code changes to existing storage layer
+- ❌ Two files per database (metrics.csv + metrics.csv.classifiers.json)
+- ❌ No transactional consistency between files
+- ⚠️ Future: Migrate to SQLite if classifier queries need indexing/filtering
+
+---
+
 ## Decision Log Summary
 
 | ADR | Decision                    | Rationale                          |
@@ -325,3 +376,5 @@ chart.subscribe("throughput"); // Internally filters broadcast
 | 008 | D3.js                       | Flexibility for custom viz         |
 | 009 | Hybrid historical + live    | Realistic, seamless UX             |
 | 010 | Prototype shortcuts         | Speed vs foundation balance        |
+| 011 | Sidecar JSON for classifiers| TinyFlux compatibility, no migration|
+

@@ -2,6 +2,14 @@
 TinyFlux wrapper for metrics storage.
 
 Stores time-series observations and provides range queries with distribution computation.
+
+Storage Strategy for Classifier Payloads (FD-010):
+- TinyFlux stores scalar metric values (timestamp, metric, entity, value)
+- Classifiers are stored in a sidecar JSON file keyed by (timestamp, metric, entity)
+- This approach keeps TinyFlux for efficient time-series queries while supporting
+  classifier payloads without schema migration
+- Backward compatible: queries work with or without classifier data present
+- Classifier file: {db_path}.classifiers.json (e.g., data/metrics.csv.classifiers.json)
 """
 import os
 import time
@@ -29,15 +37,38 @@ class MetricsStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
         self.db = TinyFlux(db_path)
+        
+        # Sidecar file for classifier payloads (FD-010)
+        self.classifiers_path = f"{db_path}.classifiers.json"
+        self._classifiers_cache = self._load_classifiers()
+    
+    def _load_classifiers(self) -> Dict:
+        """Load classifier sidecar data."""
+        if os.path.exists(self.classifiers_path):
+            try:
+                with open(self.classifiers_path, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                return {}
+        return {}
+    
+    def _save_classifiers(self) -> None:
+        """Save classifier sidecar data."""
+        with open(self.classifiers_path, 'w') as f:
+            json.dump(self._classifiers_cache, f, indent=2)
+    
+    def _classifier_key(self, timestamp: int, metric: str, entity: str) -> str:
+        """Generate key for classifier lookup."""
+        return f"{timestamp}:{metric}:{entity}"
     
     def insert_observation(self, observation: Dict) -> None:
         """
         Insert a single metric observation.
         
         Args:
-            observation: Dict with timestamp, metric, value, and optional entity
+            observation: Dict with timestamp, metric, value, optional entity, and optional classifiers
         """
-        # Use UTC for all timestamps to avoid timezone confusion
+        # Store scalar value in TinyFlux
         point = Point(
             time=datetime.fromtimestamp(observation["timestamp"], tz=timezone.utc),
             tags={
@@ -47,27 +78,48 @@ class MetricsStore:
             fields={"value": observation["value"]}
         )
         self.db.insert(point)
+        
+        # Store classifiers in sidecar if present (FD-010)
+        if "classifiers" in observation and observation["classifiers"] is not None:
+            key = self._classifier_key(
+                observation["timestamp"],
+                observation["metric"],
+                observation.get("entity", "_global")
+            )
+            self._classifiers_cache[key] = observation["classifiers"]
+            self._save_classifiers()
     
     def insert_batch(self, observations: List[Dict]) -> None:
         """
         Insert multiple observations efficiently.
         
         Args:
-            observations: List of observation dicts
+            observations: List of observation dicts (each may have optional classifiers)
         """
-        # Use UTC for all timestamps to avoid timezone confusion
-        points = [
-            Point(
+        # Store scalar values in TinyFlux
+        points = []
+        for obs in observations:
+            points.append(Point(
                 time=datetime.fromtimestamp(obs["timestamp"], tz=timezone.utc),
                 tags={
                     "metric": obs["metric"],
                     "entity": obs.get("entity", "_global")
                 },
                 fields={"value": obs["value"]}
-            )
-            for obs in observations
-        ]
+            ))
+            
+            # Store classifiers in sidecar if present (FD-010)
+            if "classifiers" in obs and obs["classifiers"] is not None:
+                key = self._classifier_key(
+                    obs["timestamp"],
+                    obs["metric"],
+                    obs.get("entity", "_global")
+                )
+                self._classifiers_cache[key] = obs["classifiers"]
+        
         self.db.insert_multiple(points)
+        # Save classifiers once for entire batch
+        self._save_classifiers()
     
     def query_range(
         self,
@@ -101,15 +153,24 @@ class MetricsStore:
         
         results = self.db.search(query)
         
-        observations = [
-            {
-                "timestamp": int(point.time.timestamp()),
+        observations = []
+        for point in results:
+            timestamp = int(point.time.timestamp())
+            entity = point.tags.get("entity", "_global")
+            
+            obs = {
+                "timestamp": timestamp,
                 "metric": metric,
                 "value": point.fields["value"],
-                "entity": point.tags.get("entity", "_global")
+                "entity": entity
             }
-            for point in results
-        ]
+            
+            # Load classifiers from sidecar if present (FD-010)
+            key = self._classifier_key(timestamp, metric, entity)
+            if key in self._classifiers_cache:
+                obs["classifiers"] = self._classifiers_cache[key]
+            
+            observations.append(obs)
         
         # Sort by timestamp
         observations.sort(key=lambda x: x["timestamp"])
