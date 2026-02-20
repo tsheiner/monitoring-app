@@ -234,14 +234,24 @@ class MetricsStore:
         
         results = self.db.search(Tag.metric == metric)
         
-        observations = [
-            {
-                "timestamp": int(point.time.timestamp()),
+        observations = []
+        for point in results:
+            timestamp = int(point.time.timestamp())
+            entity = point.tags.get("entity", "_global")
+            
+            obs = {
+                "timestamp": timestamp,
                 "metric": metric,
-                "value": point.fields["value"]
+                "value": point.fields["value"],
+                "entity": entity
             }
-            for point in results
-        ]
+            
+            # Load classifiers from sidecar if present (FD-010)
+            key = self._classifier_key(timestamp, metric, entity)
+            if key in self._classifiers_cache:
+                obs["classifiers"] = self._classifiers_cache[key]
+            
+            observations.append(obs)
         
         # Sort by timestamp descending and limit
         observations.sort(key=lambda x: x["timestamp"], reverse=True)

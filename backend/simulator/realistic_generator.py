@@ -323,7 +323,7 @@ class RealisticMetricsGenerator:
         self._load_classifier_thresholds()
 
     def generate_observation(
-        self, metric: str, timestamp: int = None, entity: str = None
+        self, metric: str, timestamp: int = None, entity: str = None, include_classifiers: bool = False
     ) -> Dict:
         """
         Generate a single metric observation by deriving from classifier state.
@@ -332,9 +332,10 @@ class RealisticMetricsGenerator:
             metric: Metric name (e.g., "throughput", "ap_health")
             timestamp: Unix timestamp (defaults to current generator time)
             entity: Optional AP entity for per-AP variation
+            include_classifiers: If True, include classifier breakdown in result (FD-013)
 
         Returns:
-            Observation dict with timestamp, metric, value
+            Observation dict with timestamp, metric, value, and optionally classifiers
         """
         if metric not in self.get_all_metrics():
             raise ValueError(f"Unknown metric: {metric}")
@@ -362,6 +363,10 @@ class RealisticMetricsGenerator:
         }
         if entity is not None:
             result["entity"] = entity
+        
+        # Include classifier breakdown if requested (FD-013)
+        if include_classifiers:
+            result["classifiers"] = self._get_classifier_breakdown(metric, ts)
 
         return result
 
@@ -397,6 +402,44 @@ class RealisticMetricsGenerator:
         except (json.JSONDecodeError, KeyError, IOError):
             # If baselines are malformed or missing, continue without thresholds
             pass
+    
+    def _get_classifier_breakdown(self, metric: str, timestamp: int) -> list[dict]:
+        """
+        Get classifier breakdown for a metric (FD-013).
+        
+        Returns list of classifier status objects with name, value, status, contribution, weight.
+        
+        Args:
+            metric: Metric name
+            timestamp: Current timestamp
+            
+        Returns:
+            List of classifier dicts with name, value, status, contribution, weight
+        """
+        metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
+        classifiers = []
+        
+        for classifier_name, weight in metric_classifiers.items():
+            classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
+            current_value = self._classifier_state[classifier_name]
+            
+            # Compute status based on thresholds
+            status = self._compute_classifier_status(classifier_name, current_value, timestamp)
+            
+            # Compute contribution (deviation from normal, weighted)
+            normal_level = classifier_cfg["initial_level"]
+            deviation = current_value - normal_level
+            contribution = weight * deviation
+            
+            classifiers.append({
+                "name": classifier_name,
+                "value": round(current_value, 4),
+                "status": status,
+                "contribution": round(contribution, 4),
+                "weight": round(weight, 4)
+            })
+        
+        return classifiers
 
     def _compute_classifier_status(
         self, classifier_name: str, value: float, timestamp: int
@@ -467,6 +510,8 @@ class RealisticMetricsGenerator:
 
         Classifiers are shared across all entities (one pool).
         client_load is per-entity (environmental condition).
+        
+        After OU update, perturbations are applied to classifiers.
         """
         last_t = self._last_update_time.get(entity_key, timestamp)
         dt = max(0, timestamp - last_t)
@@ -494,6 +539,13 @@ class RealisticMetricsGenerator:
                     noise_std = 0
                 
                 x_new = mu + (x - mu) * decay + noise_std * self._rng.normal()
+                
+                # Apply perturbations (additive effects from events)
+                perturbation_effect = self.perturbation_manager.total_effect(
+                    classifier_name, timestamp, entity
+                )
+                x_new += perturbation_effect
+                
                 self._classifier_state[classifier_name] = float(np.clip(x_new, 0.0, 1.0))
             
             # OU process update for client_load (per-entity environmental condition) 

@@ -86,3 +86,26 @@ class BaselineResponse(BaseModel):
     lookback_days: int = Field(..., description="Days of history used")
     timezone: str = Field(..., description="Timezone used for hour-of-day grouping")
     hourly_distributions: List[HourlyDistribution] = Field(..., description="24 hourly baselines")
+
+
+class CurrentClassifiersResponse(BaseModel):
+    """Response for current classifier state of a metric."""
+    metric: str = Field(..., description="Metric name")
+    timestamp: int = Field(..., description="Timestamp of observation")
+    value: float = Field(..., description="Metric value")
+    entity: Optional[str] = Field(None, description="Entity name")
+    classifiers: List[ClassifierStatus] = Field(..., description="Current classifier breakdown")
+
+
+class ClassifierHourlyDistribution(BaseModel):
+    """Distribution for a classifier at a specific hour of day."""
+    hour: int = Field(..., description="Hour of day (0-23)")
+    distribution: Distribution = Field(..., description="Distribution for this hour")
+    sample_count: int = Field(..., description="Number of observations used")
+
+
+class ClassifierBaselineResponse(BaseModel):
+    """Response for classifier baseline query."""
+    classifier: str = Field(..., description="Classifier name")
+    lookback_days: int = Field(..., description="Days of history used")
+    hourly_distributions: List[ClassifierHourlyDistribution] = Field(..., description="24 hourly baselines")

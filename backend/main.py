@@ -72,7 +72,13 @@ async def stream_metrics_loop():
             for metric in generator.get_all_metrics():
                 ap_observations = []
                 for ap_name in ap_list:
-                    observation = generator.generate_observation(metric, timestamp=current_time, entity=ap_name)
+                    # Generate with classifiers for WebSocket broadcast (FD-013)
+                    observation = generator.generate_observation(
+                        metric, 
+                        timestamp=current_time, 
+                        entity=ap_name,
+                        include_classifiers=True
+                    )
                     
                     # Store it
                     metrics_store.insert_observation(observation)
@@ -80,11 +86,16 @@ async def stream_metrics_loop():
                 
                 # Broadcast aggregated value (mean across all APs)
                 mean_value = sum(obs["value"] for obs in ap_observations) / len(ap_observations)
+                
+                # Aggregate classifiers (average across APs)
+                aggregated_classifiers = _aggregate_classifiers([obs.get("classifiers", []) for obs in ap_observations])
+                
                 aggregated_observation = {
                     "timestamp": current_time,
                     "metric": metric,
                     "value": mean_value,
-                    "entity": None  # Aggregated data has no specific entity
+                    "entity": None,  # Aggregated data has no specific entity
+                    "classifiers": aggregated_classifiers
                 }
                 await ws_server.broadcast_metric(aggregated_observation)
             
@@ -98,6 +109,56 @@ async def stream_metrics_loop():
         except Exception as e:
             print(f"Error in metrics loop: {e}")
             await asyncio.sleep(1)
+
+
+def _aggregate_classifiers(classifier_lists):
+    """
+    Aggregate classifier breakdowns across multiple APs.
+    
+    Computes average value for each classifier and determines status based on average.
+    
+    Args:
+        classifier_lists: List of classifier lists from different APs
+        
+    Returns:
+        List of aggregated classifiers
+    """
+    from collections import defaultdict
+    
+    if not classifier_lists or all(not c for c in classifier_lists):
+        return []
+    
+    # Group classifiers by name
+    classifier_groups = defaultdict(list)
+    for classifiers in classifier_lists:
+        if classifiers:
+            for classifier in classifiers:
+                classifier_groups[classifier["name"]].append(classifier)
+    
+    # Aggregate each classifier
+    aggregated = []
+    for name, group in classifier_groups.items():
+        avg_value = sum(c["value"] for c in group) / len(group)
+        avg_contribution = sum(c["contribution"] for c in group) / len(group)
+        avg_weight = sum(c["weight"] for c in group) / len(group) if group[0].get("weight") is not None else None
+        
+        # Determine status based on average value
+        # Simple majority vote or use first one's status
+        # For simplicity, use the most common status
+        status_counts = defaultdict(int)
+        for c in group:
+            status_counts[c["status"]] += 1
+        most_common_status = max(status_counts.items(), key=lambda x: x[1])[0]
+        
+        aggregated.append({
+            "name": name,
+            "value": round(avg_value, 4),
+            "status": most_common_status,
+            "contribution": round(avg_contribution, 4),
+            "weight": round(avg_weight, 4) if avg_weight is not None else None
+        })
+    
+    return aggregated
 
 
 async def stream_events_loop():

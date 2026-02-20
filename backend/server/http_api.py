@@ -3,6 +3,8 @@ FastAPI HTTP API for historical data queries.
 
 Provides endpoints for querying metrics with distributions and events.
 """
+import json
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +17,10 @@ from .models import (
     Event,
     MetricsListResponse,
     HourlyDistribution,
-    BaselineResponse
+    BaselineResponse,
+    CurrentClassifiersResponse,
+    ClassifierHourlyDistribution,
+    ClassifierBaselineResponse
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
@@ -242,6 +247,93 @@ async def query_events(
         end=end,
         events=event_models,
         count=len(event_models)
+    )
+
+
+@app.get("/api/metrics/{metric}/classifiers/current", response_model=CurrentClassifiersResponse)
+async def get_current_classifiers(metric: str):
+    """
+    Get current classifier breakdown for a metric.
+    
+    Returns the most recent observation with its classifier decomposition.
+    
+    Args:
+        metric: Metric name
+        
+    Returns:
+        Current observation with classifier breakdown
+    """
+    # Validate metric name
+    if metric not in MetricsGenerator.get_all_metrics():
+        raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
+    
+    # Get latest observation from store
+    store = get_metrics_store()
+    latest = store.get_latest(metric, limit=1)
+    
+    if not latest or len(latest) == 0:
+        raise HTTPException(status_code=404, detail=f"No data available for metric '{metric}'")
+    
+    observation = latest[0]
+    
+    # Check if observation has classifiers
+    if "classifiers" not in observation or observation["classifiers"] is None:
+        raise HTTPException(status_code=404, detail=f"No classifier data available for metric '{metric}'")
+    
+    return CurrentClassifiersResponse(
+        metric=observation["metric"],
+        timestamp=observation["timestamp"],
+        value=observation["value"],
+        entity=observation.get("entity"),
+        classifiers=observation["classifiers"]
+    )
+
+
+@app.get("/api/classifiers/{classifier}/baseline", response_model=ClassifierBaselineResponse)
+async def get_classifier_baseline(classifier: str):
+    """
+    Get hourly baseline distributions for a classifier.
+    
+    Returns 24 hourly distributions representing typical daily pattern for the classifier,
+    computed from historical bootstrap data.
+    
+    Args:
+        classifier: Classifier name (e.g., 'dhcp', 'dns', 'association')
+        
+    Returns:
+        24 hourly baseline distributions
+    """
+    # Load baselines from file
+    baselines_path = Path("data/baselines.json")
+    if not baselines_path.exists():
+        raise HTTPException(status_code=503, detail="Baseline data not yet available")
+    
+    with open(baselines_path, 'r') as f:
+        baselines = json.load(f)
+    
+    # Check if classifier exists
+    if "classifiers" not in baselines or classifier not in baselines["classifiers"]:
+        raise HTTPException(status_code=404, detail=f"Classifier '{classifier}' not found")
+    
+    classifier_data = baselines["classifiers"][classifier]
+    
+    # Convert to response models
+    hourly_distributions = [
+        ClassifierHourlyDistribution(
+            hour=hour_data["hour"],
+            distribution=Distribution(
+                **hour_data["distribution"],
+                count=hour_data["sample_count"]  # Use sample_count as count for compatibility
+            ),
+            sample_count=hour_data["sample_count"]
+        )
+        for hour_data in classifier_data
+    ]
+    
+    return ClassifierBaselineResponse(
+        classifier=classifier,
+        lookback_days=int(baselines.get("lookback_days", 30)),
+        hourly_distributions=hourly_distributions
     )
 
 
