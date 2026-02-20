@@ -20,12 +20,28 @@ class EventGenerator:
     """Generate network events with realistic timing and metric perturbations."""
 
     EVENT_TYPES = [
+        # Infrastructure health events
         "device_restart",
         "device_crash",
         "firmware_update",
+        "heat_event",
+        
+        # Connection/auth events
+        "dhcp_server_overload",
+        "radius_timeout",
+        "dns_resolution_failure",
+        
+        # RF and capacity events
+        "interference_event",
+        "high_density_event",
+        "rogue_ap",
+        
+        # Configuration events
         "config_change",
+        "channel_change",
+        
+        # AI optimization
         "ai_action",
-        "interference",
     ]
 
     ENTITIES = [
@@ -110,24 +126,56 @@ class EventGenerator:
     def _default_severity(self, event_type: str) -> Optional[str]:
         """Determine default severity for event type."""
         severity_map = {
+            # Infrastructure health
             "device_restart": "warning",
             "device_crash": "critical",
             "firmware_update": "info",
+            "heat_event": "critical",
+            
+            # Connection/auth issues
+            "dhcp_server_overload": "critical",
+            "radius_timeout": "critical",
+            "dns_resolution_failure": "critical",
+            
+            # RF and capacity
+            "interference_event": "warning",
+            "high_density_event": "warning",
+            "rogue_ap": "warning",
+            
+            # Configuration
             "config_change": None,
+            "channel_change": "info",
+            
+            # AI
             "ai_action": "info",
-            "interference": "warning",
         }
         return severity_map.get(event_type)
 
     def _generate_message(self, event_type: str, entity: str) -> str:
         """Generate human-readable message for event."""
         messages = {
+            # Infrastructure health
             "device_restart": f"{entity} rebooted unexpectedly",
             "device_crash": f"{entity} crashed and restarted",
             "firmware_update": f"{entity} firmware updated successfully",
+            "heat_event": f"{entity} experiencing thermal stress",
+            
+            # Connection/auth issues
+            "dhcp_server_overload": f"DHCP server overload affecting {entity}",
+            "radius_timeout": f"RADIUS authentication timeout at {entity}",
+            "dns_resolution_failure": f"DNS resolution failures near {entity}",
+            
+            # RF and capacity
+            "interference_event": f"RF interference detected near {entity}",
+            "high_density_event": f"High client density at {entity}",
+            "rogue_ap": f"Rogue AP detected near {entity}",
+            
+            # Configuration
             "config_change": f"{entity} configuration changed",
+            "channel_change": f"{entity} channel configuration updated",
+            
+            # AI
             "ai_action": f"AI optimized {entity} channel settings",
-            "interference": f"RF interference detected near {entity}",
         }
         return messages.get(event_type, f"{event_type} occurred on {entity}")
 

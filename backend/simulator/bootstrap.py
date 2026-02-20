@@ -280,6 +280,14 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
                     "stddev": float(np.std(values)),
                 },
                 "sample_count": len(values),
+                "thresholds": {
+                    # Threshold policy: green >= p10, yellow >= p2, red < p2
+                    # These are derived from observed bootstrap data, ensuring
+                    # that values the simulation regularly produces during healthy
+                    # operation won't be incorrectly flagged as degraded
+                    "green_min": float(np.percentile(values, 10)),  # p10
+                    "yellow_min": float(np.percentile(values, 2)),   # p2
+                }
             })
         
         classifier_baselines[classifier_name] = hourly_distributions

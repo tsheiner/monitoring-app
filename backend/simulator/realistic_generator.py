@@ -29,7 +29,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
@@ -292,6 +292,10 @@ class RealisticMetricsGenerator:
         # Key: classifier name, Value: float (current value 0.0-1.0)
         self._classifier_state: Dict[str, float] = {}
         
+        # Classifier thresholds (loaded from baselines.json)
+        # Key: classifier name, Value: Dict[hour]->Dict[green_min, yellow_min]
+        self._classifier_thresholds: Dict[str, Dict[int, Dict[str, float]]] = {}
+        
         # Client load state (environmental condition)
         # Key: entity_key, Value: float
         self._client_load_state: Dict[str, float] = {}
@@ -314,6 +318,9 @@ class RealisticMetricsGenerator:
 
         # Track last load pattern injection time
         self._last_load_check = self.start_time
+        
+        # Load classifier thresholds from baselines if available
+        self._load_classifier_thresholds()
 
     def generate_observation(
         self, metric: str, timestamp: int = None, entity: str = None
@@ -357,6 +364,86 @@ class RealisticMetricsGenerator:
             result["entity"] = entity
 
         return result
+
+    def _load_classifier_thresholds(self) -> None:
+        """
+        Load classifier thresholds from baselines.json.
+        
+        Thresholds are derived from bootstrap percentiles and stored per hour-of-day.
+        If baselines don't exist, thresholds remain empty and status will default to
+        a fallback computation.
+        """
+        baselines_path = Path("data/baselines.json")
+        if not baselines_path.exists():
+            return
+        
+        try:
+            with open(baselines_path) as f:
+                baselines = json.load(f)
+            
+            classifiers = baselines.get("classifiers", {})
+            for classifier_name, hourly_data in classifiers.items():
+                self._classifier_thresholds[classifier_name] = {}
+                
+                for hour_entry in hourly_data:
+                    hour = hour_entry["hour"]
+                    thresholds = hour_entry.get("thresholds", {})
+                    
+                    if thresholds:
+                        self._classifier_thresholds[classifier_name][hour] = {
+                            "green_min": thresholds["green_min"],
+                            "yellow_min": thresholds["yellow_min"],
+                        }
+        except (json.JSONDecodeError, KeyError, IOError):
+            # If baselines are malformed or missing, continue without thresholds
+            pass
+
+    def _compute_classifier_status(
+        self, classifier_name: str, value: float, timestamp: int
+    ) -> str:
+        """
+        Compute classifier status (green/yellow/red) based on bootstrap-derived thresholds.
+        
+        Thresholds are hour-specific and derived from observed percentiles:
+        - green: value >= p10 (normal range)
+        - yellow: p2 <= value < p10 (degraded but not critical)
+        - red: value < p2 (critical)
+        
+        Args:
+            classifier_name: Name of classifier
+            value: Current classifier value (0.0-1.0)
+            timestamp: Current timestamp for hour-of-day lookup
+            
+        Returns:
+            "green", "yellow", or "red"
+        """
+        # Get hour of day
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        hour = dt.hour
+        
+        # Look up thresholds for this classifier and hour
+        thresholds = self._classifier_thresholds.get(classifier_name, {}).get(hour)
+        
+        if thresholds is None:
+            # Fallback: if no thresholds available, use simple heuristics
+            # This should only happen before first bootstrap or if baselines are missing
+            if value >= 0.90:
+                return "green"
+            elif value >= 0.80:
+                return "yellow"
+            else:
+                return "red"
+        
+        # Apply bootstrap-derived thresholds
+        green_min = thresholds["green_min"]
+        yellow_min = thresholds["yellow_min"]
+        
+        if value >= green_min:
+            return "green"
+        elif value >= yellow_min:
+            return "yellow"
+        else:
+            return "red"
 
     def _init_entity_state(self, entity_key: str, timestamp: int) -> None:
         """Initialize classifier state (shared pool) and client_load for an entity."""
