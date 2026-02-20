@@ -26,6 +26,7 @@ This document is optimized for coding agents that need:
 - Classifiers are simulation primitives; metrics are derived consequences.
 - Classifier thresholds must be derived from bootstrap output, not config constants.
 - Preserve current metric list and metric-level daily profile behavior.
+- Keep left sidebar behavior unchanged; classifier detail is surfaced via chart tooltip only.
 
 ## Execution Graph
 
@@ -37,6 +38,8 @@ This document is optimized for coding agents that need:
 | D. Bootstrap/Baselines | FD-008, FD-009 | B, C |
 | E. Models/Storage/API | FD-010, FD-011, FD-012 | D |
 | F. Realtime/Acceptance | FD-013, FD-014 | E |
+| G. UI Crosshair/Tooltip | FD-015, FD-016, FD-017, FD-018 | E (FD-011 minimum) |
+| H. UI Acceptance | FD-019 | G |
 
 ---
 
@@ -408,6 +411,128 @@ This document is optimized for coding agents that need:
 
 ---
 
+### FD-015 - Add frontend test harness for chart interactions
+
+**Goal**
+- Establish frontend TDD capability for hover/crosshair/tooltip behavior.
+
+**Files**
+- `frontend/package.json`
+- frontend test config/setup files (new)
+
+**Write tests first**
+- `test_chart_surface_mounts_for_hover_tests`
+- `test_mousemove_can_be_simulated_with_deterministic_time`
+
+**Implement**
+1. Add frontend test tooling compatible with Vite + TypeScript.
+2. Add deterministic timer controls for hysteresis tests.
+3. Add fixture data with multiple visible metrics and classifier payloads.
+
+**Done when**
+- Frontend tests run locally/CI and can simulate hover interactions.
+
+---
+
+### FD-016 - Implement crosshair and nearest-metric detection
+
+**Goal**
+- Add vertical/horizontal crosshair and nearest-metric computation at cursor position.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/chart/types.ts`
+
+**Write tests first**
+- `test_crosshair_lines_render_on_hover_inside_plot`
+- `test_crosshair_hides_on_mouseleave`
+- `test_nearest_metric_selection_by_cursor_y_at_time_x`
+
+**Implement**
+1. Render vertical crosshair at cursor x and horizontal hairline at cursor y.
+2. Compute nearest metric using current cursor coordinate against rendered series.
+3. Extend observation typing so classifier payload is available to tooltip logic.
+
+**Done when**
+- Crosshair and nearest-metric computation are deterministic and test-covered.
+
+---
+
+### FD-017 - Implement tooltip content + active-metric hysteresis
+
+**Goal**
+- Show per-metric values in tooltip and expand classifier rows only for active metric with debounce/hysteresis.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/main.ts`
+- `frontend/index.html` (if tooltip host element is needed)
+
+**Write tests first**
+- `test_tooltip_lists_all_visible_metrics_at_cursor_time`
+- `test_only_active_metric_expands_classifier_rows`
+- `test_active_metric_switches_only_after_hysteresis_window`
+- `test_transient_nearest_metric_changes_do_not_flip_active_metric`
+
+**Implement**
+1. Build tooltip model with all visible metrics (name + value).
+2. Expand classifier rows for active metric only (name, value, status).
+3. Add hysteresis window (~150ms) before active metric swap.
+4. Highlight primary classifier (worst status, tie-break by `|weight*deviation|`).
+
+**Done when**
+- Tooltip behavior is stable and avoids rapid cycling when metric lines are close.
+
+---
+
+### FD-018 - Interaction state handling (hover, pan, live edge)
+
+**Goal**
+- Enforce interaction state rules for hover, pan drag, and live-edge suppression/freeze.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/main.ts`
+
+**Write tests first**
+- `test_pan_drag_suppresses_crosshair_and_tooltip`
+- `test_hover_recovers_after_pan_end`
+- `test_live_edge_region_suppresses_or_freezes_tooltip`
+
+**Implement**
+1. Suppress tooltip/crosshair while panning.
+2. Restore hover affordances after drag completes.
+3. Apply chosen live-edge policy for streaming right-edge region.
+
+**Done when**
+- Hover/pan/live-edge behavior matches the updated plan.
+
+---
+
+### FD-019 - UI acceptance tests for crosshair tooltip workflow
+
+**Goal**
+- Validate complete classifier tooltip UX with stable active-metric behavior.
+
+**Files**
+- frontend UI/e2e test suite
+
+**Write tests first**
+- `test_hover_shows_crosshair_and_tooltip`
+- `test_deliberate_cursor_reposition_changes_active_metric`
+- `test_brief_cursor_pass_near_other_line_does_not_swap_active_metric`
+- `test_sidebar_behavior_unchanged_while_tooltip_updates`
+
+**Implement**
+1. Add deterministic scenario with closely spaced metric lines to exercise hysteresis.
+2. Assert classifier rows/status indicator rendering for active metric.
+3. Verify sidebar remains unchanged.
+
+**Done when**
+- UI acceptance tests prove crosshair/tooltip behavior and classifier expansion logic.
+
+---
+
 ## Agent Todo Template (Copy/Paste)
 
 Use this directly as an internal todo state.
@@ -431,7 +556,12 @@ Use this directly as an internal todo state.
     {"id":"FD-011","status":"pending","depends_on":["FD-010"]},
     {"id":"FD-012","status":"pending","depends_on":["FD-009","FD-010"]},
     {"id":"FD-013","status":"pending","depends_on":["FD-010"]},
-    {"id":"FD-014","status":"pending","depends_on":["FD-011","FD-012","FD-013"]}
+    {"id":"FD-014","status":"pending","depends_on":["FD-011","FD-012","FD-013"]},
+    {"id":"FD-015","status":"pending","depends_on":["FD-011"]},
+    {"id":"FD-016","status":"pending","depends_on":["FD-015"]},
+    {"id":"FD-017","status":"pending","depends_on":["FD-016"]},
+    {"id":"FD-018","status":"pending","depends_on":["FD-017"]},
+    {"id":"FD-019","status":"pending","depends_on":["FD-016","FD-017","FD-018"]}
   ]
 }
 ```
@@ -445,4 +575,8 @@ Use this directly as an internal todo state.
 - API and WS expose optional classifier payloads.
 - Legacy consumers still work when `classifiers` is absent.
 - E2E tests verify top contributor attribution for representative events.
+- Crosshair shows vertical + horizontal hairlines while hovering in plot area.
+- Tooltip lists all visible metrics at cursor time; only active metric expands classifier rows.
+- Active metric swap uses hysteresis and avoids transient rapid cycling.
+- Pan suppresses crosshair/tooltip; live-edge behavior matches selected suppression/freeze policy.
 
