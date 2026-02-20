@@ -308,23 +308,26 @@ Note: Classifier baselines are *computed* in Phase 1 (as part of the bootstrap).
 #### Tooltip behavior
 
 When the cursor is inside the chart area:
-- A vertical crosshair line tracks cursor x (= time coordinate)
-- A horizontal hairline tracks cursor y
-- A tooltip appears showing, for every visible metric, its value at the cursor's time position
-- The metric **nearest the cursor's y position** is the "active" metric — its classifier breakdown is expanded inline in the tooltip; all other metrics show name + value only
+- A vertical crosshair line tracks cursor x (= time coordinate); no horizontal hairline
+- A tooltip appears listing every visible metric, each with a **state icon** (positive / warning / degraded), its name, and its **actual value** at the cursor's time position
+- The metric **nearest the cursor's y position** is the "active" metric — its classifier breakdown is expanded inline in the tooltip below the metric row; all other metrics show icon + name + value only
+
+The tooltip always shows the actual un-normalized value, even in multi-metric normalized view. The normalized chart shows shape; the tooltip tells you the real number. When the chart is in normalized mode, y-axis tick labels are hidden — they are meaningless for a unit-mixed axis.
 
 #### Tooltip content (active metric section)
 
-For the active metric, below the metric name + value, list each classifier on its own row:
+For the active metric, below the metric row, list each classifier on its own row:
+- State icon (positive / warning / degraded), derived from bootstrap thresholds
 - Classifier name
-- Current value (e.g., `0.982`)
-- Status indicator: green / yellow / red dot, derived from bootstrap thresholds
+- Classifier value — display format TBD (the 0–100 numbers in the reference mocks were placeholder; actual scale and formatting to be decided during Phase 5 implementation)
 
-No contribution bars, no percentages — value + status is sufficient and always meaningful regardless of whether the metric is in or out of range.
+No contribution bars, no percentages.
 
-The primary contributor (classifier in worst status, or if tied, highest `|weight × deviation|`) is visually distinguished — bold name or slightly more prominent status dot.
+The primary contributor (classifier in worst status, or if tied, highest `|weight × deviation|`) is visually distinguished — bold name or slightly larger state icon.
 
 #### Active metric selection with hysteresis
+
+Active metric selection is **proximity only** — whichever metric line is nearest the cursor's y position at cursor x. Metric health/degraded status plays no role in selection (start here; adjust if the feel is wrong in practice).
 
 Naively tracking the instantaneous nearest metric causes rapid tooltip cycling when metrics are close together. Instead:
 
