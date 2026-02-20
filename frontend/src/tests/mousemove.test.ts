@@ -4,7 +4,7 @@
  * with controlled timing for predictable hover behavior testing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createMouseEvent,
   simulateMouseMove,
@@ -13,9 +13,9 @@ import {
   createChartContainer,
   cleanupChartContainer,
   chartToClientCoords,
-} from './mouseUtils';
+} from "./mouseUtils";
 
-describe('Mouse Event Simulation with Deterministic Time', () => {
+describe("Mouse Event Simulation with Deterministic Time", () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
@@ -29,23 +29,23 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     cleanupChartContainer(container);
   });
 
-  it('should create mousemove event with specified coordinates', () => {
-    const event = createMouseEvent('mousemove', {
+  it("should create mousemove event with specified coordinates", () => {
+    const event = createMouseEvent("mousemove", {
       clientX: 150,
       clientY: 200,
     });
 
-    expect(event.type).toBe('mousemove');
+    expect(event.type).toBe("mousemove");
     expect(event.clientX).toBe(150);
     expect(event.clientY).toBe(200);
     expect(event.bubbles).toBe(true);
     expect(event.cancelable).toBe(true);
   });
 
-  it('should simulate mousemove with event capture', () => {
+  it("should simulate mousemove with event capture", () => {
     let capturedEvent: Event | null = null;
 
-    container.addEventListener('mousemove', (e) => {
+    container.addEventListener("mousemove", (e) => {
       capturedEvent = e;
     });
 
@@ -59,10 +59,10 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     }
   });
 
-  it('should simulate mousemove with deterministic time', () => {
+  it("should simulate mousemove with deterministic time", () => {
     const events: Array<{ x: number; y: number; time: number }> = [];
 
-    container.addEventListener('mousemove', (e) => {
+    container.addEventListener("mousemove", (e) => {
       const mouseEvent = e as MouseEvent;
       events.push({
         x: mouseEvent.clientX,
@@ -92,21 +92,21 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     expect(events[2]).toEqual({ x: 90, y: 100, time: 1000032 });
   });
 
-  it('should simulate hover sequence with enter, moves, and leave', () => {
+  it("should simulate hover sequence with enter, moves, and leave", () => {
     const eventLog: string[] = [];
 
-    container.addEventListener('mouseenter', () => {
+    container.addEventListener("mouseenter", () => {
       eventLog.push(`enter at ${performance.now()}`);
     });
 
-    container.addEventListener('mousemove', (e) => {
+    container.addEventListener("mousemove", (e) => {
       const mouseEvent = e as MouseEvent;
       eventLog.push(
-        `move to (${mouseEvent.clientX},${mouseEvent.clientY}) at ${performance.now()}`
+        `move to (${mouseEvent.clientX},${mouseEvent.clientY}) at ${performance.now()}`,
       );
     });
 
-    container.addEventListener('mouseleave', () => {
+    container.addEventListener("mouseleave", () => {
       eventLog.push(`leave at ${performance.now()}`);
     });
 
@@ -117,18 +117,18 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     ]);
 
     expect(eventLog).toHaveLength(5); // enter + 3 moves + leave
-    expect(eventLog[0]).toContain('enter');
-    expect(eventLog[1]).toContain('move to (100,100)');
-    expect(eventLog[2]).toContain('move to (150,150)');
-    expect(eventLog[3]).toContain('move to (200,200)');
-    expect(eventLog[4]).toContain('leave');
+    expect(eventLog[0]).toContain("enter");
+    expect(eventLog[1]).toContain("move to (100,100)");
+    expect(eventLog[2]).toContain("move to (150,150)");
+    expect(eventLog[3]).toContain("move to (200,200)");
+    expect(eventLog[4]).toContain("leave");
   });
 
-  it('should track timing deltas between events', () => {
+  it("should track timing deltas between events", () => {
     const timings: number[] = [];
     let lastTime = performance.now();
 
-    container.addEventListener('mousemove', () => {
+    container.addEventListener("mousemove", () => {
       const currentTime = performance.now();
       timings.push(currentTime - lastTime);
       lastTime = currentTime;
@@ -153,46 +153,46 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     expect(timings[3]).toBe(32);
   });
 
-  it('should simulate click with mouse down, up, and click events', () => {
+  it("should simulate click with mouse down, up, and click events", () => {
     const eventSequence: string[] = [];
 
-    container.addEventListener('mousedown', () => {
-      eventSequence.push('down');
+    container.addEventListener("mousedown", () => {
+      eventSequence.push("down");
     });
 
-    container.addEventListener('mouseup', () => {
-      eventSequence.push('up');
+    container.addEventListener("mouseup", () => {
+      eventSequence.push("up");
     });
 
-    container.addEventListener('click', () => {
-      eventSequence.push('click');
+    container.addEventListener("click", () => {
+      eventSequence.push("click");
     });
 
     simulateClick(container, 100, 100);
 
-    expect(eventSequence).toEqual(['down', 'up', 'click']);
+    expect(eventSequence).toEqual(["down", "up", "click"]);
   });
 
-  it('should convert chart coordinates to client coordinates', () => {
+  it("should convert chart coordinates to client coordinates", () => {
     // Position the container at a known location
-    container.style.position = 'absolute';
-    container.style.left = '50px';
-    container.style.top = '100px';
+    container.style.position = "absolute";
+    container.style.left = "50px";
+    container.style.top = "100px";
 
     // Note: In happy-dom, getBoundingClientRect might not work as expected
     // This test demonstrates the API usage
     const clientCoords = chartToClientCoords(container, 25, 30);
 
-    expect(clientCoords).toHaveProperty('x');
-    expect(clientCoords).toHaveProperty('y');
-    expect(typeof clientCoords.x).toBe('number');
-    expect(typeof clientCoords.y).toBe('number');
+    expect(clientCoords).toHaveProperty("x");
+    expect(clientCoords).toHaveProperty("y");
+    expect(typeof clientCoords.x).toBe("number");
+    expect(typeof clientCoords.y).toBe("number");
   });
 
-  it('should handle rapid sequential mousemove events', () => {
+  it("should handle rapid sequential mousemove events", () => {
     const positions: Array<{ x: number; y: number; time: number }> = [];
 
-    container.addEventListener('mousemove', (e) => {
+    container.addEventListener("mousemove", (e) => {
       const mouseEvent = e as MouseEvent;
       positions.push({
         x: mouseEvent.clientX,
@@ -217,10 +217,10 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     }
   });
 
-  it('should allow time to be reset between test scenarios', () => {
+  it("should allow time to be reset between test scenarios", () => {
     const times: number[] = [];
 
-    container.addEventListener('mousemove', () => {
+    container.addEventListener("mousemove", () => {
       times.push(performance.now());
     });
 
@@ -244,15 +244,15 @@ describe('Mouse Event Simulation with Deterministic Time', () => {
     expect(times).toEqual([2000000, 2000050]);
   });
 
-  it('should support multiple event listeners on same element', () => {
+  it("should support multiple event listeners on same element", () => {
     let listener1Called = false;
     let listener2Called = false;
 
-    container.addEventListener('mousemove', () => {
+    container.addEventListener("mousemove", () => {
       listener1Called = true;
     });
 
-    container.addEventListener('mousemove', () => {
+    container.addEventListener("mousemove", () => {
       listener2Called = true;
     });
 

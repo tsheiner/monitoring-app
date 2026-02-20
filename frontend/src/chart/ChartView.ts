@@ -49,9 +49,25 @@ export class ChartView {
 
   // Crosshair elements
   private crosshairGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
-  private crosshairVertical: d3.Selection<SVGLineElement, unknown, null, undefined>;
-  private crosshairHorizontal: d3.Selection<SVGLineElement, unknown, null, undefined>;
+  private crosshairVertical: d3.Selection<
+    SVGLineElement,
+    unknown,
+    null,
+    undefined
+  >;
+  private crosshairHorizontal: d3.Selection<
+    SVGLineElement,
+    unknown,
+    null,
+    undefined
+  >;
   private nearestMetric: string | null = null;
+
+  // Tooltip elements
+  private tooltipElement: HTMLDivElement;
+  private activeMetric: string | null = null;
+  private activeMetricTimer: number | null = null;
+  private readonly HYSTERESIS_MS = 150; // Delay before switching active metric
 
   constructor(container: HTMLElement, config: ChartConfig) {
     this.config = config;
@@ -89,7 +105,8 @@ export class ChartView {
     });
 
     // Initialize crosshair
-    this.crosshairGroup = this.core.getUnclippedChartGroup()
+    this.crosshairGroup = this.core
+      .getUnclippedChartGroup()
       .append("g")
       .attr("class", "crosshair-group")
       .style("display", "none");
@@ -108,6 +125,22 @@ export class ChartView {
       .attr("stroke-width", 1)
       .attr("stroke-dasharray", "4 4");
 
+    // Initialize tooltip
+    this.tooltipElement = document.createElement("div");
+    this.tooltipElement.className = "chart-tooltip";
+    this.tooltipElement.style.position = "absolute";
+    this.tooltipElement.style.display = "none";
+    this.tooltipElement.style.pointerEvents = "none";
+    this.tooltipElement.style.backgroundColor = "rgba(0, 0, 0, 0.9)";
+    this.tooltipElement.style.color = "#fff";
+    this.tooltipElement.style.padding = "12px";
+    this.tooltipElement.style.borderRadius = "4px";
+    this.tooltipElement.style.fontSize = "13px";
+    this.tooltipElement.style.zIndex = "1000";
+    this.tooltipElement.style.boxShadow = "0 2px 8px rgba(0,0,0,0.3)";
+    this.tooltipElement.style.maxWidth = "300px";
+    container.appendChild(this.tooltipElement);
+
     // Add mouse event handlers for crosshair
     this.setupCrosshairHandlers();
   }
@@ -123,7 +156,7 @@ export class ChartView {
       const svgRect = (svg.node() as SVGSVGElement).getBoundingClientRect();
       const x = event.clientX - svgRect.left - this.config.margin.left;
       const y = event.clientY - svgRect.top - this.config.margin.top;
-      
+
       this.updateCrosshair(x, y);
     });
 
@@ -136,8 +169,10 @@ export class ChartView {
    * Update crosshair position and find nearest metric.
    */
   private updateCrosshair(x: number, y: number): void {
-    const chartWidth = this.config.width - this.config.margin.left - this.config.margin.right;
-    const chartHeight = this.config.height - this.config.margin.top - this.config.margin.bottom;
+    const chartWidth =
+      this.config.width - this.config.margin.left - this.config.margin.right;
+    const chartHeight =
+      this.config.height - this.config.margin.top - this.config.margin.bottom;
 
     // Check if cursor is within plot area
     if (x < 0 || x > chartWidth || y < 0 || y > chartHeight) {
@@ -164,14 +199,24 @@ export class ChartView {
 
     // Find nearest metric at this position
     this.findNearestMetric(x, y);
+
+    // Update and show tooltip
+    this.updateTooltip(x, y);
   }
 
   /**
-   * Hide the crosshair.
+   * Hide the crosshair and tooltip.
    */
   private hideCrosshair(): void {
     this.crosshairGroup.style("display", "none");
     this.nearestMetric = null;
+    this.tooltipElement.style.display = "none";
+
+    // Clear active metric timer if hovering away
+    if (this.activeMetricTimer !== null) {
+      clearTimeout(this.activeMetricTimer);
+      this.activeMetricTimer = null;
+    }
   }
 
   /**
@@ -196,7 +241,7 @@ export class ChartView {
     // For each metric, find the closest point in time and compute distance
     for (const [metricName, metricData] of this.metrics.entries()) {
       const observations = metricData.dataTarget.getAll();
-      
+
       if (observations.length === 0) {
         continue;
       }
@@ -235,6 +280,203 @@ export class ChartView {
    */
   getNearestMetric(): string | null {
     return this.nearestMetric;
+  }
+
+  /**
+   * Update and show the tooltip at the cursor position.
+   */
+  private updateTooltip(x: number, y: number): void {
+    if (this.metrics.size === 0) {
+      this.tooltipElement.style.display = "none";
+      return;
+    }
+
+    const xScale = this.core.getXScale();
+    const cursorTime = xScale.invert(x).getTime() / 1000;
+
+    // Collect values for all visible metrics at cursor time
+    const metricsAtCursor: Array<{
+      name: string;
+      value: number | null;
+      color: string;
+      classifiers?: Record<string, { value: number; status: string }>;
+    }> = [];
+
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+
+      if (observations.length === 0) {
+        continue;
+      }
+
+      // Find observation closest to cursor time
+      let closestObs: Observation | null = null;
+      let minTimeDiff = Infinity;
+
+      for (const obs of observations) {
+        const timeDiff = Math.abs(obs.timestamp - cursorTime);
+        if (timeDiff < minTimeDiff) {
+          minTimeDiff = timeDiff;
+          closestObs = obs;
+        }
+      }
+
+      if (closestObs) {
+        metricsAtCursor.push({
+          name: metricName,
+          value: closestObs.value,
+          color: metricData.color,
+          classifiers: closestObs.classifiers,
+        });
+      }
+    }
+
+    if (metricsAtCursor.length === 0) {
+      this.tooltipElement.style.display = "none";
+      return;
+    }
+
+    // Handle active metric hysteresis
+    this.updateActiveMetric();
+
+    // Build tooltip HTML
+    const tooltipHtml = this.buildTooltipContent(metricsAtCursor);
+    this.tooltipElement.innerHTML = tooltipHtml;
+
+    // Position tooltip
+    const svgRect = (
+      this.core.getSVG().node() as SVGSVGElement
+    ).getBoundingClientRect();
+    const tooltipX = svgRect.left + this.config.margin.left + x + 15;
+    const tooltipY = svgRect.top + this.config.margin.top + y + 15;
+
+    this.tooltipElement.style.left = `${tooltipX}px`;
+    this.tooltipElement.style.top = `${tooltipY}px`;
+    this.tooltipElement.style.display = "block";
+  }
+
+  /**
+   * Update active metric with hysteresis to avoid rapid switching.
+   */
+  private updateActiveMetric(): void {
+    // If nearest metric hasn't changed, keep active metric unchanged
+    if (this.nearestMetric === this.activeMetric) {
+      // Clear any pending timer
+      if (this.activeMetricTimer !== null) {
+        clearTimeout(this.activeMetricTimer);
+        this.activeMetricTimer = null;
+      }
+      return;
+    }
+
+    // If nearest metric changed, start hysteresis timer
+    if (this.activeMetricTimer !== null) {
+      // Timer already running, wait for it to complete
+      return;
+    }
+
+    // Start hysteresis timer
+    this.activeMetricTimer = window.setTimeout(() => {
+      this.activeMetric = this.nearestMetric;
+      this.activeMetricTimer = null;
+    }, this.HYSTERESIS_MS);
+  }
+
+  /**
+   * Build tooltip HTML content showing all metrics and expanded classifiers for active metric.
+   */
+  private buildTooltipContent(
+    metricsAtCursor: Array<{
+      name: string;
+      value: number | null;
+      color: string;
+      classifiers?: Record<string, { value: number; status: string }>;
+    }>,
+  ): string {
+    let html = '<div style="font-size: 12px;">';
+
+    for (const metric of metricsAtCursor) {
+      const isActive = metric.name === this.activeMetric;
+      const activeClass = isActive ? " active" : "";
+
+      html += `<div class="tooltip-metric${activeClass}" style="margin-bottom: 8px;">`;
+      html += `<div style="display: flex; align-items: center; margin-bottom: 4px;">`;
+      html += `<span style="display: inline-block; width: 8px; height: 8px; background-color: ${metric.color}; border-radius: 50%; margin-right: 6px;"></span>`;
+      html += `<strong>${metric.name}</strong>: ${metric.value !== null ? metric.value.toFixed(2) : "N/A"}`;
+      html += `</div>`;
+
+      // Expand classifiers only for the active metric
+      if (isActive && metric.classifiers) {
+        const classifiers = Object.entries(metric.classifiers);
+
+        if (classifiers.length > 0) {
+          // Find primary classifier (worst status, or highest weight*deviation)
+          const primaryClassifier = this.findPrimaryClassifier(
+            metric.classifiers,
+          );
+
+          html +=
+            '<div style="margin-left: 14px; font-size: 11px; opacity: 0.9;">';
+          for (const [name, data] of classifiers) {
+            const statusColor =
+              data.status === "red"
+                ? "#f44336"
+                : data.status === "yellow"
+                  ? "#ff9800"
+                  : "#4caf50";
+
+            const isPrimary = name === primaryClassifier;
+            const primaryIndicator = isPrimary ? "▸ " : "";
+            const primaryStyle = isPrimary ? "font-weight: bold;" : "";
+
+            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="${primaryStyle}">`;
+            html += `${primaryIndicator}${name}: ${data.value.toFixed(2)} `;
+            html += `<span style="color: ${statusColor};">●</span>`;
+            html += `</div>`;
+          }
+          html += "</div>";
+        }
+      }
+
+      html += `</div>`;
+    }
+
+    html += "</div>";
+    return html;
+  }
+
+  /**
+   * Find the primary classifier for highlighting (worst status, tie-break by value deviation from 1.0).
+   */
+  private findPrimaryClassifier(
+    classifiers: Record<string, { value: number; status: string }>,
+  ): string | null {
+    if (Object.keys(classifiers).length === 0) {
+      return null;
+    }
+
+    const statusPriority = { red: 3, yellow: 2, green: 1 };
+
+    let primaryName: string | null = null;
+    let worstPriority = 0;
+    let maxDeviation = 0;
+
+    for (const [name, data] of Object.entries(classifiers)) {
+      const priority =
+        statusPriority[data.status as keyof typeof statusPriority] || 0;
+      const deviation = Math.abs(1.0 - data.value);
+
+      if (
+        priority > worstPriority ||
+        (priority === worstPriority && deviation > maxDeviation)
+      ) {
+        primaryName = name;
+        worstPriority = priority;
+        maxDeviation = deviation;
+      }
+    }
+
+    return primaryName;
   }
 
   /**

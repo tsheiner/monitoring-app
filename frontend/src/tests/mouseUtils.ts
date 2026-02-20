@@ -15,8 +15,14 @@ export interface MouseEventOptions {
  * Create a mouse event with specified options
  */
 export function createMouseEvent(
-  type: 'mousemove' | 'mouseenter' | 'mouseleave' | 'click' | 'mousedown' | 'mouseup',
-  options: MouseEventOptions = {}
+  type:
+    | "mousemove"
+    | "mouseenter"
+    | "mouseleave"
+    | "click"
+    | "mousedown"
+    | "mouseup",
+  options: MouseEventOptions = {},
 ): MouseEvent {
   const {
     clientX = 0,
@@ -41,12 +47,8 @@ export function createMouseEvent(
 /**
  * Simulate a mousemove event on a target element
  */
-export function simulateMouseMove(
-  target: Element,
-  x: number,
-  y: number
-): void {
-  const event = createMouseEvent('mousemove', {
+export function simulateMouseMove(target: Element, x: number, y: number): void {
+  const event = createMouseEvent("mousemove", {
     clientX: x,
     clientY: y,
   });
@@ -58,12 +60,12 @@ export function simulateMouseMove(
  */
 export function simulateHoverSequence(
   target: Element,
-  positions: Array<{ x: number; y: number }>
+  positions: Array<{ x: number; y: number }>,
 ): void {
   if (positions.length === 0) return;
 
   // Enter at first position
-  const enterEvent = createMouseEvent('mouseenter', {
+  const enterEvent = createMouseEvent("mouseenter", {
     clientX: positions[0].x,
     clientY: positions[0].y,
   });
@@ -75,7 +77,7 @@ export function simulateHoverSequence(
   });
 
   // Leave at last position
-  const leaveEvent = createMouseEvent('mouseleave', {
+  const leaveEvent = createMouseEvent("mouseleave", {
     clientX: positions[positions.length - 1].x,
     clientY: positions[positions.length - 1].y,
   });
@@ -86,9 +88,9 @@ export function simulateHoverSequence(
  * Simulate a click event on a target element
  */
 export function simulateClick(target: Element, x: number, y: number): void {
-  const mouseDown = createMouseEvent('mousedown', { clientX: x, clientY: y });
-  const mouseUp = createMouseEvent('mouseup', { clientX: x, clientY: y });
-  const click = createMouseEvent('click', { clientX: x, clientY: y });
+  const mouseDown = createMouseEvent("mousedown", { clientX: x, clientY: y });
+  const mouseUp = createMouseEvent("mouseup", { clientX: x, clientY: y });
+  const click = createMouseEvent("click", { clientX: x, clientY: y });
 
   target.dispatchEvent(mouseDown);
   target.dispatchEvent(mouseUp);
@@ -108,7 +110,7 @@ export function getSVGElementBounds(element: SVGElement): DOMRect {
 export function chartToClientCoords(
   chartElement: Element,
   chartX: number,
-  chartY: number
+  chartY: number,
 ): { x: number; y: number } {
   const bounds = chartElement.getBoundingClientRect();
   return {
@@ -139,9 +141,9 @@ export async function waitForAnimationFrames(count: number): Promise<void> {
  * Helper to create a container element for chart testing
  */
 export function createChartContainer(): HTMLDivElement {
-  const container = document.createElement('div');
-  container.style.width = '800px';
-  container.style.height = '400px';
+  const container = document.createElement("div");
+  container.style.width = "800px";
+  container.style.height = "400px";
   document.body.appendChild(container);
   return container;
 }

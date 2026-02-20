@@ -8,7 +8,7 @@
 
 export interface ClassifierValue {
   value: number;
-  status: 'green' | 'yellow' | 'red';
+  status: "green" | "yellow" | "red";
 }
 
 export interface Observation {

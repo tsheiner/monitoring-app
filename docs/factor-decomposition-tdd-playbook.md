@@ -462,6 +462,8 @@ This document is optimized for coding agents that need:
 
 ### FD-017 - Implement tooltip content + active-metric hysteresis
 
+**Status: ✅ COMPLETE**
+
 **Goal**
 - Show per-metric values in tooltip and expand classifier rows only for active metric with debounce/hysteresis.
 
@@ -542,7 +544,7 @@ Use this directly as an internal todo state.
 ```json
 {
   "epic": "classifier-architecture",
-  "current_task": "FD-017",
+  "current_task": "FD-018",
   "tasks": [
     {"id":"FD-001","status":"done","depends_on":[]},
     {"id":"FD-002","status":"done","depends_on":["FD-001"]},
@@ -561,7 +563,7 @@ Use this directly as an internal todo state.
     {"id":"FD-014","status":"done","depends_on":["FD-011","FD-012","FD-013"]},
     {"id":"FD-015","status":"done","depends_on":["FD-011"]},
     {"id":"FD-016","status":"done","depends_on":["FD-015"]},
-    {"id":"FD-017","status":"pending","depends_on":["FD-016"]},
+    {"id":"FD-017","status":"done","depends_on":["FD-016"]},
     {"id":"FD-018","status":"pending","depends_on":["FD-017"]},
     {"id":"FD-019","status":"pending","depends_on":["FD-016","FD-017","FD-018"]}
   ]
