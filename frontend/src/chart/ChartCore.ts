@@ -188,6 +188,13 @@ export class ChartCore {
   }
 
   /**
+   * Get SVG element for attaching global event handlers.
+   */
+  getSVG(): d3.Selection<SVGSVGElement, unknown, null, undefined> {
+    return this.svg;
+  }
+
+  /**
    * Update axes rendering.
    */
   private updateAxes(): void {

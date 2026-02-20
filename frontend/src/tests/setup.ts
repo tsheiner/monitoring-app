@@ -46,3 +46,32 @@ declare global {
 globalThis.setMockedTime = setMockedTime;
 globalThis.advanceTime = advanceTime;
 globalThis.resetMockedTime = resetMockedTime;
+
+// Mock SVG methods not supported by happy-dom
+// This allows D3's pointer() function to work in tests
+if (typeof SVGElement !== 'undefined') {
+  if (!SVGElement.prototype.getScreenCTM) {
+    SVGElement.prototype.getScreenCTM = function() {
+      return {
+        a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
+        inverse: function() { return this; },
+        multiply: function() { return this; },
+        translate: function() { return this; },
+        scale: function() { return this; },
+        rotate: function() { return this; },
+        skewX: function() { return this; },
+        skewY: function() { return this; },
+      } as any;
+    };
+  }
+
+  if (!SVGElement.prototype.createSVGPoint) {
+    SVGElement.prototype.createSVGPoint = function() {
+      return {
+        x: 0,
+        y: 0,
+        matrixTransform: function() { return this; },
+      } as any;
+    };
+  }
+}

@@ -15,6 +15,7 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
+import * as d3 from "d3";
 import {
   ChartConfig,
   Observation,
@@ -45,6 +46,12 @@ export class ChartView {
   // Track chart start time for growth phase
   private chartStartTime: number;
   private durationSeconds: number;
+
+  // Crosshair elements
+  private crosshairGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private crosshairVertical: d3.Selection<SVGLineElement, unknown, null, undefined>;
+  private crosshairHorizontal: d3.Selection<SVGLineElement, unknown, null, undefined>;
+  private nearestMetric: string | null = null;
 
   constructor(container: HTMLElement, config: ChartConfig) {
     this.config = config;
@@ -80,6 +87,154 @@ export class ChartView {
     this.core.onRangeChange((range, userInitiated) => {
       this.handleZoomPanRangeChange(range, userInitiated);
     });
+
+    // Initialize crosshair
+    this.crosshairGroup = this.core.getUnclippedChartGroup()
+      .append("g")
+      .attr("class", "crosshair-group")
+      .style("display", "none");
+
+    this.crosshairVertical = this.crosshairGroup
+      .append("line")
+      .attr("class", "crosshair-vertical")
+      .attr("stroke", "#888")
+      .attr("stroke-width", 1)
+      .attr("stroke-dasharray", "4 4");
+
+    this.crosshairHorizontal = this.crosshairGroup
+      .append("line")
+      .attr("class", "crosshair-horizontal")
+      .attr("stroke", "#888")
+      .attr("stroke-width", 1)
+      .attr("stroke-dasharray", "4 4");
+
+    // Add mouse event handlers for crosshair
+    this.setupCrosshairHandlers();
+  }
+
+  /**
+   * Setup crosshair mouse event handlers.
+   */
+  private setupCrosshairHandlers(): void {
+    const svg = this.core.getSVG();
+
+    svg.on("mousemove", (event: MouseEvent) => {
+      // Get mouse position relative to the SVG element
+      const svgRect = (svg.node() as SVGSVGElement).getBoundingClientRect();
+      const x = event.clientX - svgRect.left - this.config.margin.left;
+      const y = event.clientY - svgRect.top - this.config.margin.top;
+      
+      this.updateCrosshair(x, y);
+    });
+
+    svg.on("mouseleave", () => {
+      this.hideCrosshair();
+    });
+  }
+
+  /**
+   * Update crosshair position and find nearest metric.
+   */
+  private updateCrosshair(x: number, y: number): void {
+    const chartWidth = this.config.width - this.config.margin.left - this.config.margin.right;
+    const chartHeight = this.config.height - this.config.margin.top - this.config.margin.bottom;
+
+    // Check if cursor is within plot area
+    if (x < 0 || x > chartWidth || y < 0 || y > chartHeight) {
+      this.hideCrosshair();
+      return;
+    }
+
+    // Show crosshair
+    this.crosshairGroup.style("display", null);
+
+    // Update vertical line (full height of chart)
+    this.crosshairVertical
+      .attr("x1", x)
+      .attr("y1", 0)
+      .attr("x2", x)
+      .attr("y2", chartHeight);
+
+    // Update horizontal line (full width of chart)
+    this.crosshairHorizontal
+      .attr("x1", 0)
+      .attr("y1", y)
+      .attr("x2", chartWidth)
+      .attr("y2", y);
+
+    // Find nearest metric at this position
+    this.findNearestMetric(x, y);
+  }
+
+  /**
+   * Hide the crosshair.
+   */
+  private hideCrosshair(): void {
+    this.crosshairGroup.style("display", "none");
+    this.nearestMetric = null;
+  }
+
+  /**
+   * Find the nearest metric to the cursor position.
+   */
+  private findNearestMetric(x: number, y: number): void {
+    if (this.metrics.size === 0) {
+      this.nearestMetric = null;
+      return;
+    }
+
+    const xScale = this.core.getXScale();
+    const yScale = this.core.getYScale();
+
+    // Convert pixel coordinates to data coordinates
+    const cursorTime = xScale.invert(x).getTime() / 1000; // Unix timestamp
+    const cursorValue = yScale.invert(y);
+
+    let nearestMetricName: string | null = null;
+    let minDistance = Infinity;
+
+    // For each metric, find the closest point in time and compute distance
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+      
+      if (observations.length === 0) {
+        continue;
+      }
+
+      // Find observation closest to cursor time using binary search
+      let closestObs: Observation | null = null;
+      let minTimeDiff = Infinity;
+
+      for (const obs of observations) {
+        const timeDiff = Math.abs(obs.timestamp - cursorTime);
+        if (timeDiff < minTimeDiff) {
+          minTimeDiff = timeDiff;
+          closestObs = obs;
+        }
+      }
+
+      if (!closestObs) {
+        continue;
+      }
+
+      // Compute vertical distance in pixel space (Y direction only)
+      const obsPixelY = yScale(closestObs.value);
+      const distance = Math.abs(obsPixelY - y);
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestMetricName = metricName;
+      }
+    }
+
+    this.nearestMetric = nearestMetricName;
+  }
+
+  /**
+   * Get the currently nearest metric to the cursor.
+   */
+  getNearestMetric(): string | null {
+    return this.nearestMetric;
   }
 
   /**

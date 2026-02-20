@@ -436,6 +436,8 @@ This document is optimized for coding agents that need:
 
 ### FD-016 - Implement crosshair and nearest-metric detection
 
+**Status: ✅ COMPLETE**
+
 **Goal**
 - Add vertical/horizontal crosshair and nearest-metric computation at cursor position.
 
@@ -540,7 +542,7 @@ Use this directly as an internal todo state.
 ```json
 {
   "epic": "classifier-architecture",
-  "current_task": "FD-016",
+  "current_task": "FD-017",
   "tasks": [
     {"id":"FD-001","status":"done","depends_on":[]},
     {"id":"FD-002","status":"done","depends_on":["FD-001"]},
@@ -558,7 +560,7 @@ Use this directly as an internal todo state.
     {"id":"FD-013","status":"done","depends_on":["FD-010"]},
     {"id":"FD-014","status":"done","depends_on":["FD-011","FD-012","FD-013"]},
     {"id":"FD-015","status":"done","depends_on":["FD-011"]},
-    {"id":"FD-016","status":"pending","depends_on":["FD-015"]},
+    {"id":"FD-016","status":"done","depends_on":["FD-015"]},
     {"id":"FD-017","status":"pending","depends_on":["FD-016"]},
     {"id":"FD-018","status":"pending","depends_on":["FD-017"]},
     {"id":"FD-019","status":"pending","depends_on":["FD-016","FD-017","FD-018"]}
