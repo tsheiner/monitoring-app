@@ -36,7 +36,7 @@ from simulator.realistic_generator import (
     get_generator,
     reset_for_live_streaming,
     RealisticMetricsGenerator,
-    METRIC_SENSITIVITIES,
+    CLASSIFIER_DEFINITIONS,
 )
 from simulator.event_generator import get_event_generator
 from simulator.perturbations import (
@@ -133,6 +133,11 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     # Accumulators for baseline computation (sum across APs per timestamp)
     # metric_sums[metric][t_idx] = sum of values across all APs
     metric_sums = {m: np.zeros(n_timestamps) for m in all_metrics}
+    
+    # NEW: Track classifier values for baseline computation
+    # classifier_sums[classifier][t_idx] = sum of classifier values
+    all_classifiers = list(CLASSIFIER_DEFINITIONS.keys())
+    classifier_sums = {c: np.zeros(n_timestamps) for c in all_classifiers}
 
     # Accumulator for tiered storage (bucket -> running sum and count)
     # Key: (metric, ap, bucket_start) -> {"sum": float, "count": int}
@@ -161,6 +166,13 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
                 key = (metric, ap, bucket_start)
                 bucket_accum[key]["sum"] += value
                 bucket_accum[key]["count"] += 1
+            
+            # NEW: Capture classifier values for baseline computation
+            # Classifiers are shared (not per-AP), so we only need to sample once per timestamp
+            if ap_idx == 0:
+                for classifier_name in all_classifiers:
+                    classifier_value = generator._classifier_state[classifier_name]
+                    classifier_sums[classifier_name][t_idx] = classifier_value
 
         elapsed = time.time() - ap_start
         print(f"    {ap}: {n_timestamps:,} timestamps in {elapsed:.1f}s")
@@ -176,6 +188,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
 
     n_aps = len(ap_list)
     baselines = {}
+    classifier_baselines = {}
 
     # Pre-compute hour-of-day for each timestamp
     hours_of_day = np.array([
@@ -183,6 +196,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         for t in range(n_timestamps)
     ])
 
+    # Compute metric baselines
     for metric in all_metrics:
         # Average across APs to get aggregated values
         aggregated = metric_sums[metric] / n_aps
@@ -229,6 +243,53 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
             print(f"    {metric}: 24h bins, ~{sample_per_hour} samples/hour, noon p5-p95: [{p5:.2f}..{p95:.2f}]")
         else:
             print(f"    {metric}: 24h bins computed")
+    
+    # NEW: Compute classifier baselines
+    print(f"  Computing classifier baselines...")
+    for classifier_name in all_classifiers:
+        # Classifier values are already raw (not per-AP averages)
+        classifier_values = classifier_sums[classifier_name]
+        
+        # Group by hour-of-day
+        hourly_bins = defaultdict(list)
+        for t_idx in range(n_timestamps):
+            hourly_bins[hours_of_day[t_idx]].append(float(classifier_values[t_idx]))
+        
+        # Compute percentiles for each hour
+        hourly_distributions = []
+        for hour in range(24):
+            values = np.array(hourly_bins.get(hour, []))
+            if len(values) < 5:
+                continue
+            
+            hourly_distributions.append({
+                "hour": hour,
+                "distribution": {
+                    "p1": float(np.percentile(values, 1)),
+                    "p2": float(np.percentile(values, 2)),
+                    "p5": float(np.percentile(values, 5)),
+                    "p10": float(np.percentile(values, 10)),
+                    "p25": float(np.percentile(values, 25)),
+                    "p50": float(np.percentile(values, 50)),
+                    "p75": float(np.percentile(values, 75)),
+                    "p90": float(np.percentile(values, 90)),
+                    "p95": float(np.percentile(values, 95)),
+                    "p98": float(np.percentile(values, 98)),
+                    "p99": float(np.percentile(values, 99)),
+                    "mean": float(np.mean(values)),
+                    "stddev": float(np.std(values)),
+                },
+                "sample_count": len(values),
+            })
+        
+        classifier_baselines[classifier_name] = hourly_distributions
+        
+        # Print diagnostic sample
+        noon_dist = next((d for d in hourly_distributions if d["hour"] == 12), None)
+        if noon_dist:
+            p10 = noon_dist["distribution"]["p10"]
+            p90 = noon_dist["distribution"]["p90"]
+            print(f"    {classifier_name}: noon p10-p90: [{p10:.3f}..{p90:.3f}]")
 
     # Save baselines to JSON file
     baselines_path = Path("data/baselines.json")
@@ -239,6 +300,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         "n_aps": n_aps,
         "ap_list": ap_list,
         "metrics": baselines,
+        "classifiers": classifier_baselines,  # NEW: Include classifier baselines
     }
     with open(baselines_path, "w") as f:
         json.dump(baselines_data, f, indent=2)
@@ -248,9 +310,12 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     print(f"  Phase 2 complete in {phase2_elapsed:.1f}s")
 
     # ================================================================
-    # PHASE 3: Generate perturbation events and modify bucket data
+    # PHASE 3: Generate retroactive perturbation events
     # ================================================================
-    print(f"\n  Phase 3: Generating retroactive perturbation events...")
+    # NOTE: Perturbation application to data is disabled in Phase 1 implementation.
+    # This will be re-enabled in Phase 2 (Perturbation Retargeting) when
+    # perturbations are retargeted to affect classifiers instead of drivers.
+    print(f"\n  Phase 3: Generating retroactive events (perturbation effects disabled)...")
     phase3_start = time.time()
 
     event_weights = {
@@ -288,82 +353,8 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         }
         events.append(event)
 
-    # Apply perturbation effects to stored bucket data
-    perturbations_applied = 0
-    for event in events:
-        template = PERTURBATION_TEMPLATES.get(event["event_type"])
-        if template is None:
-            continue
-
-        pert = Perturbation(
-            start_time=event["timestamp"],
-            duration_seconds=template["duration_seconds"],
-            affected_metrics=dict(template["affected_metrics"]),
-            decay_type=template["decay_type"],
-            source_event_type=event["event_type"],
-            source_entity=event.get("entity", ""),
-        )
-
-        pert_start = event["timestamp"]
-        pert_end = pert_start + template["duration_seconds"]
-        ap = event.get("entity", ap_list[0])
-
-        for metric in all_metrics:
-            sensitivities = METRIC_SENSITIVITIES[metric]
-            cfg = generator.config[metric]
-            metric_range = cfg["max"] - cfg["min"]
-
-            # Compute average perturbation effect on this metric
-            n_samples = max(1, min(10, template["duration_seconds"] // 10))
-            total_metric_effect = 0.0
-            for s in range(n_samples):
-                sample_t = pert_start + s * (template["duration_seconds"] // n_samples)
-                driver_effect = 0.0
-                for driver, sensitivity in sensitivities.items():
-                    driver_pert = pert.effect_at(driver, sample_t)
-                    driver_effect += sensitivity * driver_pert
-                total_metric_effect += driver_effect * metric_range
-
-            avg_metric_effect = total_metric_effect / n_samples
-            if abs(avg_metric_effect) < 0.01:
-                continue
-
-            # Find the tier interval for this perturbation's age
-            age = now - pert_start
-            interval = _get_tier_interval(age)
-
-            # Find and modify overlapping buckets
-            first_bucket = (pert_start // interval) * interval
-            last_bucket = (pert_end // interval) * interval
-
-            for bucket_start in range(first_bucket, last_bucket + interval, interval):
-                key = (metric, ap, bucket_start)
-                if key not in bucket_accum:
-                    continue
-
-                acc = bucket_accum[key]
-                if acc["count"] == 0:
-                    continue
-
-                old_mean = acc["sum"] / acc["count"]
-
-                # Scale effect by overlap fraction
-                bucket_end = bucket_start + interval
-                overlap_start = max(pert_start, bucket_start)
-                overlap_end = min(pert_end, bucket_end)
-                overlap_frac = max(0, overlap_end - overlap_start) / interval
-
-                adjustment = avg_metric_effect * overlap_frac
-                new_value = float(np.clip(
-                    old_mean + adjustment,
-                    cfg["min"],
-                    cfg["max"]
-                ))
-                acc["sum"] = new_value * acc["count"]
-                perturbations_applied += 1
-
     print(f"    Generated {len(events)} historical events")
-    print(f"    Applied {perturbations_applied} perturbation effects to stored buckets")
+    print(f"    NOTE: Perturbation effects not applied (will be enabled in Phase 2)")
 
     # Store events
     events_store = get_events_store()
