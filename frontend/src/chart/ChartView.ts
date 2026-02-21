@@ -30,6 +30,7 @@ interface MetricData {
   distributionGenerator: DistributionRibbonGenerator | null;
   baseline: BaselineResponse | null;
   color: string;
+  label: string; // Human-readable display label (FD-023)
   normalizedYDomain: [number, number]; // For independent normalization
   bufferedRange: [number, number] | null; // Track what time range is buffered
 }
@@ -55,12 +56,7 @@ export class ChartView {
     null,
     undefined
   >;
-  private crosshairHorizontal: d3.Selection<
-    SVGLineElement,
-    unknown,
-    null,
-    undefined
-  >;
+  private crosshairDots: d3.Selection<SVGGElement, unknown, null, undefined>;
   private nearestMetric: string | null = null;
 
   // Tooltip elements
@@ -68,6 +64,27 @@ export class ChartView {
   private activeMetric: string | null = null;
   private activeMetricTimer: number | null = null;
   private readonly HYSTERESIS_MS = 150; // Delay before switching active metric
+
+  // FD-025: Metric unit suffixes and decimal precision maps
+  private static readonly METRIC_UNITS: Record<string, string> = {
+    time_to_connect: " ms",
+    throughput: " Mbps",
+    coverage: " dBm",
+    capacity: "%",
+    roaming: " ms",
+    successful_connects: "%",
+    ap_health: "",
+  };
+
+  private static readonly METRIC_DECIMALS: Record<string, number> = {
+    time_to_connect: 0,
+    throughput: 0,
+    coverage: 0,
+    capacity: 1,
+    roaming: 0,
+    successful_connects: 1,
+    ap_health: 0,
+  };
 
   // Interaction state
   private isPanning: boolean = false;
@@ -118,15 +135,13 @@ export class ChartView {
       .append("line")
       .attr("class", "crosshair-vertical")
       .attr("stroke", "#888")
-      .attr("stroke-width", 1)
-      .attr("stroke-dasharray", "4 4");
+      .attr("stroke-width", 1);
+    // No stroke-dasharray — must be solid per FD-022 spec
 
-    this.crosshairHorizontal = this.crosshairGroup
-      .append("line")
-      .attr("class", "crosshair-horizontal")
-      .attr("stroke", "#888")
-      .attr("stroke-width", 1)
-      .attr("stroke-dasharray", "4 4");
+    // Container for highlighted dots at trace intersections (FD-022)
+    this.crosshairDots = this.crosshairGroup
+      .append("g")
+      .attr("class", "crosshair-dots");
 
     // Initialize tooltip
     this.tooltipElement = document.createElement("div");
@@ -213,19 +228,15 @@ export class ChartView {
     // Show crosshair
     this.crosshairGroup.style("display", null);
 
-    // Update vertical line (full height of chart)
+    // Update vertical line (full height of chart) — solid, no horizontal
     this.crosshairVertical
       .attr("x1", x)
       .attr("y1", 0)
       .attr("x2", x)
       .attr("y2", chartHeight);
 
-    // Update horizontal line (full width of chart)
-    this.crosshairHorizontal
-      .attr("x1", 0)
-      .attr("y1", y)
-      .attr("x2", chartWidth)
-      .attr("y2", y);
+    // Update highlighted dots on each visible metric trace (FD-022)
+    this.updateCrosshairDots(x);
 
     // Find nearest metric at this position
     this.findNearestMetric(x, y);
@@ -247,6 +258,73 @@ export class ChartView {
       clearTimeout(this.activeMetricTimer);
       this.activeMetricTimer = null;
     }
+  }
+
+  /**
+   * Update highlighted dots at each metric trace's y-position for cursor x (FD-022).
+   * Dots are filled circles with radius 4 in the metric's trace color.
+   */
+  private updateCrosshairDots(x: number): void {
+    const xScale = this.core.getXScale();
+    const yScale = this.core.getYScale();
+    const cursorTime = xScale.invert(x).getTime() / 1000;
+
+    // Collect dot data for each visible metric
+    const dotData: Array<{ metricName: string; y: number; color: string }> = [];
+
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+      if (observations.length === 0) continue;
+
+      // Find observation closest to cursor time
+      let closestObs = observations[0];
+      let minDiff = Math.abs(closestObs.timestamp - cursorTime);
+
+      for (const obs of observations) {
+        const diff = Math.abs(obs.timestamp - cursorTime);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestObs = obs;
+        }
+      }
+
+      // Compute normalized value for multi-metric display
+      let displayValue = closestObs.value;
+      if (this.metrics.size > 1) {
+        displayValue = this.normalizeValue(closestObs.value, metricData.normalizedYDomain);
+      }
+
+      dotData.push({
+        metricName,
+        y: yScale(displayValue),
+        color: metricData.color,
+      });
+    }
+
+    // Bind data to dot elements using D3 enter/update/exit
+    const dots = this.crosshairDots
+      .selectAll<SVGCircleElement, (typeof dotData)[0]>(".crosshair-dot")
+      .data(dotData, (d) => d.metricName);
+
+    // Enter: create new dots
+    dots
+      .enter()
+      .append("circle")
+      .attr("class", "crosshair-dot")
+      .attr("r", 4)
+      .attr("stroke", "none")
+      .attr("fill", (d) => d.color)
+      .attr("cx", x)
+      .attr("cy", (d) => d.y);
+
+    // Update: reposition existing dots
+    dots
+      .attr("fill", (d) => d.color)
+      .attr("cx", x)
+      .attr("cy", (d) => d.y);
+
+    // Exit: remove dots for metrics no longer visible
+    dots.exit().remove();
   }
 
   /**
@@ -327,6 +405,7 @@ export class ChartView {
     // Collect values for all visible metrics at cursor time
     const metricsAtCursor: Array<{
       name: string;
+      label: string; // FD-023: human-readable display label
       value: number | null;
       color: string;
       classifiers?: Record<string, { value: number; status: string }>;
@@ -354,6 +433,7 @@ export class ChartView {
       if (closestObs) {
         metricsAtCursor.push({
           name: metricName,
+          label: metricData.label, // FD-023
           value: closestObs.value,
           color: metricData.color,
           classifiers: closestObs.classifiers,
@@ -370,7 +450,7 @@ export class ChartView {
     this.updateActiveMetric();
 
     // Build tooltip HTML
-    const tooltipHtml = this.buildTooltipContent(metricsAtCursor);
+    const tooltipHtml = this.buildTooltipContent(metricsAtCursor, cursorTime);
     this.tooltipElement.innerHTML = tooltipHtml;
 
     // Position tooltip
@@ -413,17 +493,67 @@ export class ChartView {
   }
 
   /**
+   * Determine the health status of a metric value relative to its hourly baseline distribution.
+   * Returns 'green' | 'yellow' | 'red', or null when no baseline is available.
+   * Classification:
+   *   green  — value within [p10, p90]
+   *   yellow — value within [p5, p10) or (p90, p95]
+   *   red    — value below p5 or above p95
+   */
+  getMetricStatus(
+    metricName: string,
+    value: number,
+    cursorTimeSec: number,
+  ): "green" | "yellow" | "red" | null {
+    const metricData = this.metrics.get(metricName);
+    if (!metricData || !metricData.baseline) return null;
+
+    const hour = new Date(cursorTimeSec * 1000).getUTCHours();
+    const hourlyDist = metricData.baseline.hourly_distributions.find(
+      (d) => d.hour === hour,
+    );
+    if (!hourlyDist) return null;
+
+    const { p5, p10, p90, p95 } = hourlyDist.distribution;
+
+    if (value >= p10 && value <= p90) return "green";
+    if ((value >= p5 && value < p10) || (value > p90 && value <= p95))
+      return "yellow";
+    return "red";
+  }
+
+  /**
+   * Format a Unix timestamp (seconds) into tooltip header string.
+   * Format: "Mon Jan 1 09:30" (no year, 24h time)
+   */
+  private formatTooltipTimestamp(cursorTimeSec: number): string {
+    const d = new Date(cursorTimeSec * 1000);
+    const parts = d.toDateString().split(" "); // e.g. ["Mon", "Jan", "1", "2024"]
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${parts[0]} ${parts[1]} ${parts[2]} ${hh}:${mm}`;
+  }
+
+  /**
    * Build tooltip HTML content showing all metrics and expanded classifiers for active metric.
    */
   private buildTooltipContent(
     metricsAtCursor: Array<{
       name: string;
+      label: string; // FD-023: human-readable display label
       value: number | null;
       color: string;
       classifiers?: Record<string, { value: number; status: string }>;
     }>,
+    cursorTimeSec?: number,
   ): string {
     let html = '<div style="font-size: 12px;">';
+
+    // FD-023: Timestamp header at the top of the tooltip
+    if (cursorTimeSec !== undefined) {
+      const tsLabel = this.formatTooltipTimestamp(cursorTimeSec);
+      html += `<div class="tooltip-timestamp" style="margin-bottom: 6px; opacity: 0.7; font-size: 11px;">${tsLabel}</div>`;
+    }
 
     for (const metric of metricsAtCursor) {
       const isActive = metric.name === this.activeMetric;
@@ -431,8 +561,32 @@ export class ChartView {
 
       html += `<div class="tooltip-metric${activeClass}" style="margin-bottom: 8px;">`;
       html += `<div style="display: flex; align-items: center; margin-bottom: 4px;">`;
-      html += `<span style="display: inline-block; width: 8px; height: 8px; background-color: ${metric.color}; border-radius: 50%; margin-right: 6px;"></span>`;
-      html += `<strong>${metric.name}</strong>: ${metric.value !== null ? metric.value.toFixed(2) : "N/A"}`;
+
+      // FD-024: Health-aware leading icon based on baseline comparison
+      const status =
+        metric.value !== null && cursorTimeSec !== undefined
+          ? this.getMetricStatus(metric.name, metric.value, cursorTimeSec)
+          : null;
+      if (status === "green") {
+        html += `<span class="status-green" style="color: #26a69a; margin-right: 6px; font-weight: bold;">✓</span>`;
+      } else if (status === "yellow") {
+        html += `<span class="status-yellow" style="color: #ff9800; margin-right: 6px;">⚠</span>`;
+      } else if (status === "red") {
+        html += `<span class="status-red" style="color: #f44336; margin-right: 6px;">●</span>`;
+      } else {
+        // Fallback: plain colored dot when no baseline is available
+        html += `<span style="display: inline-block; width: 8px; height: 8px; background-color: ${metric.color}; border-radius: 50%; margin-right: 6px;"></span>`;
+      }
+
+      // FD-025: Format value with appropriate units and decimal precision
+      const unit = ChartView.METRIC_UNITS[metric.name] ?? "";
+      const decimals = ChartView.METRIC_DECIMALS[metric.name] ?? 2;
+      const formattedValue =
+        metric.value !== null
+          ? `${metric.value.toFixed(decimals)}${unit}`
+          : "N/A";
+
+      html += `<strong>${metric.label}</strong>: ${formattedValue}`;
       html += `</div>`;
 
       // Expand classifiers only for the active metric
@@ -511,8 +665,11 @@ export class ChartView {
 
   /**
    * Add a metric to the chart.
+   * @param metricName - Internal metric key (e.g., "time_to_connect")
+   * @param color - Trace color
+   * @param label - Optional human-readable display label (FD-023). Falls back to metricName.
    */
-  addMetric(metricName: string, color: string): void {
+  addMetric(metricName: string, color: string, label?: string): void {
     if (this.metrics.has(metricName)) {
       return; // Already added
     }
@@ -547,6 +704,7 @@ export class ChartView {
       distributionGenerator,
       baseline: null,
       color,
+      label: label ?? metricName, // Use label if provided, else fall back to raw key (FD-023)
       normalizedYDomain: [Infinity, -Infinity], // Will be set to actual data range on first load
       bufferedRange: null,
     });

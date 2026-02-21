@@ -145,6 +145,7 @@ export interface MetricMessage {
   timestamp: number;
   metric: string;
   value: number;
+  classifiers?: Record<string, ClassifierValue>;
 }
 
 export interface EventMessage {

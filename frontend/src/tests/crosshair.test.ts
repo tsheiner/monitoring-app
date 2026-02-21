@@ -70,7 +70,7 @@ describe("Crosshair Rendering", () => {
     expect(verticalLine?.tagName).toBe("line");
   });
 
-  it("should render horizontal crosshair line on hover inside plot", () => {
+  it("should NOT render horizontal crosshair line (removed in FD-022 spec)", () => {
     const chart = new ChartView(container, config);
     chart.addMetric("throughput", "#4CAF50");
 
@@ -80,10 +80,9 @@ describe("Crosshair Rendering", () => {
 
     simulateMouseMove(svg, chartCenterX, chartCenterY);
 
-    // Check for horizontal crosshair line
+    // Per FD-022 spec: horizontal line must NOT exist
     const horizontalLine = container.querySelector(".crosshair-horizontal");
-    expect(horizontalLine).toBeTruthy();
-    expect(horizontalLine?.tagName).toBe("line");
+    expect(horizontalLine).toBeNull();
   });
 
   it("should hide crosshair on mouseleave", () => {
@@ -148,7 +147,7 @@ describe("Crosshair Rendering", () => {
     expect(x1Pos).not.toBe(x2Pos);
   });
 
-  it("should style crosshair with dashed lines", () => {
+  it("should style crosshair with solid line (not dashed) per FD-022 spec", () => {
     const chart = new ChartView(container, config);
     chart.addMetric("throughput", "#4CAF50");
 
@@ -160,10 +159,9 @@ describe("Crosshair Rendering", () => {
     ) as SVGLineElement;
     expect(verticalLine).toBeTruthy();
 
-    // Check for dashed stroke
+    // Per FD-022: must NOT have stroke-dasharray (must be solid)
     const strokeDasharray = verticalLine?.getAttribute("stroke-dasharray");
-    expect(strokeDasharray).toBeTruthy();
-    expect(strokeDasharray).not.toBe("");
+    expect(strokeDasharray).toBeNull();
   });
 
   it("should not render crosshair outside plot area", () => {

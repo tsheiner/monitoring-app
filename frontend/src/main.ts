@@ -130,7 +130,7 @@ class MonitoringApp {
     // Add initial metric (time_to_connect)
     const initialMetric = this.metrics.find((m) => m.enabled);
     if (initialMetric) {
-      this.chart.addMetric(initialMetric.name, initialMetric.color);
+      this.chart.addMetric(initialMetric.name, initialMetric.color, initialMetric.label);
     }
 
     // Setup UI controls
@@ -562,7 +562,7 @@ class MonitoringApp {
 
     // Update chart
     if (metric.enabled) {
-      this.chart.addMetric(metricName, metric.color);
+      this.chart.addMetric(metricName, metric.color, metric.label);
       // Load data using the chart's current range (anchored to data),
       // not getTimeRange() which always uses "now" and may overshoot.
       const [rangeStart, rangeEnd] = this.chart.getTimeRange();
@@ -635,9 +635,26 @@ class MonitoringApp {
         (m) => m.name === message.metric && m.enabled,
       );
       if (metric) {
+        // FD-021/FD-026: WS sends classifiers as an array [{name, value, status, ...}, ...].
+        // Transform to Record<string, ClassifierValue> expected by the chart.
+        let classifiers: Record<string, { value: number; status: "green" | "yellow" | "red" }> | undefined;
+        const rawCls = (message as any).classifiers;
+        if (rawCls) {
+          if (Array.isArray(rawCls)) {
+            classifiers = Object.fromEntries(
+              (rawCls as Array<{ name: string; value: number; status: string }>).map(
+                (c) => [c.name, { value: c.value, status: c.status as "green" | "yellow" | "red" }],
+              ),
+            );
+          } else {
+            classifiers = rawCls as Record<string, { value: number; status: "green" | "yellow" | "red" }>;
+          }
+        }
+
         this.chart.appendLiveData(message.metric, {
           timestamp: message.timestamp,
           value: message.value,
+          classifiers,
         });
       }
     });

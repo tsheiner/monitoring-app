@@ -99,21 +99,71 @@ async def query_metric(
     # Handle aggregation: if entity="_aggregated", compute mean across all entities per timestamp
     if entity == "_aggregated":
         all_observations = store.query_range(metric, start, end, entity=None)
-        # Group by timestamp and compute mean
+        # Group by timestamp and compute mean value + aggregate classifiers
         from collections import defaultdict
-        timestamp_values = defaultdict(list)
+        timestamp_groups = defaultdict(list)
         for obs in all_observations:
-            timestamp_values[obs["timestamp"]].append(obs["value"])
-        
-        observations = [
-            {
+            timestamp_groups[obs["timestamp"]].append(obs)
+
+        def _derive_status(value: float, classifiers_list: list) -> str:
+            """Derive worst status from a list of per-AP classifier records."""
+            statuses = [c.get("status", "green") for c in classifiers_list]
+            if "red" in statuses:
+                return "red"
+            if "yellow" in statuses:
+                return "yellow"
+            return "green"
+
+        def _aggregate_classifiers(obs_list: list):
+            """
+            Average classifier values across APs; derive status from worst-of-APs.
+            Returns None if no observations have classifiers.
+            """
+            # Collect per-classifier values across all APs
+            classifier_values = defaultdict(list)
+            classifier_all_recs = defaultdict(list)
+            classifier_weights = {}
+            has_any = False
+            for obs in obs_list:
+                if obs.get("classifiers"):
+                    has_any = True
+                    for c in obs["classifiers"]:
+                        name = c["name"]
+                        classifier_values[name].append(c["value"])
+                        classifier_all_recs[name].append(c)
+                        if "weight" in c:
+                            classifier_weights[name] = c["weight"]
+            if not has_any:
+                return None
+            result = []
+            for name, vals in classifier_values.items():
+                avg_val = sum(vals) / len(vals)
+                worst_status = _derive_status(avg_val, classifier_all_recs[name])
+                agg_c = {
+                    "name": name,
+                    "value": avg_val,
+                    "status": worst_status,
+                    "contribution": 0.0,
+                }
+                if name in classifier_weights:
+                    agg_c["weight"] = classifier_weights[name]
+                result.append(agg_c)
+            # Preserve insertion order of classifiers (first AP's ordering)
+            return result if result else None
+
+        observations = []
+        for ts, obs_list in sorted(timestamp_groups.items()):
+            values = [o["value"] for o in obs_list]
+            agg_classifiers = _aggregate_classifiers(obs_list)
+            obs_dict = {
                 "timestamp": ts,
                 "metric": metric,
                 "value": sum(values) / len(values),
-                "entity": None
+                "entity": None,
             }
-            for ts, values in sorted(timestamp_values.items())
-        ]
+            if agg_classifiers is not None:
+                obs_dict["classifiers"] = agg_classifiers
+            observations.append(obs_dict)
     elif entity == "_all":
         observations = store.query_range(metric, start, end, entity=None)
     else:

@@ -51,11 +51,12 @@ describe("UI Acceptance Tests", () => {
       // Hover over chart
       simulateMouseMove(svg, chartCenterX, chartCenterY);
 
-      // Verify crosshair is visible
+      // Verify crosshair is visible (vertical only per FD-022 spec)
       const verticalLine = container.querySelector(".crosshair-vertical");
-      const horizontalLine = container.querySelector(".crosshair-horizontal");
       expect(verticalLine).toBeTruthy();
-      expect(horizontalLine).toBeTruthy();
+      // Per FD-022: horizontal line must NOT exist
+      const horizontalLine = container.querySelector(".crosshair-horizontal");
+      expect(horizontalLine).toBeNull();
 
       // Verify tooltip is visible
       const tooltip = container.querySelector(".chart-tooltip") as HTMLElement;
