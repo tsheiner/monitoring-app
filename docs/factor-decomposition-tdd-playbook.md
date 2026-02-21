@@ -544,7 +544,7 @@ Use this directly as an internal todo state.
 ```json
 {
   "epic": "classifier-architecture",
-  "current_task": "FD-018",
+  "current_task": "COMPLETE",
   "tasks": [
     {"id":"FD-001","status":"done","depends_on":[]},
     {"id":"FD-002","status":"done","depends_on":["FD-001"]},
@@ -564,8 +564,8 @@ Use this directly as an internal todo state.
     {"id":"FD-015","status":"done","depends_on":["FD-011"]},
     {"id":"FD-016","status":"done","depends_on":["FD-015"]},
     {"id":"FD-017","status":"done","depends_on":["FD-016"]},
-    {"id":"FD-018","status":"pending","depends_on":["FD-017"]},
-    {"id":"FD-019","status":"pending","depends_on":["FD-016","FD-017","FD-018"]}
+    {"id":"FD-018","status":"done","depends_on":["FD-017"]},
+    {"id":"FD-019","status":"done","depends_on":["FD-016","FD-017","FD-018"]}
   ]
 }
 ```
