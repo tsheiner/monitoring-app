@@ -40,6 +40,9 @@ This document is optimized for coding agents that need:
 | F. Realtime/Acceptance | FD-013, FD-014 | E |
 | G. UI Crosshair/Tooltip | FD-015, FD-016, FD-017, FD-018 | E (FD-011 minimum) |
 | H. UI Acceptance | FD-019 | G |
+| I. Data-flow Fixes | FD-020, FD-021 | E |
+| J. Visual Polish | FD-022, FD-023, FD-024, FD-025 | G, I |
+| K. Final Acceptance | FD-026 | J |
 
 ---
 
@@ -436,10 +439,19 @@ This document is optimized for coding agents that need:
 
 ### FD-016 - Implement crosshair and nearest-metric detection
 
-**Status: ✅ COMPLETE**
+**Status: ⚠️ PARTIAL — see FD-022 for visual remediation**
 
 **Goal**
-- Add vertical/horizontal crosshair and nearest-metric computation at cursor position.
+- Add vertical crosshair and nearest-metric computation at cursor position.
+
+**What was implemented**
+- Vertical AND horizontal dashed crosshair lines (both incorrect per spec)
+- Nearest-metric detection by cursor y proximity
+- Observation typing for classifier payload
+
+**What remains (deferred to FD-022)**
+- Crosshair should be vertical only (no horizontal line), solid not dashed
+- Highlighted dots on metric traces at crosshair x position
 
 **Files**
 - `frontend/src/chart/ChartView.ts`
@@ -462,10 +474,23 @@ This document is optimized for coding agents that need:
 
 ### FD-017 - Implement tooltip content + active-metric hysteresis
 
-**Status: ✅ COMPLETE**
+**Status: ⚠️ PARTIAL — see FD-023, FD-024, FD-025 for visual remediation**
 
 **Goal**
 - Show per-metric values in tooltip and expand classifier rows only for active metric with debounce/hysteresis.
+
+**What was implemented**
+- Basic tooltip listing all visible metrics with name + value
+- Classifier row expansion for active metric (rendering code exists)
+- Hysteresis window (~150ms) before active metric swap
+- Primary classifier highlighting (bold, worst status)
+
+**What remains (deferred to FD-023, FD-024, FD-025)**
+- Tooltip missing timestamp header row
+- Metric state icons (positive/warning/degraded) not implemented — only colored dots
+- Metric labels use raw keys (`time_to_connect`) instead of display labels ("Time to Connect")
+- Values shown without units (e.g., "36.34" instead of "40.5s")
+- Classifier data never reaches tooltip due to data-flow gaps (see FD-020, FD-021)
 
 **Files**
 - `frontend/src/chart/ChartView.ts`
@@ -476,7 +501,7 @@ This document is optimized for coding agents that need:
 - `test_tooltip_lists_all_visible_metrics_at_cursor_time`
 - `test_only_active_metric_expands_classifier_rows`
 - `test_active_metric_switches_only_after_hysteresis_window`
-- `test_transient_nearest_metric_changes_do_not_flip_active_metric`
+- `test_transient_nfd-018, 019 completeearest_metric_changes_do_not_flip_active_metric`
 
 **Implement**
 1. Build tooltip model with all visible metrics (name + value).
@@ -537,14 +562,285 @@ This document is optimized for coding agents that need:
 
 ---
 
-## Agent Todo Template (Copy/Paste)
+### FD-020 - Fix HTTP API classifier data flow
+
+**Goal**
+- Ensure classifier data is included in metric observations returned by the HTTP API, especially in the aggregated (`_aggregated`) entity path.
+
+**Files**
+- `backend/server/http_api.py`
+- `backend/server/models.py` (verify)
+
+**Write tests first**
+- `test_aggregated_observations_include_classifiers`
+- `test_classifier_api_endpoints_accessible`
+- `test_classifier_baseline_endpoint_returns_data`
+
+**Implement**
+1. In `query_metric()`, when `entity="_aggregated"`, the aggregation loop creates new observation dicts with only `timestamp`, `metric`, `value`, `entity`. Fix this to also aggregate classifiers across APs:
+   - Collect classifier data from all observations at each timestamp
+   - Average classifier values across APs
+   - Derive status from the averaged value using the same threshold logic
+   - Include aggregated `classifiers` in the response observations
+2. Verify `/api/metrics/{metric}/classifiers/current` and `/api/classifiers/{classifier}/baseline` routes are accessible after server restart. If still 404, check FastAPI route ordering — `/api/metrics/{metric}` may shadow longer paths if defined first.
+3. Verify the `MetricObservation` model serializes classifiers correctly (it already has the field; confirm with a real response).
+
+**Done when**
+- `curl "http://localhost:5011/api/metrics/time_to_connect?start=...&end=..."` returns observations with `classifiers` arrays
+- `/api/metrics/{metric}/classifiers/current` returns current classifier state
+- `/api/classifiers/{classifier}/baseline` returns hourly distributions
+
+---
+
+### FD-021 - Fix frontend classifier data flow (WS + HTTP)
+
+**Goal**
+- Ensure classifier data flows from backend through WebSocket and HTTP responses into the chart's observation data, so the tooltip can render classifiers.
+
+**Files**
+- `frontend/src/chart/types.ts`
+- `frontend/src/api/client.ts`
+- `frontend/src/main.ts`
+- `frontend/src/chart/ChartView.ts`
+
+**Write tests first**
+- `test_metric_message_type_includes_classifiers`
+- `test_ws_message_classifiers_passed_to_chart`
+- `test_http_observations_classifiers_passed_to_chart`
+
+**Implement**
+1. In `types.ts`, add `classifiers?: Record<string, ClassifierValue>` to `MetricMessage` interface.
+2. In `main.ts` `setupAPICallbacks()`, change the `onMetric` handler to pass classifiers from the WS message:
+   ```typescript
+   this.chart.appendLiveData(message.metric, {
+     timestamp: message.timestamp,
+     value: message.value,
+     classifiers: message.classifiers,  // NEW: pass through
+   });
+   ```
+3. In `main.ts`, verify that HTTP-fetched observations (from `fetchMetricHistory`) also thread classifiers through to `chart.loadTimeSeries()`. The `MetricResponse.observations` should already include classifiers if FD-020 is done; confirm the chart receives them.
+4. In `client.ts`, no code change needed — `JSON.parse` already captures all fields. Just confirm `MetricMessage` type is updated.
+
+**Done when**
+- When hovering over the chart with a single metric active, the tooltip shows classifier rows for the active metric (requires FD-020 + this task).
+- `Observation` objects stored in `DataTarget` include `classifiers` field when available.
+
+---
+
+### FD-022 - Vertical indicator visual spec (solid line + highlighted dots)
+
+**Goal**
+- Make the vertical indicator match the visual spec: solid vertical line (no horizontal), with highlighted dots on each visible metric trace at the cursor's x position.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+
+**Write tests first**
+- `test_crosshair_vertical_line_is_solid_not_dashed`
+- `test_no_horizontal_crosshair_line`
+- `test_highlighted_dots_rendered_at_trace_intersections`
+- `test_highlighted_dot_color_matches_metric_color`
+
+**Visual specification** (agent must implement to match these exact expectations):
+
+1. **Remove the horizontal crosshair line entirely**:
+   - Delete `crosshairHorizontal` element creation and all references
+   - Only `crosshairVertical` should exist
+2. **Change vertical line to solid**:
+   - Remove `.attr("stroke-dasharray", "4 4")` from `crosshairVertical`
+   - Keep stroke color `#888` and width 1px
+3. **Add highlighted dots at metric-trace intersections**:
+   - For each visible metric, find the observation nearest to cursor time
+   - Compute the Y pixel position of that observation's value
+   - Render a filled circle (SVG `<circle>`) at `(cursorX, obsY)`:
+     - `r` = 4 (radius 4px)
+     - `fill` = the metric's trace color
+     - `stroke` = none (or same color)
+   - Store dot elements in the crosshair group so they hide/show together
+   - On each `updateCrosshair` call, reposition or recreate dots for all visible metrics
+   - When crosshair hides, dots hide too
+
+**Implementation guidance**:
+- In the constructor, create a `crosshairDots` container `<g>` inside `crosshairGroup`
+- In `updateCrosshair()`, after computing cursor time:
+  - For each entry in `this.metrics`, find the closest observation to cursor time
+  - Compute `yPixel = yScale(obs.value)` (or normalized equivalent for multi-metric)
+  - Update or create `<circle>` elements inside `crosshairDots` for each metric
+  - `d3.selectAll` approach: bind data, enter/update/exit pattern on the dots
+- Store references to avoid DOM churn on every mousemove
+
+**Done when**
+- Hovering shows a solid vertical line with colored dots on every visible trace — visually matching the reference screenshots.
+
+---
+
+### FD-023 - Tooltip timestamp header and display label formatting
+
+**Goal**
+- Add a timestamp header to the tooltip and use human-readable metric display labels instead of raw keys.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/main.ts`
+
+**Write tests first**
+- `test_tooltip_shows_timestamp_header`
+- `test_tooltip_uses_display_labels_not_raw_keys`
+- `test_tooltip_timestamp_format_matches_spec`
+
+**Visual specification**:
+
+1. **Timestamp header**:
+   - First line of tooltip content must be a formatted date-time string
+   - Format: `ddd MMM DD HH:mm` (e.g., "Mon Nov 10 23:48")
+   - Derive from cursor's x position: `xScale.invert(x)` → Date → format
+   - Style: slightly lighter weight than metric rows, serves as a header
+   - HTML: `<div style="margin-bottom: 8px; opacity: 0.8; font-size: 12px;">Mon Nov 10 23:48</div>`
+2. **Metric display labels**:
+   - Replace raw metric keys with human-readable labels in tooltip
+   - Mapping: `time_to_connect` → "Time to Connect", `throughput` → "Throughput", `coverage` → "Coverage", `capacity` → "Capacity", `roaming` → "Roaming", `successful_connects` → "Successful Connects", `ap_health` → "AP Health"
+   - The label mapping should be accessible to `ChartView` — either passed in via constructor config, or stored as a static map, or retrieved from `MetricData`
+
+**Implementation guidance**:
+- The `MetricInfo` type in `main.ts` already has `name` and `label` fields. Pass the label along when adding metrics to the chart (e.g., `chart.addMetric(name, color, label)`) or store a name→label map in `ChartView`.
+- In `buildTooltipContent()`:
+  - Add timestamp formatting at the top. Use `Date` constructor with cursor time * 1000, then format with weekday abbreviation + month abbreviation + day + time.
+  - Replace `metric.name` in the display with the label.
+
+**Done when**
+- Tooltip shows timestamp at top (e.g., "Sat Feb 21 10:42") and metrics show display labels.
+
+---
+
+### FD-024 - Tooltip metric state icons (positive/warning/degraded)
+
+**Goal**
+- Show health-aware state icons for each metric row in the tooltip, derived from the metric's baseline distribution.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+
+**Write tests first**
+- `test_tooltip_metric_shows_green_icon_when_within_range`
+- `test_tooltip_metric_shows_yellow_icon_when_edge_of_range`
+- `test_tooltip_metric_shows_red_icon_when_out_of_range`
+
+**Visual specification**:
+
+Each metric row's leading icon indicates the metric's health at the tooltip's time position. The icon is NOT just the metric's color — it reflects the metric's status relative to its baseline distribution.
+
+1. **State classification logic**:
+   - Look up the metric's `BaselineResponse` (already loaded per metric in `MetricData.baseline`)
+   - Find the hourly distribution for the current hour (from `hourly_distributions`)
+   - Compare the metric's value at cursor time against the distribution percentiles:
+     - **Green (positive)**: value between `p10` and `p90`
+     - **Yellow (warning)**: value between `p5`–`p10` OR `p90`–`p95`
+     - **Red (degraded)**: value below `p5` OR above `p95`
+   - If no baseline data is available, default to showing the metric's color dot (current behavior)
+
+2. **Icon rendering**:
+   - **Green/positive**: `<span style="color: #4caf50;">●</span>` — green filled circle (same as current green classifier dot)
+   - **Yellow/warning**: `<span style="color: #ff9800;">⚠</span>` — amber warning triangle
+   - **Red/degraded**: `<span style="color: #f44336;">●</span>` — red filled circle
+   - Icon replaces the current colored dot that just matches the metric color
+   - The icon comes BEFORE the metric label
+
+3. **Same icons for classifier rows**: The classifier rows in the active metric section already use green/yellow/red dots. Keep that but ensure consistency: green ●, yellow ⚠, red ● (matching the metric-level icon style).
+
+**Implementation guidance**:
+- Add a method `getMetricStatus(metricName: string, value: number, cursorTime: number): 'green' | 'yellow' | 'red'` to `ChartView`:
+  - Finds the `MetricData` for the metric
+  - Gets the baseline and current hour from the cursor timestamp
+  - Finds the matching hourly distribution entry
+  - Compares value against percentile bands
+  - Returns the status string
+- In `buildTooltipContent()`, call this method for each metric to determine the icon
+
+**Done when**
+- Metrics in tooltip show health-aware icons: green ● for normal, ⚠ for warning, red ● for degraded — determined from baseline bands.
+
+---
+
+### FD-025 - Tooltip value units
+
+**Goal**
+- Display metric values in the tooltip with appropriate unit suffixes.
+
+**Files**
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/main.ts` (if units are passed during metric registration)
+
+**Write tests first**
+- `test_tooltip_time_to_connect_shows_seconds_unit`
+- `test_tooltip_throughput_shows_units_suffix`
+- `test_tooltip_percentage_metrics_show_percent`
+
+**Visual specification**:
+
+| Metric | Unit suffix | Example |
+|--------|-----------|---------|
+| time_to_connect | "s" | "40.5s" |
+| throughput | " Mbps" | "450 Mbps" |
+| coverage | "%" | "92.3%" |
+| capacity | "%" | "78.1%" |
+| roaming | " ms" | "12 ms" |
+| successful_connects | "%" | "97.5%" |
+| ap_health | "%" | "95.2%" |
+
+**Implementation guidance**:
+- Store a `units` map in `ChartView` or pass units when adding metrics
+- In `buildTooltipContent()`, look up the unit for each metric and append to the formatted value
+- Use appropriate decimal precision:
+  - Seconds: 1 decimal place (e.g., "40.5s")
+  - Percentages: 1 decimal place (e.g., "92.3%")
+  - Throughput: 0 decimal places (e.g., "450 Mbps")
+  - Milliseconds: 0 decimal places (e.g., "12 ms")
+
+**Done when**
+- Every metric value in the tooltip includes its unit suffix.
+
+---
+
+### FD-026 - Visual acceptance: End-to-end tooltip verification
+
+**Goal**
+- Validate the complete tooltip experience matches reference screenshots using Playwright MCP.
+
+**Files**
+- Frontend test suite / manual Playwright verification
+
+**Verification steps** (must be performed with Playwright MCP per project instructions):
+1. Start backend and frontend servers
+2. Navigate to `http://localhost:5012`
+3. With one metric active (Time to Connect):
+   - Hover over chart area
+   - Verify: solid vertical line, no horizontal line
+   - Verify: colored dot on the Time to Connect trace at hover x
+   - Verify: tooltip shows timestamp header (e.g., "Sat Feb 21 10:42")
+   - Verify: tooltip shows metric state icon (green/yellow/red, not just orange dot)
+   - Verify: tooltip shows "Time to Connect" (not "time_to_connect")
+   - Verify: tooltip shows value with unit (e.g., "36.1s")
+   - Verify: tooltip shows classifier breakdown for the active metric (Association, Authorization, DHCP, DNS with status dots and values)
+4. Enable a second metric (Throughput):
+   - Hover over chart
+   - Verify: two highlighted dots (orange + blue) on traces
+   - Verify: both metrics shown in tooltip with state icons and display labels
+   - Verify: only the nearest metric shows classifier breakdown
+   - Move cursor closer to the other metric and wait 200ms
+   - Verify: active metric switches (hysteresis)
+5. Verify pan suppression: click-drag to pan, confirm tooltip disappears during drag
+
+**Done when**
+- All verification steps pass via Playwright MCP snapshot and screenshot inspection.
+
+---
 
 Use this directly as an internal todo state.
 
 ```json
 {
   "epic": "classifier-architecture",
-  "current_task": "COMPLETE",
+  "current_task": "FD-020",
   "tasks": [
     {"id":"FD-001","status":"done","depends_on":[]},
     {"id":"FD-002","status":"done","depends_on":["FD-001"]},
@@ -562,10 +858,17 @@ Use this directly as an internal todo state.
     {"id":"FD-013","status":"done","depends_on":["FD-010"]},
     {"id":"FD-014","status":"done","depends_on":["FD-011","FD-012","FD-013"]},
     {"id":"FD-015","status":"done","depends_on":["FD-011"]},
-    {"id":"FD-016","status":"done","depends_on":["FD-015"]},
-    {"id":"FD-017","status":"done","depends_on":["FD-016"]},
+    {"id":"FD-016","status":"partial","depends_on":["FD-015"],"note":"visual defects: see FD-022"},
+    {"id":"FD-017","status":"partial","depends_on":["FD-016"],"note":"visual + data defects: see FD-023/024/025"},
     {"id":"FD-018","status":"done","depends_on":["FD-017"]},
-    {"id":"FD-019","status":"done","depends_on":["FD-016","FD-017","FD-018"]}
+    {"id":"FD-019","status":"done","depends_on":["FD-016","FD-017","FD-018"],"note":"tests written but visual spec was incomplete"},
+    {"id":"FD-020","status":"todo","depends_on":["FD-011"]},
+    {"id":"FD-021","status":"todo","depends_on":["FD-020"]},
+    {"id":"FD-022","status":"todo","depends_on":["FD-016"]},
+    {"id":"FD-023","status":"todo","depends_on":["FD-017"]},
+    {"id":"FD-024","status":"todo","depends_on":["FD-017"]},
+    {"id":"FD-025","status":"todo","depends_on":["FD-017"]},
+    {"id":"FD-026","status":"todo","depends_on":["FD-020","FD-021","FD-022","FD-023","FD-024","FD-025"]}
   ]
 }
 ```
@@ -577,10 +880,18 @@ Use this directly as an internal todo state.
 - Perturbations target classifiers, not retired drivers.
 - Bootstrap artifact includes classifier distributions and thresholds.
 - API and WS expose optional classifier payloads.
+- HTTP API `/api/metrics/{metric}` returns classifiers in observations (including `_aggregated` entity path).
 - Legacy consumers still work when `classifiers` is absent.
 - E2E tests verify top contributor attribution for representative events.
-- Crosshair shows vertical + horizontal hairlines while hovering in plot area.
-- Tooltip lists all visible metrics at cursor time; only active metric expands classifier rows.
+- Vertical indicator is a solid line (not dashed), no horizontal line.
+- Highlighted dots appear on each visible metric trace at the cursor's time x position.
+- Tooltip shows a timestamp header (formatted date-time).
+- Tooltip metric rows show health-aware state icons (green ●, yellow ⚠, red ●) derived from baseline percentiles.
+- Tooltip uses human-readable metric labels (e.g., "Time to Connect"), not raw keys.
+- Tooltip shows metric values with unit suffixes (e.g., "40.5s", "450 Mbps").
+- Tooltip lists all visible metrics; only active metric expands classifier rows.
+- Classifier rows show state icon + name + value.
 - Active metric swap uses hysteresis and avoids transient rapid cycling.
-- Pan suppresses crosshair/tooltip; live-edge behavior matches selected suppression/freeze policy.
+- Pan suppresses vertical indicator/tooltip; live-edge behavior matches selected suppression/freeze policy.
+- All items verified with Playwright MCP (FD-026).
 

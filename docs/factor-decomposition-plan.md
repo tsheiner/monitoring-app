@@ -303,23 +303,49 @@ Note: Classifier baselines are *computed* in Phase 1 (as part of the bootstrap).
 
 **Goal**: Surface classifier data to the user via a chart crosshair tooltip. The left sidebar remains unchanged — it continues to serve its existing role as metric identity/toggle/chart legend.
 
-**Reference mock**: `docs/references/classifierTooltip.png` (pending)
+**Reference screenshots**: See attached screenshots in the task description showing single-metric, two-metric, and three-metric states.
 
-#### Tooltip behavior
+#### Vertical indicator (crosshair) — visual spec
 
-When the cursor is inside the chart area:
-- A vertical crosshair line tracks cursor x (= time coordinate); no horizontal hairline
-- A tooltip appears listing every visible metric, each with a **state icon** (positive / warning / degraded), its name, and its **actual value** at the cursor's time position
-- The metric **nearest the cursor's y position** is the "active" metric — its classifier breakdown is expanded inline in the tooltip below the metric row; all other metrics show icon + name + value only
+When the cursor is inside the chart area, a **vertical indicator line** tracks cursor x (= time coordinate):
+- **Solid line** (not dashed), color `#888` or similar muted gray, 1px width
+- **No horizontal hairline** — the previous crosshair design had both vertical and horizontal; the updated design uses vertical only
+- At each point where the vertical line crosses a visible metric trace, render a **highlighted dot**:
+  - Dot color matches the metric trace color
+  - Dot radius ~4px (slightly larger than the trace point markers)
+  - Dot is filled (solid), not just a stroke ring
+  - Dots appear on all visible metric traces at the cursor's time position, not just the active metric
 
-The tooltip always shows the actual un-normalized value, even in multi-metric normalized view. The normalized chart shows shape; the tooltip tells you the real number. When the chart is in normalized mode, y-axis tick labels are hidden — they are meaningless for a unit-mixed axis.
+#### Tooltip — visual spec
 
-#### Tooltip content (active metric section)
+The tooltip is a floating card that appears near the cursor when hovering inside the chart area.
 
-For the active metric, below the metric row, list each classifier on its own row:
-- State icon (positive / warning / degraded), derived from bootstrap thresholds
-- Classifier name
-- Classifier value — display format TBD (the 0–100 numbers in the reference mocks were placeholder; actual scale and formatting to be decided during Phase 5 implementation)
+**Tooltip header**: Shows the timestamp at the cursor's x position, formatted as a readable date-time string. Example: `Mon Nov 10 23:48`. This is **required** — every tooltip must show the time.
+
+**Metric rows**: Below the header, list every visible metric. Each metric row contains, left to right:
+- **State icon** indicating metric health at that timestamp:
+  - **Positive (within range)**: filled colored circle (●) in the metric's color — matches the sidebar indicator style
+  - **Warning (edge of range)**: yellow/amber warning triangle (⚠ or △)
+  - **Degraded (out of range)**: red circle with mark (✗ or ●) in red
+- **Metric display label** — use the human-readable label (e.g., "Time to Connect" not "time_to_connect"; "Throughput" not "throughput")
+- **Colon separator** and **value with units** — e.g., "40.5s", "450 units", "12 units"
+
+The **active metric** (nearest to cursor y position) has its classifier breakdown expanded below the metric row. Non-active metrics show only the single-line summary (icon + label + value).
+
+**Metric state classification**: For each metric at the cursor time, determine state from the metric's baseline distribution at that hour:
+- **Positive/green**: value within p10–p90 of baseline distribution for the current hour
+- **Warning/yellow**: value within p5–p10 or p90–p95
+- **Degraded/red**: value below p5 or above p95
+
+#### Tooltip content — active metric classifier section
+
+For the active metric only, below its metric row, list each classifier on its own indented row:
+- **State icon** (positive ● / warning ⚠ / degraded ●) derived from bootstrap thresholds, using a small colored dot:
+  - Green dot for positive
+  - Yellow/amber dot for warning
+  - Red dot for degraded
+- **Classifier display name** (e.g., "Association", "DHCP", "DNS") — capitalize first letter
+- **Classifier value** shown as an integer (e.g., "17", "87") — the actual classifier value scaled to display range
 
 No contribution bars, no percentages.
 
@@ -340,15 +366,28 @@ Naively tracking the instantaneous nearest metric causes rapid tooltip cycling w
 This means transient cursor passes near another metric do not trigger a swap. Only deliberate repositioning does.
 
 #### Interaction states
-- **Hover**: crosshair + tooltip visible
-- **Pan (click-drag)**: crosshair and tooltip suppressed; drag gesture owns the interaction entirely
+- **Hover**: vertical indicator + tooltip visible
+- **Pan (click-drag)**: vertical indicator and tooltip suppressed; drag gesture owns the interaction entirely
 - **Live edge**: when streaming live data, suppress or freeze tooltip for the rightmost portion of the chart that is still being filled
 
+#### Classifier data flow (end-to-end requirements)
+
+For classifiers to appear in the tooltip, the full data pipeline must work:
+
+1. **Backend generator**: `generate_observation()` with `include_classifiers=True` — already implemented
+2. **Backend storage**: Sidecar JSON stores classifiers keyed by `(timestamp, metric, entity)` — already implemented
+3. **HTTP API**: The `/api/metrics/{metric}` endpoint must include `classifiers` in returned observations, including when `entity=_aggregated`. Currently the aggregation path creates new observation dicts without classifier data — **this must be fixed** to aggregate classifiers (average values, derive status from averages)
+4. **WebSocket**: The `MetricMessage` type in frontend must include optional `classifiers` field. The backend already sends classifiers in WS messages, but the frontend type definition and message handling drop them
+5. **Frontend ingestion**: `main.ts` must pass classifier data from both HTTP responses and WS messages through to `chart.appendLiveData()` and `chart.loadTimeSeries()`
+6. **Frontend types**: `MetricMessage` interface must add optional `classifiers` field matching `Record<string, ClassifierValue>`
+
 #### Frontend files affected
-- `frontend/src/chart/ChartView.ts` — mousemove handler, crosshair rendering, active metric state + hysteresis timer
-- `frontend/src/chart/types.ts` — extend `Observation` with optional `classifiers` field
-- `frontend/src/main.ts` — tooltip DOM element management
+- `frontend/src/chart/ChartView.ts` — vertical indicator rendering (remove horizontal line, change to solid), highlighted dots on traces, tooltip content with timestamp/state-icons/labels/units/classifiers
+- `frontend/src/chart/types.ts` — extend `MetricMessage` with optional `classifiers` field
+- `frontend/src/api/client.ts` — pass classifiers through from WS messages
+- `frontend/src/main.ts` — pass classifier data from WS messages and HTTP responses to chart, provide metric label mapping
 - `frontend/index.html` — tooltip container element (if not already present)
+- `backend/server/http_api.py` — fix `query_metric()` aggregation to preserve classifiers
 
 ## Design Decisions (Resolved)
 
@@ -371,3 +410,33 @@ This means transient cursor passes near another metric do not trigger a swap. On
 | Phase 5: Classifier UI — crosshair tooltip | Medium | ChartView.ts, types.ts, main.ts, index.html |
 
 Total: ~4-5 working sessions. Phase 1 is the largest (classifier simulation, bootstrap integration, driver cleanup). Phases 3-4 could be combined. Phase 5 is frontend-only and can be developed independently once Phase 3 is complete.
+
+## Implementation Status & Outstanding Deltas
+
+As of 2026-02-21, Phases 1–4 are structurally complete in code but have data-flow gaps. Phase 5 is partially implemented with significant visual and data-flow defects.
+
+### Backend data-flow gaps (Phase 3)
+
+1. **HTTP API aggregation drops classifiers**: `query_metric()` in `http_api.py`, when `entity="_aggregated"` (the default), creates new observation dicts containing only `timestamp`, `metric`, `value`, `entity` — classifiers from storage are lost. Must aggregate classifiers across APs (average values, derive status from averages) and include them in the response.
+2. **Classifier-specific API endpoints return 404**: Routes `/api/metrics/{metric}/classifiers/current` and `/api/classifiers/{classifier}/baseline` are defined in code but not accessible at runtime. This may be a route-ordering issue or stale server. Needs verification after restart and possible FastAPI route-ordering fix.
+
+### Frontend visual deltas (Phase 5)
+
+Compared against reference screenshots:
+
+| Delta | Current State | Expected State |
+|-------|--------------|----------------|
+| Vertical indicator style | Dashed `stroke-dasharray: 4 4` | Solid line, no dash |
+| Horizontal indicator | Present (dashed) | Removed — vertical only |
+| Highlighted dots on traces | Missing | Filled dots (r≈4px) in metric trace color at every visible trace intersection |
+| Tooltip timestamp | Missing | Header row: formatted date-time, e.g., "Mon Nov 10 23:48" |
+| Metric state icons | Only colored dot matching metric color | Health-aware icons: ● green (positive), ⚠ yellow (warning), ● red (degraded) |
+| Metric display labels | Raw key (e.g., `time_to_connect`) | Human label (e.g., "Time to Connect") |
+| Value units | Bare number (e.g., "36.34") | Number with unit suffix (e.g., "40.5s", "450 units") |
+| Classifier rows in tooltip | Code exists but no data flows through | Must render once data pipeline is complete |
+
+### Frontend data-flow gaps (Phase 5)
+
+1. **`MetricMessage` type lacks `classifiers`**: The WS message type definition in `types.ts` does not include `classifiers`, so the field is dropped on receipt.
+2. **`main.ts` drops classifiers from WS messages**: `setupAPICallbacks()` constructs `{ timestamp, value }` when calling `appendLiveData()`, discarding any classifier payload in the message.
+3. **`main.ts` does not pass classifiers from HTTP responses**: `fetchMetricHistory()` returns observations that may include classifiers from the API, but the loading path doesn't thread them through to the chart.
