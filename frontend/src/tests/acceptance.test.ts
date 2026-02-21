@@ -1,6 +1,6 @@
 /**
  * UI Acceptance Tests for Crosshair and Tooltip Workflow
- * 
+ *
  * These tests validate the complete user experience for hovering over the chart,
  * viewing tooltips with classifier data, and interacting with multiple metrics.
  */
@@ -129,8 +129,9 @@ describe("UI Acceptance Tests", () => {
 
       // Verify at most one active metric
       let tooltip = container.querySelector(".chart-tooltip");
-      let initialActiveCount = tooltip?.querySelectorAll(".tooltip-metric.active")
-        .length;
+      let initialActiveCount = tooltip?.querySelectorAll(
+        ".tooltip-metric.active",
+      ).length;
       expect(initialActiveCount).toBeLessThanOrEqual(1);
 
       // Briefly move cursor near second metric (< 150ms)
@@ -143,8 +144,9 @@ describe("UI Acceptance Tests", () => {
 
       // Verify we still have at most one active metric
       tooltip = container.querySelector(".chart-tooltip");
-      const finalActiveCount = tooltip?.querySelectorAll(".tooltip-metric.active")
-        .length;
+      const finalActiveCount = tooltip?.querySelectorAll(
+        ".tooltip-metric.active",
+      ).length;
       expect(finalActiveCount).toBeLessThanOrEqual(1);
 
       vi.useRealTimers();
@@ -171,17 +173,17 @@ describe("UI Acceptance Tests", () => {
 
       const svg = container.querySelector("svg") as SVGSVGElement;
       simulateMouseMove(svg, config.margin.left + 400, config.margin.top + 200);
-      
+
       // Wait for hysteresis to establish active metric
       vi.advanceTimersByTime(200);
-      
+
       // Trigger another mousemove to render updated tooltip
       simulateMouseMove(svg, config.margin.left + 400, config.margin.top + 200);
 
       // Verify tooltip shows metric
       const tooltip = container.querySelector(".chart-tooltip");
       expect(tooltip?.textContent).toContain("throughput");
-      
+
       // Check if classifiers are shown (they appear only when metric is active)
       // After 200ms past hysteresis, the active metric should have classifiers
       const classifierRows = tooltip?.querySelectorAll(".tooltip-classifier");
@@ -250,7 +252,7 @@ describe("UI Acceptance Tests", () => {
       vi.useFakeTimers();
 
       const chart = new ChartView(container, config);
-      
+
       // Add multiple metrics
       chart.addMetric("time_to_connect", "#FF6B6B");
       chart.addMetric("throughput", "#4CAF50");
@@ -282,7 +284,7 @@ describe("UI Acceptance Tests", () => {
           timestamp: 1800000,
           value: 85,
           classifiers: {
-            radius_auth: { value: 0.50, status: "red" },
+            radius_auth: { value: 0.5, status: "red" },
           },
         },
       ]);

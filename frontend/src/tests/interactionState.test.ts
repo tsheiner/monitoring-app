@@ -88,7 +88,9 @@ describe("Interaction State Handling", () => {
       expect(panningDisplay).toBe("none");
 
       // Tooltip should NOT be visible during pan
-      const tooltip = container.querySelector(".chart-tooltip") as HTMLDivElement;
+      const tooltip = container.querySelector(
+        ".chart-tooltip",
+      ) as HTMLDivElement;
       expect(tooltip?.style.display).toBe("none");
     });
 
@@ -123,7 +125,9 @@ describe("Interaction State Handling", () => {
       expect(display).not.toBe("none");
 
       // Tooltip SHOULD now be visible (or at least not explicitly hidden)
-      const tooltip = container.querySelector(".chart-tooltip") as HTMLDivElement;
+      const tooltip = container.querySelector(
+        ".chart-tooltip",
+      ) as HTMLDivElement;
       expect(tooltip?.style.display).not.toBe("none");
     });
   });
@@ -131,9 +135,10 @@ describe("Interaction State Handling", () => {
   describe("Live Edge Behavior", () => {
     it("should suppress tooltip near live streaming edge (within 5% of time range)", () => {
       const svg = container.querySelector("svg") as SVGSVGElement;
-      
+
       // Calculate position near the right edge (within last 5% of time range)
-      const chartWidth = config.width - config.margin.left - config.margin.right;
+      const chartWidth =
+        config.width - config.margin.left - config.margin.right;
       const rightEdgeX = config.margin.left + chartWidth * 0.97; // 97% = near right edge
       const chartCenterY = config.margin.top + 100;
 
@@ -141,12 +146,16 @@ describe("Interaction State Handling", () => {
       simulateMouseMove(svg, rightEdgeX, chartCenterY);
 
       // Tooltip should be suppressed or frozen near live edge
-      const tooltip = container.querySelector(".chart-tooltip") as HTMLDivElement;
+      const tooltip = container.querySelector(
+        ".chart-tooltip",
+      ) as HTMLDivElement;
       // Implementation choice: either display="none" or tooltip doesn't update
       // For this test, we check it's either hidden or the position hasn't changed
       const isHidden = tooltip?.style.display === "none";
-      const hasNoActiveMetric = !container.querySelector(".tooltip-metric.active");
-      
+      const hasNoActiveMetric = !container.querySelector(
+        ".tooltip-metric.active",
+      );
+
       // At live edge, tooltip should be suppressed (one of these should be true)
       expect(isHidden || hasNoActiveMetric).toBe(true);
     });
