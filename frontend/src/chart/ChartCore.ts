@@ -220,6 +220,13 @@ export class ChartCore {
   }
 
   /**
+   * Get the zoom behavior for external event listeners.
+   */
+  getZoomBehavior(): d3.ZoomBehavior<SVGSVGElement, unknown> {
+    return this.zoom;
+  }
+
+  /**
    * Update axes rendering.
    */
   private updateAxes(): void {

@@ -69,6 +69,9 @@ export class ChartView {
   private activeMetricTimer: number | null = null;
   private readonly HYSTERESIS_MS = 150; // Delay before switching active metric
 
+  // Interaction state
+  private isPanning: boolean = false;
+
   constructor(container: HTMLElement, config: ChartConfig) {
     this.config = config;
 
@@ -143,6 +146,9 @@ export class ChartView {
 
     // Add mouse event handlers for crosshair
     this.setupCrosshairHandlers();
+
+    // Setup pan detection to suppress crosshair/tooltip during drag
+    this.setupPanDetection();
   }
 
   /**
@@ -166,9 +172,33 @@ export class ChartView {
   }
 
   /**
+   * Setup pan detection to suppress crosshair/tooltip during drag.
+   */
+  private setupPanDetection(): void {
+    const zoom = this.core.getZoomBehavior();
+
+    // Listen to zoom start event to detect beginning of pan/zoom
+    zoom.on("start", () => {
+      this.isPanning = true;
+      // Hide crosshair and tooltip when pan starts
+      this.hideCrosshair();
+    });
+
+    // Listen to zoom end event to re-enable hover
+    zoom.on("end", () => {
+      this.isPanning = false;
+    });
+  }
+
+  /**
    * Update crosshair position and find nearest metric.
    */
   private updateCrosshair(x: number, y: number): void {
+    // Suppress crosshair during pan/zoom
+    if (this.isPanning) {
+      return;
+    }
+
     const chartWidth =
       this.config.width - this.config.margin.left - this.config.margin.right;
     const chartHeight =
