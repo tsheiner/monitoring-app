@@ -489,7 +489,7 @@ This document is optimized for coding agents that need:
 - Tooltip missing timestamp header row
 - Metric state icons (positive/warning/degraded) not implemented — only colored dots
 - Metric labels use raw keys (`time_to_connect`) instead of display labels ("Time to Connect")
-- Values shown without units (e.g., "36.34" instead of "40.5s")
+- Values shown without units (e.g., "36.34" instead of "35 ms" or "480 Mbps")
 - Classifier data never reaches tooltip due to data-flow gaps (see FD-020, FD-021)
 
 **Files**
@@ -739,7 +739,7 @@ Each metric row's leading icon indicates the metric's health at the tooltip's ti
    - If no baseline data is available, default to showing the metric's color dot (current behavior)
 
 2. **Icon rendering**:
-   - **Green/positive**: `<span style="color: #4caf50;">●</span>` — green filled circle (same as current green classifier dot)
+   - **Green/positive**: circle-with-checkmark icon (✓ inside a circle) in blue/teal — a standardized "healthy" indicator (not the metric’s trace color, not a plain dot)
    - **Yellow/warning**: `<span style="color: #ff9800;">⚠</span>` — amber warning triangle
    - **Red/degraded**: `<span style="color: #f44336;">●</span>` — red filled circle
    - Icon replaces the current colored dot that just matches the metric color
@@ -757,7 +757,7 @@ Each metric row's leading icon indicates the metric's health at the tooltip's ti
 - In `buildTooltipContent()`, call this method for each metric to determine the icon
 
 **Done when**
-- Metrics in tooltip show health-aware icons: green ● for normal, ⚠ for warning, red ● for degraded — determined from baseline bands.
+- Metrics in tooltip show health-aware icons: blue/teal ✓-in-circle for normal, ⚠ for warning, red ● for degraded — determined from baseline bands.
 
 ---
 
@@ -779,22 +779,23 @@ Each metric row's leading icon indicates the metric's health at the tooltip's ti
 
 | Metric | Unit suffix | Example |
 |--------|-----------|---------|
-| time_to_connect | "s" | "40.5s" |
-| throughput | " Mbps" | "450 Mbps" |
-| coverage | "%" | "92.3%" |
-| capacity | "%" | "78.1%" |
-| roaming | " ms" | "12 ms" |
-| successful_connects | "%" | "97.5%" |
-| ap_health | "%" | "95.2%" |
+| time_to_connect | " ms" | "35 ms" |
+| throughput | " Mbps" | "480 Mbps" |
+| coverage | " dBm" | "-55 dBm" |
+| capacity | "%" | "42%" |
+| roaming | " ms" | "55 ms" |
+| successful_connects | "%" | "98.2%" |
+| ap_health | "" | "92" (unitless score) |
 
 **Implementation guidance**:
 - Store a `units` map in `ChartView` or pass units when adding metrics
 - In `buildTooltipContent()`, look up the unit for each metric and append to the formatted value
 - Use appropriate decimal precision:
-  - Seconds: 1 decimal place (e.g., "40.5s")
-  - Percentages: 1 decimal place (e.g., "92.3%")
-  - Throughput: 0 decimal places (e.g., "450 Mbps")
-  - Milliseconds: 0 decimal places (e.g., "12 ms")
+  - Milliseconds: 0 decimal places (e.g., "35 ms", "55 ms")
+  - Throughput: 0 decimal places (e.g., "480 Mbps")
+  - dBm: 0 decimal places (e.g., "-55 dBm")
+  - Percentages: 1 decimal place (e.g., "42.1%", "98.2%")
+  - Unitless score: 0 decimal places (e.g., "92")
 
 **Done when**
 - Every metric value in the tooltip includes its unit suffix.
@@ -886,11 +887,11 @@ Use this directly as an internal todo state.
 - Vertical indicator is a solid line (not dashed), no horizontal line.
 - Highlighted dots appear on each visible metric trace at the cursor's time x position.
 - Tooltip shows a timestamp header (formatted date-time).
-- Tooltip metric rows show health-aware state icons (green ●, yellow ⚠, red ●) derived from baseline percentiles.
+- Tooltip metric rows show health-aware state icons (green ✓-in-circle for positive, yellow ⚠ for warning, red ● for degraded) derived from baseline percentiles.
 - Tooltip uses human-readable metric labels (e.g., "Time to Connect"), not raw keys.
-- Tooltip shows metric values with unit suffixes (e.g., "40.5s", "450 Mbps").
+- Tooltip shows metric values with actual units (e.g., "35 ms", "480 Mbps", "-55 dBm", "42%", "92").
 - Tooltip lists all visible metrics; only active metric expands classifier rows.
-- Classifier rows show state icon + name + value.
+- Classifier rows show state icon + name + value as percentage (e.g., "DHCP 99%").
 - Active metric swap uses hysteresis and avoids transient rapid cycling.
 - Pan suppresses vertical indicator/tooltip; live-edge behavior matches selected suppression/freeze policy.
 - All items verified with Playwright MCP (FD-026).

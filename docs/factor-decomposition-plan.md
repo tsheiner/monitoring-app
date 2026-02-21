@@ -324,11 +324,18 @@ The tooltip is a floating card that appears near the cursor when hovering inside
 
 **Metric rows**: Below the header, list every visible metric. Each metric row contains, left to right:
 - **State icon** indicating metric health at that timestamp:
-  - **Positive (within range)**: filled colored circle (●) in the metric's color — matches the sidebar indicator style
+  - **Positive (within range)**: circle-with-checkmark icon (✓ inside a circle) in blue/teal — a standardized "healthy" indicator, not the metric's trace color
   - **Warning (edge of range)**: yellow/amber warning triangle (⚠ or △)
   - **Degraded (out of range)**: red circle with mark (✗ or ●) in red
 - **Metric display label** — use the human-readable label (e.g., "Time to Connect" not "time_to_connect"; "Throughput" not "throughput")
-- **Colon separator** and **value with units** — e.g., "40.5s", "450 units", "12 units"
+- **Colon separator** and **value with units** — use actual units per metric:
+  - Time to Connect: ms (e.g., "35 ms")
+  - Throughput: Mbps (e.g., "480 Mbps")
+  - Coverage: dBm (e.g., "-55 dBm")
+  - Capacity: % (e.g., "42%")
+  - Roaming: ms (e.g., "55 ms")
+  - Successful Connects: % (e.g., "98.2%")
+  - AP Health: unitless score (e.g., "92")
 
 The **active metric** (nearest to cursor y position) has its classifier breakdown expanded below the metric row. Non-active metrics show only the single-line summary (icon + label + value).
 
@@ -345,9 +352,9 @@ For the active metric only, below its metric row, list each classifier on its ow
   - Yellow/amber dot for warning
   - Red dot for degraded
 - **Classifier display name** (e.g., "Association", "DHCP", "DNS") — capitalize first letter
-- **Classifier value** shown as an integer (e.g., "17", "87") — the actual classifier value scaled to display range
+- **Classifier value** shown as a percentage — the raw 0.0–1.0 health score × 100, displayed as an integer percent (e.g., DHCP at 0.99 → "99%", CPU at 0.85 → "85%"). Classifiers are normalized health scores where 1.0 = perfect; percentage is the natural display.
 
-No contribution bars, no percentages.
+No contribution bars.
 
 The primary contributor (classifier in worst status, or if tied, highest `|weight × deviation|`) is visually distinguished — bold name or slightly larger state icon.
 
@@ -430,10 +437,10 @@ Compared against reference screenshots:
 | Horizontal indicator | Present (dashed) | Removed — vertical only |
 | Highlighted dots on traces | Missing | Filled dots (r≈4px) in metric trace color at every visible trace intersection |
 | Tooltip timestamp | Missing | Header row: formatted date-time, e.g., "Mon Nov 10 23:48" |
-| Metric state icons | Only colored dot matching metric color | Health-aware icons: ● green (positive), ⚠ yellow (warning), ● red (degraded) |
+| Metric state icons | Only colored dot matching metric color | Health-aware icons: ✓-in-circle blue/teal (positive), ⚠ yellow (warning), ● red (degraded) |
 | Metric display labels | Raw key (e.g., `time_to_connect`) | Human label (e.g., "Time to Connect") |
-| Value units | Bare number (e.g., "36.34") | Number with unit suffix (e.g., "40.5s", "450 units") |
-| Classifier rows in tooltip | Code exists but no data flows through | Must render once data pipeline is complete |
+| Value units | Bare number (e.g., "36.34") | Number with actual unit (e.g., "35 ms", "480 Mbps", "-55 dBm", "42%") |
+| Classifier rows in tooltip | Code exists but no data flows through | Must render once data pipeline is complete; values shown as percentage (e.g., "99%") |
 
 ### Frontend data-flow gaps (Phase 5)
 
