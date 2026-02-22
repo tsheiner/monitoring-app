@@ -143,6 +143,11 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     # Key: (metric, ap, bucket_start) -> {"sum": float, "count": int}
     bucket_accum = defaultdict(lambda: {"sum": 0.0, "count": 0})
 
+    # Classifier breakdown per (metric, bucket_start) for sidecar writes
+    # Classifiers are shared state (not per-AP); one entry per bucket suffices.
+    # Key: (metric, bucket_start) -> list[dict]
+    bucket_classifiers: dict = {}
+
     for ap_idx, ap in enumerate(ap_list):
         # Re-initialize entity state for clean generation from start
         generator._init_entity_state(ap, start_time)
@@ -173,6 +178,14 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
                 for classifier_name in all_classifiers:
                     classifier_value = generator._classifier_state[classifier_name]
                     classifier_sums[classifier_name][t_idx] = classifier_value
+
+                # Capture full classifier breakdown per (metric, bucket) for sidecar
+                for metric in all_metrics:
+                    interval = _get_tier_interval(age)
+                    bucket_start = (ts // interval) * interval
+                    breakdown = generator._get_classifier_breakdown(metric, ts)
+                    if breakdown:
+                        bucket_classifiers[(metric, bucket_start)] = breakdown
 
         elapsed = time.time() - ap_start
         print(f"    {ap}: {n_timestamps:,} timestamps in {elapsed:.1f}s")
@@ -387,12 +400,16 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         if acc["count"] == 0:
             continue
         mean_value = acc["sum"] / acc["count"]
-        batch.append({
+        obs = {
             "timestamp": bucket_start,
             "metric": metric,
             "value": round(mean_value, 2),
             "entity": ap,
-        })
+        }
+        breakdown = bucket_classifiers.get((metric, bucket_start))
+        if breakdown:
+            obs["classifiers"] = breakdown
+        batch.append(obs)
         observations_by_metric[metric] += 1
         total_observations += 1
 

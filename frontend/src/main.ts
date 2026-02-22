@@ -57,6 +57,8 @@ class MonitoringApp {
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
   private dataFetchDebounceTimer: number | null = null;
+  private toggleInProgress: string | null = null;
+  private initialLoadPromise: Promise<void> = Promise.resolve();
 
   // Metric configuration
   private metrics: MetricInfo[] = [
@@ -196,8 +198,8 @@ class MonitoringApp {
       }, 300);
     });
 
-    // Load initial data
-    this.loadData();
+    // Load initial data — store promise so toggleMetric can wait for it
+    this.initialLoadPromise = this.loadData();
 
     // Connect WebSocket
     this.api.connectWebSocket();
@@ -213,8 +215,52 @@ class MonitoringApp {
   }
 
   private async loadData(): Promise<void> {
+    // #region agent log
+    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "0e5a4a",
+      },
+      body: JSON.stringify({
+        sessionId: "0e5a4a",
+        runId: "toggle-debug",
+        hypothesisId: "H1b",
+        location: "main.ts:loadData:entry",
+        message: "Initial loadData starting",
+        data: {
+          enabledMetrics: this.metrics
+            .filter((m) => m.enabled)
+            .map((m) => m.name),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     const [start, end] = this.getTimeRange();
     await this.loadDataForRange(start, end);
+    // #region agent log
+    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "0e5a4a",
+      },
+      body: JSON.stringify({
+        sessionId: "0e5a4a",
+        runId: "toggle-debug",
+        hypothesisId: "H1b",
+        location: "main.ts:loadData:complete",
+        message: "Initial loadData complete",
+        data: {
+          enabledMetrics: this.metrics
+            .filter((m) => m.enabled)
+            .map((m) => m.name),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
   }
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
@@ -290,27 +336,52 @@ class MonitoringApp {
         );
       }
 
+      // 3b. Recover metrics toggled on during the fetch window.
+      // setTimeRange above cleared all dataTargets. Any metric enabled
+      // after enabledMetrics was captured will have an empty buffer.
+      const fetchedNames = new Set(enabledMetrics.map((m) => m.name));
+      const lateMetrics = this.metrics.filter(
+        (m) => m.enabled && !fetchedNames.has(m.name),
+      );
+      for (const metric of lateMetrics) {
+        if (!this.chart.hasMetric(metric.name)) {
+          this.chart.addMetric(metric.name, metric.color, metric.label);
+        }
+        const lateData = await this.api.fetchMetricHistory(
+          metric.name,
+          start,
+          adjustedEnd,
+        );
+        this.chart.loadHistoricalData(
+          metric.name,
+          normalizeObservations(lateData.observations),
+        );
+      }
+
       // 4. Fetch and set baseline for each visible metric so every tooltip row can resolve status.
       // #region agent log
-      fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "d92944",
-        },
-        body: JSON.stringify({
-          sessionId: "d92944",
-          runId: "pre-fix-1",
-          hypothesisId: "H2",
-          location: "main.ts:loadDataForRange",
-          message: "Baseline fetch decision: all enabled metrics",
-          data: {
-            enabledMetricNames: enabledMetrics.map((m) => m.name),
-            enabledCount: enabledMetrics.length,
+      fetch(
+        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "d92944",
           },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
+          body: JSON.stringify({
+            sessionId: "d92944",
+            runId: "pre-fix-1",
+            hypothesisId: "H2",
+            location: "main.ts:loadDataForRange",
+            message: "Baseline fetch decision: all enabled metrics",
+            data: {
+              enabledMetricNames: enabledMetrics.map((m) => m.name),
+              enabledCount: enabledMetrics.length,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
       // #endregion
       for (const metric of enabledMetrics) {
         try {
@@ -491,6 +562,9 @@ class MonitoringApp {
   }
 
   private setupControls(): void {
+    // Inform the chart of the canonical legend order (top→bottom = array order)
+    this.chart.setLegendOrder(this.metrics.map((m) => m.name));
+
     // Build metric toggles
     const metricsList = document.getElementById("metrics-list");
     if (metricsList) {
@@ -596,9 +670,36 @@ class MonitoringApp {
     const metric = this.metrics.find((m) => m.name === metricName);
     if (!metric) return;
 
+    // Concurrency guard: if a toggle is already in progress, skip
+    if (this.toggleInProgress) {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "0e5a4a",
+          },
+          body: JSON.stringify({
+            sessionId: "0e5a4a",
+            runId: "post-fix",
+            hypothesisId: "H1a",
+            location: "main.ts:toggleMetric:guarded",
+            message: "Toggle skipped — another in progress",
+            data: { metricName, blockedBy: this.toggleInProgress },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+      return;
+    }
+    this.toggleInProgress = metricName;
+
     metric.enabled = !metric.enabled;
 
-    // Update UI
+    // Update UI immediately so the indicator responds to the click
     const toggle = document.querySelector(
       `.metric-toggle[data-metric="${metricName}"]`,
     );
@@ -615,68 +716,183 @@ class MonitoringApp {
       }
     }
 
-    // Update chart
-    if (metric.enabled) {
-      this.chart.addMetric(metricName, metric.color, metric.label);
-      // Load data using the chart's current range (anchored to data),
-      // not getTimeRange() which always uses "now" and may overshoot.
-      const [rangeStart, rangeEnd] = this.chart.getTimeRange();
-      const metricData = await this.api.fetchMetricHistory(
-        metricName,
-        rangeStart,
-        rangeEnd,
-      );
-      this.chart.loadHistoricalData(
-        metricName,
-        normalizeObservations(metricData.observations),
-      );
-
-      // Ensure every enabled metric has baseline available for tooltip status icons.
-      // #region agent log
-      fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "d92944",
+    // #region agent log
+    const toggleStartMs = Date.now();
+    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "0e5a4a",
+      },
+      body: JSON.stringify({
+        sessionId: "0e5a4a",
+        runId: "post-fix-2",
+        hypothesisId: "H1a",
+        location: "main.ts:toggleMetric:entry",
+        message: "toggleMetric called",
+        data: {
+          metricName,
+          newEnabled: metric.enabled,
+          enabledMetrics: this.metrics
+            .filter((m) => m.enabled)
+            .map((m) => m.name),
+          chartHasMetric: this.chart.hasMetric(metricName),
         },
-        body: JSON.stringify({
-          sessionId: "d92944",
-          runId: "post-fix-2",
-          hypothesisId: "H2b",
-          location: "main.ts:toggleMetric",
-          message: "Fetching baseline for enabled metric",
-          data: { metricName, enabled: metric.enabled },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      try {
-        const baseline = await this.api.fetchBaseline(metricName, null, 30);
-        this.chart.setBaseline(metricName, baseline);
-      } catch (error) {
-        console.warn(`Failed to fetch baseline for ${metricName}:`, error);
-      }
-    } else {
-      this.chart.removeMetric(metricName);
+        timestamp: toggleStartMs,
+      }),
+    }).catch(() => {});
+    // #endregion
 
-      // If exactly one metric remains, refresh its baseline.
-      // (Other remaining metrics already keep their baseline.)
-      const remaining = this.metrics.filter((m) => m.enabled);
-      if (remaining.length === 1) {
-        try {
-          const baseline = await this.api.fetchBaseline(
-            remaining[0].name,
-            null,
-            30,
-          );
-          this.chart.setBaseline(remaining[0].name, baseline);
-        } catch (error) {
-          console.warn(
-            `Failed to fetch baseline for ${remaining[0].name}:`,
-            error,
-          );
+    try {
+      if (metric.enabled) {
+        this.chart.addMetric(metricName, metric.color, metric.label);
+        const [rangeStart, rangeEnd] = this.chart.getTimeRange();
+
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "0e5a4a",
+            },
+            body: JSON.stringify({
+              sessionId: "0e5a4a",
+              runId: "post-fix",
+              hypothesisId: "H1b",
+              location: "main.ts:toggleMetric:beforeFetch",
+              message: "About to fetch history+baseline in parallel",
+              data: {
+                metricName,
+                rangeStart,
+                rangeEnd,
+                msSinceToggle: Date.now() - toggleStartMs,
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+
+        // Fetch history and baseline in parallel instead of sequentially
+        const [metricData, baseline] = await Promise.all([
+          this.api.fetchMetricHistory(metricName, rangeStart, rangeEnd),
+          this.api.fetchBaseline(metricName, null, 30).catch(() => null),
+        ]);
+
+        // Bail out if metric was disabled during the async gap
+        if (!metric.enabled || !this.chart.hasMetric(metricName)) {
+          // #region agent log
+          fetch(
+            "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": "0e5a4a",
+              },
+              body: JSON.stringify({
+                sessionId: "0e5a4a",
+                runId: "post-fix",
+                hypothesisId: "H1a",
+                location: "main.ts:toggleMetric:staleGuard",
+                message: "Metric disabled during fetch — discarding",
+                data: {
+                  metricName,
+                  stillEnabled: metric.enabled,
+                  chartHasMetric: this.chart.hasMetric(metricName),
+                },
+                timestamp: Date.now(),
+              }),
+            },
+          ).catch(() => {});
+          // #endregion
+          this.toggleInProgress = null;
+          return;
         }
+
+        this.chart.loadHistoricalData(
+          metricName,
+          normalizeObservations(metricData.observations),
+        );
+        if (baseline) {
+          this.chart.setBaseline(metricName, baseline);
+        }
+
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "0e5a4a",
+            },
+            body: JSON.stringify({
+              sessionId: "0e5a4a",
+              runId: "post-fix",
+              hypothesisId: "H1a",
+              location: "main.ts:toggleMetric:complete",
+              message: "Toggle ON complete",
+              data: {
+                metricName,
+                observationCount: metricData.observations.length,
+                hasBaseline: !!baseline,
+                totalMs: Date.now() - toggleStartMs,
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
+      } else {
+        this.chart.removeMetric(metricName);
+
+        // If exactly one metric remains, refresh its baseline (non-blocking).
+        const remaining = this.metrics.filter((m) => m.enabled);
+        if (remaining.length === 1) {
+          this.api
+            .fetchBaseline(remaining[0].name, null, 30)
+            .then((baseline) =>
+              this.chart.setBaseline(remaining[0].name, baseline),
+            )
+            .catch((error) =>
+              console.warn(
+                `Failed to fetch baseline for ${remaining[0].name}:`,
+                error,
+              ),
+            );
+        }
+
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "0e5a4a",
+            },
+            body: JSON.stringify({
+              sessionId: "0e5a4a",
+              runId: "post-fix",
+              hypothesisId: "H1a",
+              location: "main.ts:toggleMetric:removeComplete",
+              message: "Toggle OFF complete",
+              data: {
+                metricName,
+                totalMs: Date.now() - toggleStartMs,
+                remainingMetrics: remaining.map((m) => m.name),
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
       }
+    } finally {
+      this.toggleInProgress = null;
     }
   }
 

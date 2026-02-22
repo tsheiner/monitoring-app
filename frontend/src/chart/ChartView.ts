@@ -58,6 +58,7 @@ export class ChartView {
   >;
   private crosshairDots: d3.Selection<SVGGElement, unknown, null, undefined>;
   private nearestMetric: string | null = null;
+  private legendOrder: string[] = [];
 
   // Tooltip elements
   private tooltipElement: HTMLDivElement;
@@ -193,6 +194,7 @@ export class ChartView {
     this.tooltipElement.style.boxSizing = "border-box";
     this.tooltipElement.style.flexDirection = "column";
     this.tooltipElement.style.gap = "3px";
+    this.tooltipElement.style.boxShadow = "0 8px 32px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.5)";
     container.appendChild(this.tooltipElement);
 
     // Add mouse event handlers for crosshair
@@ -271,11 +273,11 @@ export class ChartView {
       .attr("x2", x)
       .attr("y2", chartHeight);
 
+    // Find nearest metric first so special dot styling is current this frame
+    this.findNearestMetric(x, y);
+
     // Update highlighted dots on each visible metric trace (FD-022)
     this.updateCrosshairDots(x);
-
-    // Find nearest metric at this position
-    this.findNearestMetric(x, y);
 
     // Update and show tooltip
     this.updateTooltip(x, y);
@@ -373,20 +375,28 @@ export class ChartView {
       .selectAll<SVGCircleElement, (typeof dotData)[0]>(".crosshair-dot")
       .data(dotData, (d) => d.metricName);
 
+    // Helper: is this dot for the nearest metric?
+    const isNearest = (d: (typeof dotData)[0]) =>
+      d.metricName === this.nearestMetric;
+
     // Enter: create new dots
     dots
       .enter()
       .append("circle")
       .attr("class", "crosshair-dot")
-      .attr("r", 4)
-      .attr("stroke", "none")
-      .attr("fill", (d) => d.color)
+      .attr("r", (d) => (isNearest(d) ? 4.8 : 4))
+      .attr("fill", (d) => (isNearest(d) ? "white" : d.color))
+      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
+      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
       .attr("cx", x)
       .attr("cy", (d) => d.y);
 
-    // Update: reposition existing dots
+    // Update: reposition existing dots and re-apply styles (nearestMetric may have changed)
     dots
-      .attr("fill", (d) => d.color)
+      .attr("r", (d) => (isNearest(d) ? 4.8 : 4))
+      .attr("fill", (d) => (isNearest(d) ? "white" : d.color))
+      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
+      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
       .attr("cx", x)
       .attr("cy", (d) => d.y);
 
@@ -438,7 +448,10 @@ export class ChartView {
       // so nearest-metric distance must also be measured in that same space.
       const displayValue =
         this.metrics.size > 1
-          ? this.normalizeValue(pointAtCursor.value, metricData.normalizedYDomain)
+          ? this.normalizeValue(
+              pointAtCursor.value,
+              metricData.normalizedYDomain,
+            )
           : pointAtCursor.value;
       const obsPixelY = yScale(displayValue);
       const distance = Math.abs(obsPixelY - y);
@@ -533,9 +546,9 @@ export class ChartView {
       const pointAtCursor = this.getPointAtTime(observations, cursorTime);
       if (pointAtCursor) {
         const pointClassifiers = pointAtCursor.closestObs.classifiers;
-        const cachedClassifiers = this.latestClassifiersByMetric.get(metricName);
-        const effectiveClassifiers =
-          pointClassifiers ?? cachedClassifiers;
+        const cachedClassifiers =
+          this.latestClassifiersByMetric.get(metricName);
+        const effectiveClassifiers = pointClassifiers ?? cachedClassifiers;
         metricsAtCursor.push({
           name: metricName,
           label: metricData.label, // FD-023
@@ -591,8 +604,9 @@ export class ChartView {
               metric.value !== null
                 ? this.getMetricStatus(metric.name, metric.value, cursorTime)
                 : null;
-            const classifierAggregateStatus =
-              this.getClassifierAggregateStatus(metric.classifiers);
+            const classifierAggregateStatus = this.getClassifierAggregateStatus(
+              metric.classifiers,
+            );
             return {
               name: metric.name,
               value: metric.value,
@@ -655,25 +669,28 @@ export class ChartView {
     if (this.activeMetric === null && this.nearestMetric !== null) {
       this.activeMetric = this.nearestMetric;
       // #region agent log
-      fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "d92944",
-        },
-        body: JSON.stringify({
-          sessionId: "d92944",
-          runId: "post-fix-3",
-          hypothesisId: "H4b",
-          location: "ChartView.ts:updateActiveMetric",
-          message: "Initialized active metric from nearest",
-          data: {
-            nearestMetric: this.nearestMetric,
-            activeMetric: this.activeMetric,
+      fetch(
+        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "d92944",
           },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
+          body: JSON.stringify({
+            sessionId: "d92944",
+            runId: "post-fix-3",
+            hypothesisId: "H4b",
+            location: "ChartView.ts:updateActiveMetric",
+            message: "Initialized active metric from nearest",
+            data: {
+              nearestMetric: this.nearestMetric,
+              activeMetric: this.activeMetric,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
       // #endregion
       return;
     }
@@ -884,8 +901,13 @@ export class ChartView {
     if (status === "red") {
       return `<svg class="status-red" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#CC2D37"/><path d="M4.5 4.5L9.5 9.5M9.5 4.5L4.5 9.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`;
     }
-    // No baseline — plain colored dot
-    return `<span style="display:inline-block;width:8px;height:8px;background-color:${fallbackColor};border-radius:50%;margin-right:6px;flex-shrink:0;"></span>`;
+    // No status data — question-mark placeholder (same 14px width as SVG icons for alignment)
+    return `<span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;font-size:11px;opacity:0.55;margin-right:6px;flex-shrink:0;vertical-align:middle;">?</span>`;
+  }
+
+  /** Colored circle matching the metric's trace color — always shown to the left of the status icon */
+  private static legendDot(color: string): string {
+    return `<span style="display:inline-block;width:14px;height:14px;background-color:${color};border-radius:50%;margin-right:5px;flex-shrink:0;vertical-align:middle;"></span>`;
   }
 
   /**
@@ -907,10 +929,19 @@ export class ChartView {
     // FD-023: Timestamp header at the top of the tooltip
     if (cursorTimeSec !== undefined) {
       const tsLabel = this.formatTooltipTimestamp(cursorTimeSec);
-      html += `<div class="tooltip-timestamp" style="opacity:0.7;font-size:11px;">${tsLabel}</div>`;
+      html += `<div class="tooltip-timestamp" style="opacity:0.7;font-size:12px;font-weight:bold;margin-bottom:3px;">${tsLabel}</div>`;
     }
 
     const expandedMetricName = this.resolveExpandedMetricName(metricsAtCursor);
+
+    // Sort metrics in legend order so tooltip rows always match the toggle-button column
+    if (this.legendOrder.length > 0) {
+      metricsAtCursor.sort((a, b) => {
+        const ai = this.legendOrder.indexOf(a.name);
+        const bi = this.legendOrder.indexOf(b.name);
+        return (ai === -1 ? 9999 : ai) - (bi === -1 ? 9999 : bi);
+      });
+    }
 
     for (const metric of metricsAtCursor) {
       const isActive = metric.name === expandedMetricName;
@@ -927,8 +958,48 @@ export class ChartView {
       const fallbackClassifierStatus = this.getClassifierAggregateStatus(
         metric.classifiers,
       );
+
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "0e5a4a",
+          },
+          body: JSON.stringify({
+            sessionId: "0e5a4a",
+            runId: "status-debug",
+            hypothesisId: "H2a",
+            location: "ChartView.ts:buildTooltipContent:statusIcon",
+            message: "Status icon decision",
+            data: {
+              metricName: metric.name,
+              metricValue: metric.value,
+              metricStatus: status,
+              classifierAggStatus: fallbackClassifierStatus,
+              chosenStatus: status ?? fallbackClassifierStatus,
+              classifierDetails: metric.classifiers
+                ? Object.fromEntries(
+                    Object.entries(metric.classifiers).map(([k, v]) => [
+                      k,
+                      { value: v.value, status: v.status },
+                    ]),
+                  )
+                : null,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
+
+      // Colored legend dot — shown to the left of the status icon
+      // gap(dot→icon) = 5px (margin-right on dot); gap(icon→name) = 6px (margin-right on icon)
+      html += ChartView.legendDot(metric.color);
       html += ChartView.statusIcon(
-        fallbackClassifierStatus ?? status,
+        status ?? fallbackClassifierStatus,
         metric.color,
       );
 
@@ -940,7 +1011,7 @@ export class ChartView {
           ? `${metric.value.toFixed(decimals)}${unit}`
           : "N/A";
 
-      html += `<strong>${metric.label}</strong><span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}`;
+      html += `${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}`;
       html += `</div>`; // close flex row
 
       // Expand classifiers only for the active metric
@@ -953,8 +1024,10 @@ export class ChartView {
             metric.classifiers,
           );
 
+          // Indent = legendDot(14px) + gap1(5px) + statusIcon(14px) + gap2(6px) = 39px
+          // aligns classifier left-edge with first letter of the metric name above
           html +=
-            '<div style="margin-left:20px;font-size:11px;opacity:0.85;display:flex;flex-direction:column;gap:2px;">';
+            '<div style="margin-left:39px;font-size:11px;opacity:0.85;display:flex;flex-direction:column;gap:2px;">';
           for (const [name, data] of classifiers) {
             const statusColor =
               data.status === "red"
@@ -1117,11 +1190,25 @@ export class ChartView {
     );
     if (firstWithClassifiers) return firstWithClassifiers.name;
 
-    if (this.activeMetric && metricsAtCursor.some((m) => m.name === this.activeMetric))
+    if (
+      this.activeMetric &&
+      metricsAtCursor.some((m) => m.name === this.activeMetric)
+    )
       return this.activeMetric;
-    if (this.nearestMetric && metricsAtCursor.some((m) => m.name === this.nearestMetric))
+    if (
+      this.nearestMetric &&
+      metricsAtCursor.some((m) => m.name === this.nearestMetric)
+    )
       return this.nearestMetric;
     return metricsAtCursor.length > 0 ? metricsAtCursor[0].name : null;
+  }
+
+  /**
+   * Set the canonical display order for metrics (matches the legend/toggle-button column).
+   * Tooltip rows are sorted to this order on every render.
+   */
+  setLegendOrder(order: string[]): void {
+    this.legendOrder = [...order];
   }
 
   /**
@@ -1432,7 +1519,10 @@ export class ChartView {
     }
 
     metricData.dataTarget.push([observation]);
-    if (observation.classifiers && Object.keys(observation.classifiers).length > 0) {
+    if (
+      observation.classifiers &&
+      Object.keys(observation.classifiers).length > 0
+    ) {
       this.latestClassifiersByMetric.set(metricName, observation.classifiers);
     }
 
@@ -1799,6 +1889,42 @@ export class ChartView {
     for (const [metricName, metricData] of this.metrics) {
       // Get ALL buffered data (not just visible range) for pre-rendering
       const allObservations = metricData.dataTarget.getAll();
+
+      // #region agent log
+      if (this.metrics.size > 1) {
+        const sampleVals = allObservations.slice(0, 3).map((o) => o.value);
+        fetch(
+          "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "0e5a4a",
+            },
+            body: JSON.stringify({
+              sessionId: "0e5a4a",
+              runId: "render-debug",
+              hypothesisId: "H3",
+              location: "ChartView.ts:render:multiMetric",
+              message: "Render multi-metric",
+              data: {
+                metricName,
+                metricsSize: this.metrics.size,
+                obsCount: allObservations.length,
+                normalizedYDomain: metricData.normalizedYDomain,
+                sampleRawValues: sampleVals,
+                sampleNormalized: sampleVals.map((v) =>
+                  this.normalizeValue(v, metricData.normalizedYDomain),
+                ),
+                yScaleDomain: this.core.getYScale().domain(),
+                range,
+              },
+              timestamp: Date.now(),
+            }),
+          },
+        ).catch(() => {});
+      }
+      // #endregion
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
