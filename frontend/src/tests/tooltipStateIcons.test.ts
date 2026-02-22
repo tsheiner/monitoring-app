@@ -133,15 +133,16 @@ describe("FD-024: Tooltip Metric State Icons", () => {
   // Yellow state
   // -------------------------------------------------------------------------
 
-  it("test_tooltip_metric_shows_yellow_icon_when_edge_of_range_low", () => {
+  it("test_tooltip_metric_shows_green_icon_when_low_for_lower_is_better_metric", () => {
+    // For lower_is_better metrics (time_to_connect), a value below p10 is GOOD (fast = green)
     const chart = new ChartView(container, config);
     chart.addMetric("time_to_connect", "#E67E22", "Time to Connect");
 
-    // p5=2.0, p10=4.0, p90=8.0, p95=9.0 — yellow low zone: 2.0–4.0
+    // p5=2.0, p10=4.0, p90=8.0, p95=9.0
     const baseline = makeBaseline(2.0, 4.0, 8.0, 9.0);
     chart.setBaseline("time_to_connect", baseline);
 
-    // Value 3.0 is between p5 and p10 → YELLOW
+    // Value 3.0 is between p5 and p10 — but lower_is_better → GREEN (fast connect)
     chart.loadHistoricalData("time_to_connect", [
       { timestamp: FIXED_TS - 600, value: 3.0 },
     ]);
@@ -150,7 +151,27 @@ describe("FD-024: Tooltip Metric State Icons", () => {
 
     const tooltip = getTooltip()!;
     const html = tooltip.innerHTML;
-    // Yellow warning: ⚠ or CSS class "status-yellow"
+    expect(html).toContain("status-green");
+  });
+
+  it("test_tooltip_metric_shows_yellow_icon_when_edge_of_range_low_for_symmetric_metric", () => {
+    // For symmetric metrics (capacity), low values below p10 are YELLOW
+    const chart = new ChartView(container, config);
+    chart.addMetric("capacity", "#E67E22", "Capacity");
+
+    // p5=20, p10=30, p90=75, p95=85
+    const baseline = makeBaseline(20, 30, 75, 85);
+    chart.setBaseline("capacity", baseline);
+
+    // Value 25 is between p5 and p10 → YELLOW (capacity too low is concerning)
+    chart.loadHistoricalData("capacity", [
+      { timestamp: FIXED_TS - 600, value: 25 },
+    ]);
+
+    hoverAtCenter(chart);
+
+    const tooltip = getTooltip()!;
+    const html = tooltip.innerHTML;
     expect(html).toContain("status-yellow");
   });
 
@@ -178,15 +199,16 @@ describe("FD-024: Tooltip Metric State Icons", () => {
   // Red state
   // -------------------------------------------------------------------------
 
-  it("test_tooltip_metric_shows_red_icon_when_out_of_range_low", () => {
+  it("test_tooltip_metric_shows_green_icon_when_very_low_for_lower_is_better_metric", () => {
+    // For lower_is_better metrics, very low values (below p5) are still GREEN (very fast)
     const chart = new ChartView(container, config);
     chart.addMetric("time_to_connect", "#E67E22", "Time to Connect");
 
-    // p5=3.0, p10=4.0, p90=8.0, p95=9.0 — red low zone: < 3.0
+    // p5=3.0, p10=4.0, p90=8.0, p95=9.0
     const baseline = makeBaseline(3.0, 4.0, 8.0, 9.0);
     chart.setBaseline("time_to_connect", baseline);
 
-    // Value 1.0 is below p5 → RED
+    // Value 1.0 is below p5 — but lower_is_better → GREEN (very fast connect)
     chart.loadHistoricalData("time_to_connect", [
       { timestamp: FIXED_TS - 600, value: 1.0 },
     ]);
@@ -195,7 +217,7 @@ describe("FD-024: Tooltip Metric State Icons", () => {
 
     const tooltip = getTooltip()!;
     const html = tooltip.innerHTML;
-    expect(html).toContain("status-red");
+    expect(html).toContain("status-green");
   });
 
   it("test_tooltip_metric_shows_red_icon_when_out_of_range_high", () => {

@@ -103,7 +103,9 @@ describe("FD-023: Tooltip Timestamp Header and Display Labels", () => {
 
       // Format: e.g., "Sat Feb 21 10:42" or "Fri Feb 20 18:42"
       // Match: 3-letter weekday, 3-letter month, 1-2 digit day, HH:mm
-      expect(text).toMatch(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/);
+      expect(text).toMatch(
+        /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/,
+      );
     });
 
     it("should show the timestamp header before metric rows", () => {
@@ -120,8 +122,12 @@ describe("FD-023: Tooltip Timestamp Header and Display Labels", () => {
       const children = Array.from(tooltip.querySelectorAll("[class]"));
 
       // Find index of timestamp vs first metric row
-      const tsIndex = children.findIndex((el) => el.classList.contains("tooltip-timestamp"));
-      const metricIndex = children.findIndex((el) => el.classList.contains("tooltip-metric"));
+      const tsIndex = children.findIndex((el) =>
+        el.classList.contains("tooltip-timestamp"),
+      );
+      const metricIndex = children.findIndex((el) =>
+        el.classList.contains("tooltip-metric"),
+      );
 
       expect(tsIndex).toBeGreaterThanOrEqual(0);
       expect(metricIndex).toBeGreaterThanOrEqual(0);

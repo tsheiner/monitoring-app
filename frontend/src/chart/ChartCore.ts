@@ -380,6 +380,14 @@ export class ChartCore {
   }
 
   /**
+   * Show or hide the Y-axis ticks and labels.
+   * Hide when multiple metrics are overlaid (0-100 normalized values are not meaningful).
+   */
+  setYAxisVisible(visible: boolean): void {
+    this.yAxis.style("display", visible ? null : "none");
+  }
+
+  /**
    * Programmatically update the time range without triggering zoom callback.
    */
   setTimeRange(range: [number, number]): void {

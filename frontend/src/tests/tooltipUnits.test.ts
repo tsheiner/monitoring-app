@@ -59,7 +59,11 @@ describe("FD-025: Tooltip Value Units", () => {
   function hoverAtCenter(chart: ChartView, metricName: string): void {
     chart["activeMetric"] = metricName;
     const svg = container.querySelector("svg") as SVGSVGElement;
-    simulateMouseMove(svg, makeConfig(metricName).margin.left + 360, makeConfig(metricName).margin.top + 150);
+    simulateMouseMove(
+      svg,
+      makeConfig(metricName).margin.left + 360,
+      makeConfig(metricName).margin.top + 150,
+    );
   }
 
   it("test_tooltip_time_to_connect_shows_ms_unit", () => {
@@ -143,7 +147,7 @@ describe("FD-025: Tooltip Value Units", () => {
     const chart = new ChartView(container, makeConfig("some_new_metric"));
     chart.addMetric("some_new_metric", "#888", "New Metric");
 
-    // value = 3.14159 → fallback ".toFixed(2)" 
+    // value = 3.14159 → fallback ".toFixed(2)"
     chart.loadHistoricalData("some_new_metric", [
       { timestamp: FIXED_TS - 600, value: 3.14159 },
     ]);

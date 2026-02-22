@@ -9,8 +9,17 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ChartView } from "../chart/ChartView";
-import { ChartConfig, MetricMessage, Observation, ClassifierValue } from "../chart/types";
-import { createChartContainer, cleanupChartContainer, simulateMouseMove } from "./mouseUtils";
+import {
+  ChartConfig,
+  MetricMessage,
+  Observation,
+  ClassifierValue,
+} from "../chart/types";
+import {
+  createChartContainer,
+  cleanupChartContainer,
+  simulateMouseMove,
+} from "./mouseUtils";
 
 describe("FD-021: Frontend Classifier Data Flow", () => {
   let container: HTMLDivElement;
@@ -157,7 +166,7 @@ describe("FD-021: Frontend Classifier Data Flow", () => {
           timestamp: Math.floor(Date.now() / 1000) - 2400,
           value: 2.5,
           classifiers: {
-            dhcp: { value: 0.72, status: "red" },  // DHCP degraded
+            dhcp: { value: 0.72, status: "red" }, // DHCP degraded
             dns: { value: 0.95, status: "green" },
           },
         },

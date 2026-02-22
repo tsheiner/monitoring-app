@@ -205,14 +205,18 @@ describe("FD-022: Vertical Indicator Visual Spec", () => {
       chart.addMetric("throughput", "#3498DB");
 
       const now = Math.floor(Date.now() / 1000);
-      chart.loadHistoricalData("throughput", [{ timestamp: now - 600, value: 50 }]);
+      chart.loadHistoricalData("throughput", [
+        { timestamp: now - 600, value: 50 },
+      ]);
 
       const svg = container.querySelector("svg") as SVGSVGElement;
       simulateMouseMove(svg, config.margin.left + 200, config.margin.top + 100);
 
       // Dots visible
       let crosshairGroup = container.querySelector(".crosshair-group");
-      expect((crosshairGroup?.getAttribute("style") ?? "")).not.toContain("display: none");
+      expect(crosshairGroup?.getAttribute("style") ?? "").not.toContain(
+        "display: none",
+      );
 
       // Mouseleave
       svg.dispatchEvent(new MouseEvent("mouseleave"));

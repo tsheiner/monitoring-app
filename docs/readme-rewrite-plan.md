@@ -2,7 +2,7 @@
 
 ## Agent Prompt
 
-You are rewriting the README.md for a network monitoring simulator application. Your audience is **product managers and non-technical stakeholders** who need to understand what this tool does and how it produces realistic data — they will not read or run code.
+You are rewriting the README.md for a network monitoring simulator application. Your audience is **product managers and non-technical stakeholders** who need to understand what this tool does and how it produces realistic data — they will not read the code but they may the app locally.
 
 This application is a **data engine for prototyping**. It simulates realistic WiFi network monitoring data that can drive any number of UIs, AI chat interfaces, or alerting systems. The simulation is the product — the included UI exists only to visualize the output and validate the data structures.
 

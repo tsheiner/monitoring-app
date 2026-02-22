@@ -5,7 +5,33 @@
 import "./style.css";
 import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
-import { ChartConfig, Event } from "./chart/types";
+import { ChartConfig, Event, Observation } from "./chart/types";
+
+/**
+ * Normalize raw observations from the HTTP API.
+ * The backend returns `classifiers` as an array; the chart expects a Record.
+ * This converts array form [{name, value, status, ...}, ...] → {name: {value, status}, ...}.
+ */
+function normalizeObservations(observations: Observation[]): Observation[] {
+  return observations.map((obs) => {
+    if (!obs.classifiers || !Array.isArray(obs.classifiers)) return obs;
+    const rawArr = obs.classifiers as unknown as Array<{
+      name: string;
+      value: number;
+      status: string;
+    }>;
+    const normalized: Record<
+      string,
+      { value: number; status: "green" | "yellow" | "red" }
+    > = Object.fromEntries(
+      rawArr.map((c) => [
+        c.name,
+        { value: c.value, status: c.status as "green" | "yellow" | "red" },
+      ]),
+    );
+    return { ...obs, classifiers: normalized };
+  });
+}
 
 // Metric configuration
 interface MetricInfo {
@@ -130,7 +156,11 @@ class MonitoringApp {
     // Add initial metric (time_to_connect)
     const initialMetric = this.metrics.find((m) => m.enabled);
     if (initialMetric) {
-      this.chart.addMetric(initialMetric.name, initialMetric.color, initialMetric.label);
+      this.chart.addMetric(
+        initialMetric.name,
+        initialMetric.color,
+        initialMetric.label,
+      );
     }
 
     // Setup UI controls
@@ -254,12 +284,35 @@ class MonitoringApp {
       // 3. Load fetched data — synchronous, same JS tick as step 2.
       //    Browser won't repaint between clear and load, so no flash.
       for (const { metric, data } of fetchedData) {
-        this.chart.loadHistoricalData(metric.name, data.observations);
+        this.chart.loadHistoricalData(
+          metric.name,
+          normalizeObservations(data.observations),
+        );
       }
 
-      // 4. Fetch and set baseline for single-metric view
-      if (enabledMetrics.length === 1) {
-        const metric = enabledMetrics[0];
+      // 4. Fetch and set baseline for each visible metric so every tooltip row can resolve status.
+      // #region agent log
+      fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "d92944",
+        },
+        body: JSON.stringify({
+          sessionId: "d92944",
+          runId: "pre-fix-1",
+          hypothesisId: "H2",
+          location: "main.ts:loadDataForRange",
+          message: "Baseline fetch decision: all enabled metrics",
+          data: {
+            enabledMetricNames: enabledMetrics.map((m) => m.name),
+            enabledCount: enabledMetrics.length,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      for (const metric of enabledMetrics) {
         try {
           const baseline = await this.api.fetchBaseline(metric.name, null, 30);
           this.chart.setBaseline(metric.name, baseline);
@@ -335,12 +388,14 @@ class MonitoringApp {
         );
 
         // Load data incrementally (appends to buffer, doesn't clear)
-        this.chart.loadHistoricalData(metric.name, metricData.observations);
+        this.chart.loadHistoricalData(
+          metric.name,
+          normalizeObservations(metricData.observations),
+        );
       }
 
-      // Fetch baseline for single-metric  view
-      if (enabledMetrics.length === 1) {
-        const metric = enabledMetrics[0];
+      // Keep baselines fresh for each visible metric so tooltip status stays available.
+      for (const metric of enabledMetrics) {
         try {
           const baseline = await this.api.fetchBaseline(metric.name, null, 30);
           this.chart.setBaseline(metric.name, baseline);
@@ -571,22 +626,41 @@ class MonitoringApp {
         rangeStart,
         rangeEnd,
       );
-      this.chart.loadHistoricalData(metricName, metricData.observations);
+      this.chart.loadHistoricalData(
+        metricName,
+        normalizeObservations(metricData.observations),
+      );
 
-      // Fetch baseline if this is now the only metric
-      const enabledCount = this.metrics.filter((m) => m.enabled).length;
-      if (enabledCount === 1) {
-        try {
-          const baseline = await this.api.fetchBaseline(metricName, null, 30);
-          this.chart.setBaseline(metricName, baseline);
-        } catch (error) {
-          console.warn(`Failed to fetch baseline for ${metricName}:`, error);
-        }
+      // Ensure every enabled metric has baseline available for tooltip status icons.
+      // #region agent log
+      fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "d92944",
+        },
+        body: JSON.stringify({
+          sessionId: "d92944",
+          runId: "post-fix-2",
+          hypothesisId: "H2b",
+          location: "main.ts:toggleMetric",
+          message: "Fetching baseline for enabled metric",
+          data: { metricName, enabled: metric.enabled },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+      try {
+        const baseline = await this.api.fetchBaseline(metricName, null, 30);
+        this.chart.setBaseline(metricName, baseline);
+      } catch (error) {
+        console.warn(`Failed to fetch baseline for ${metricName}:`, error);
       }
     } else {
       this.chart.removeMetric(metricName);
 
-      // If exactly one metric remains, fetch its baseline
+      // If exactly one metric remains, refresh its baseline.
+      // (Other remaining metrics already keep their baseline.)
       const remaining = this.metrics.filter((m) => m.enabled);
       if (remaining.length === 1) {
         try {
@@ -637,17 +711,31 @@ class MonitoringApp {
       if (metric) {
         // FD-021/FD-026: WS sends classifiers as an array [{name, value, status, ...}, ...].
         // Transform to Record<string, ClassifierValue> expected by the chart.
-        let classifiers: Record<string, { value: number; status: "green" | "yellow" | "red" }> | undefined;
+        let classifiers:
+          | Record<
+              string,
+              { value: number; status: "green" | "yellow" | "red" }
+            >
+          | undefined;
         const rawCls = (message as any).classifiers;
         if (rawCls) {
           if (Array.isArray(rawCls)) {
             classifiers = Object.fromEntries(
-              (rawCls as Array<{ name: string; value: number; status: string }>).map(
-                (c) => [c.name, { value: c.value, status: c.status as "green" | "yellow" | "red" }],
-              ),
+              (
+                rawCls as Array<{ name: string; value: number; status: string }>
+              ).map((c) => [
+                c.name,
+                {
+                  value: c.value,
+                  status: c.status as "green" | "yellow" | "red",
+                },
+              ]),
             );
           } else {
-            classifiers = rawCls as Record<string, { value: number; status: "green" | "yellow" | "red" }>;
+            classifiers = rawCls as Record<
+              string,
+              { value: number; status: "green" | "yellow" | "red" }
+            >;
           }
         }
 

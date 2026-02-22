@@ -41,7 +41,7 @@ There are **7 metrics**, each updated every 10 seconds:
 
 ### Classifiers (sub-components)
 
-Six of the seven metrics are decomposed into **classifiers** — the
+All seven metrics are decomposed into **classifiers** — the
 infrastructure sub-components that explain *why* a metric has its current
 value. Each classifier is a health score between 0.0 (degraded) and 1.0
 (perfect).
@@ -53,8 +53,8 @@ value. Each classifier is a health score between 0.0 (degraded) and 1.0
 | `capacity` | client_density (50%), cochannel_interference (30%), nonwifi_interference (20%) |
 | `throughput` | airtime_utilization (45%), channel_width (25%), retry_rate (30%) |
 | `coverage` | signal_strength (50%), ap_density (30%), cell_overlap (20%) |
-| `roaming` | handoff_latency (50%), rssi_tuning (30%), sticky_client (20%) |
-| `ap_health` | *(no classifier decomposition)* |
+| `roaming` | handoff_latency (50%), rssi_tuning (30%), 80211rk_support (20%) |
+| `ap_health` | cpu (30%), memory (25%), uptime (30%), temperature (15%) |
 
 When you see a metric value degrade, the classifier breakdown tells you
 which sub-component is responsible — exactly the "Failure contributors"
@@ -208,8 +208,8 @@ GET /api/metrics/{metric}?start={unix_seconds}&end={unix_seconds}&entity={entity
 - `observations` is ordered by timestamp, ascending.
 - `value` is in the metric's native units (see the metrics table above).
 - `entity` is `null` when aggregated, or the AP name otherwise.
-- `classifiers` may be `null` for older historical data or for `ap_health`
-  which has no classifier decomposition.
+- `classifiers` may be `null` for older historical data that was generated
+  before classifier payloads were included.
 - `distribution` summarizes the entire queried range. Use it for quick
   statistical context (e.g., "this metric's median was 76.2 over the
   last 2 hours").
@@ -441,7 +441,7 @@ GET /api/metrics/{metric}/classifiers/current
 }
 ```
 
-Returns 404 if the metric has no classifier decomposition (i.e., `ap_health`).
+Returns 404 if the metric has no classifier data available yet.
 
 ---
 
@@ -457,7 +457,7 @@ GET /api/classifiers/{classifier}/baseline
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `classifier` | yes (path) | One of the 16 classifier names (see table above) |
+| `classifier` | yes (path) | One of the 20 classifier names (see table above) |
 
 **Response:**
 
@@ -547,7 +547,7 @@ tick). Values are aggregated across all APs.
 ```
 
 - `entity` is always `null` (aggregated broadcast).
-- `classifiers` is an empty array `[]` for `ap_health`.
+- `classifiers` is present for `ap_health` the same as other metrics.
 - Classifier values/statuses are aggregated (mean value, majority-vote
   status across APs).
 
