@@ -1,307 +1,364 @@
-# Network Monitoring Prototype
+# Network Monitoring Simulator
 
-Real-time network monitoring visualization with simulated event streams and statistical anomaly detection.
+## What This Is
 
-## Overview
+This is a data engine for prototyping. It generates realistic WiFi network
+monitoring data — complete with time-of-day rhythms, gradual degradations,
+sudden events, and automatic recovery — so that any number of UIs, AI chat
+interfaces, or alerting systems can be built against it without requiring a
+live production network.
 
-This prototype demonstrates a self-healing network monitoring system with:
-
-- **7 network health metrics** (Time to Connect, Throughput, Coverage, Capacity, Roaming, Successful Connects, AP Health)
-- **Event correlation** (device restarts, config changes, AI actions)
-- **Distribution visualization** (percentile ribbons showing variance over time)
-- **Real-time + historical** (seamless past → present timeline)
-- **Continuous operation** (maintains 30-day rolling window for shared demo access)
-
-Built for executive demos and technical validation, not production deployment.
-
-## Architecture
+The simulation is the product. The included browser-based dashboard exists
+only to visualize the output and confirm the data structures look right.
+The underlying engine can drive anything: an executive demo, an AI assistant
+trained on realistic telemetry, an alerting prototype, or a novel monitoring
+interface.
 
 ```
-┌─────────────┐
-│  Simulator  │  Generates realistic metrics + events
-│   (Darts)   │  with seasonality and correlation
-└──────┬──────┘
-       │
-       v
-┌─────────────┐
-│  Event Bus  │  WebSocket broadcast
-│ (websockets)│  Real-time streaming to clients
-└──┬─────────┘
-   │
-   ├─────────────────────┐
-   │                     │
-   v                     v
-┌──────────┐      ┌─────────────┐
-│ Storage  │      │   Browser   │
-│ TinyFlux │<─────│   Chart     │
-│ SQLite   │ query│   (D3.js)   │
-└──────────┘      └─────────────┘
+┌──────────────────┐     ┌──────────────┐     ┌────────────────────────────┐
+│  Simulation      │────→│  Data Store  │────→│  Any Consumer              │
+│  Engine          │     │  (30-day     │     │  UI · AI Chat · Alerting   │
+│                  │     │   rolling)   │     │  · Demo · New Prototype    │
+└──────────────────┘     └──────────────┘     └────────────────────────────┘
+         │                      ↑
+         │  streams every       │ queries historical data
+         │  10 seconds          │ (HTTP API, port 5011)
+         └──────────────────────┘
+         also broadcasts live via WebSocket (port 5010)
 ```
 
-See [docs/architecture.md](docs/architecture.md) for details.
+---
 
-## Documentation
+## The Seven Metrics
 
-| Document                                    | Description                             |
-| ------------------------------------------- | --------------------------------------- |
-| [architecture.md](docs/architecture.md)     | System design, data flow, tech stack    |
-| [metrics-schema.md](docs/metrics-schema.md) | 7 network metrics, formats, seasonality |
-| [event-schema.md](docs/event-schema.md)     | Event types, correlation, storage       |
-| [decisions.md](docs/decisions.md)           | Architecture Decision Records (ADRs)    |
-| [chart-design.md](docs/chart-design.md)     | Timeseries chart architecture           |
-| [juttle-viz-implementation-guide.md](docs/juttle-viz-implementation-guide.md) | D3 patterns, visual design, code reference from juttle-viz |
+The simulator produces seven industry-standard WiFi health metrics for every
+access point in the network. Each metric is updated every 10 seconds and
+reflects realistic units, ranges, and time-of-day behavior.
 
-**Reference Materials**:
-- `docs/references/juttle-viz-source/` - Complete juttle-viz source code for reference
-- `docs/references/juttle-viz.md` - Quick reference guide for juttle-viz API
+| Metric               | What It Measures                                   | Units / Range        |
+|----------------------|----------------------------------------------------|----------------------|
+| successful_connects  | Percentage of connection attempts that complete    | 0 – 100 %            |
+| time_to_connect      | Median time from probe to IP address assignment    | milliseconds         |
+| capacity             | Available bandwidth headroom across the radio cells| 0 – 100 (index)      |
+| throughput           | Actual layer-2 data throughput efficiency          | 0 – 100 (index)      |
+| coverage             | RF signal quality across the coverage area         | 0 – 100 (index)      |
+| roaming              | Quality and speed of client handoffs between APs   | 0 – 100 (index)      |
+| ap_health            | Overall access point hardware and software health  | 0 – 100 (index)      |
 
-## Quick Start
+These seven metrics represent the full lifecycle of a wireless connection:
+from signal quality (coverage), to joining the network (successful_connects,
+time_to_connect), to sustained performance (throughput, capacity, roaming),
+to the health of the hardware delivering it (ap_health).
 
-### Backend
+---
 
-```bash
-cd backend
-conda create -n monitoring-app python=3.11
-conda activate monitoring-app
-pip install -r requirements.txt
-python main.py
-```
+## How the Simulation Works
 
-WebSocket server: `ws://localhost:8000`  
-HTTP API: `http://localhost:8001`
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open browser to `http://localhost:5173`
-
-## Continuous Operation (Production Deployment)
-
-For running the app continuously under pm2 or similar process managers:
-
-### Configuration
-
-The backend supports continuous operation mode that preserves data across restarts:
-
-**Environment Variables**:
-- `SKIP_BOOTSTRAP=true` - Keeps existing data instead of regenerating on restart
-- `NETWORK_PROFILE` - Network simulation profile (enterprise/hospital/campus)
-
-**pm2 Configuration Example**:
-
-```javascript
-{
-  name: 'monitoring-app-backend',
-  cwd: '/opt/monitoring-app/backend',
-  script: '/opt/monitoring-app/backend/venv/bin/python',
-  args: 'main.py',
-  env: {
-    PYTHONUNBUFFERED: '1',
-    SKIP_BOOTSTRAP: 'true'        // Preserve data across restarts
-  },
-  cron_restart: '0 3 * * 0'       // Weekly restart (Sunday 3am)
-}
-```
-
-### How It Works
-
-**First Run** (no existing data):
-- Generates 30 days of synthetic historical data
-- Starts live metric generation (every 10s)
-- Begins event simulation
-
-**Subsequent Restarts** (with `SKIP_BOOTSTRAP=true`):
-- Preserves all accumulated data
-- Resumes live generation from current time
-- Shows data age in startup logs
-
-**Automatic Maintenance**:
-- Daily cleanup at 3am (deletes data older than 30 days)
-- Weekly pm2 restart (refreshes 30-day history window)
-- Storage bounded to ~30 days, ~40-60MB
-
-### Fresh Start (Manual Reset)
-
-To clear all data and regenerate from scratch:
-
-```bash
-# Stop the backend
-pm2 stop monitoring-app-backend
-
-# Delete database files
-rm /opt/monitoring-app/backend/data/metrics.csv
-rm /opt/monitoring-app/backend/data/events.db
-
-# Restart (will regenerate fresh data)
-pm2 start monitoring-app-backend
-```
-
-### Storage Management
-
-**Database Files**:
-- `backend/data/metrics.csv` - Time-series metrics (TinyFlux)
-- `backend/data/events.db` - Discrete events (SQLite)
-
-**Growth Pattern**:
-- ~10-15MB per week with 10s resolution
-- Bounded to 30 days by daily cleanup
-- Weekly restart provides fresh synthetic history
-
-**Tips for Long-Running Deployments**:
-- Monitor disk space (50-100MB buffer recommended)
-- Check logs for cleanup execution (`pm2 logs`)
-- Adjust `cron_restart` frequency based on demo needs
-
-## Tech Stack
-
-**Backend**:
-
-- Python 3.11+
-- Darts (time series generation)
-- TinyFlux (metrics storage)
-- SQLite (events storage)
-- FastAPI (HTTP API)
-- websockets (real-time streaming)
-
-**Frontend**:
-
-- TypeScript
-- Vite (build tool)
-- D3.js v7 (visualization)
-
-## Project Structure
+Each metric value is not set directly. Instead, it is computed from a set
+of underlying infrastructure sub-components called **classifiers**. Events
+cause changes to classifiers, and those changes ripple upward into the metrics.
 
 ```
-monitoring-app/
-├── docs/                    # Architecture & design docs
-│   ├── architecture.md
-│   ├── metrics-schema.md
-│   ├── event-schema.md
-│   ├── decisions.md
-│   ├── chart-design.md
-│   └── references/          # Background research
-├── backend/
-│   ├── simulator/           # Darts metrics + event generation
-│   ├── storage/             # TinyFlux + SQLite wrappers
-│   ├── server/              # WebSocket + FastAPI
-│   └── main.py
-├── frontend/
-│   ├── src/
-│   │   ├── chart/           # Timeseries chart library
-│   │   │   ├── ChartView.ts
-│   │   │   ├── ChartCore.ts
-│   │   │   └── generators/
-│   │   │       ├── Line.ts
-│   │   │       ├── DistributionRibbon.ts
-│   │   │       └── EventMarkers.ts
-│   │   └── main.ts
-│   └── index.html
-├── .claude/                 # Claude-specific instructions
-├── .cursorrules             # Cursor IDE rules
-└── README.md
+┌───────────────────────────────────────────────────────────────────────────┐
+│                        Causal Pipeline                                    │
+│                                                                           │
+│   Something        A temporary         Classifier        Metric value    │
+│   happens    ────→ effect is     ────→ health score ────→ reflects the   │
+│   on the           applied to          shifts up or       change         │
+│   network          a classifier        down               automatically  │
+│                                                                           │
+│   (event)          (perturbation)      (0.0 – 1.0)       (derived)      │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Key Features
+**Events** are discrete occurrences: a device restart, an interference spike,
+a DHCP server under load. Each event type targets specific classifiers with
+specific magnitudes and recovery shapes.
 
-### Distribution Ribbon Visualization
+**Perturbations** are the temporary effects events create. They degrade (or
+occasionally improve) one or more classifier scores for a defined duration,
+then decay according to one of four shapes: exponential, linear,
+sudden_recovery, or gradual_improvement.
 
-Shows statistical variance over time as a gradient field:
+**Classifiers** are the simulation primitive. Each represents a specific
+infrastructure sub-component. When a classifier's score drops, every metric
+that depends on it automatically reflects the degradation.
 
-- Dark center = typical values (p25-p75)
-- Faint edges = rare events (< p5, > p95)
-- Visually obvious anomalies outside normal range
+**Metrics** are weighted averages of their classifiers. The weights are fixed
+and reflect each classifier's real-world contribution to the metric.
 
-### Event Correlation
+---
 
-Discrete events (device restarts, config changes, AI actions) appear as markers on the timeline, correlated with metric changes.
+## Classifiers: The Heart of the Simulation
 
-### Real-Time + Historical Hybrid
+A classifier is a single infrastructure sub-component represented as a health
+score between 0.0 (completely degraded) and 1.0 (perfect). Each classifier
+has its own independent noise process, its own initial health level, and its
+own sensitivity to perturbation events.
 
-- Initial load: Query last N hours of history
-- Seamless transition: Live data appends to right edge
-- Live mode: Time window auto-scrolls forward
-- Historical mode: Zoom/pan to explore past
+The power of this design is **shared classifiers**. The dhcp classifier, for
+example, is used by both successful_connects and time_to_connect. A DHCP
+server problem automatically degrades both metrics simultaneously — exactly as
+it would on a real network — without any special-case logic.
 
-### 7 Network Metrics
+```
+  Example: a dhcp_server_overload event
+  ─────────────────────────────────────────────────────────────────────────
+  dhcp classifier  ────────────────────→  successful_connects  (dhcp: 40%)
+                   └──────────────────→  time_to_connect      (dhcp: 40%)
 
-Based on Juniper Mist industry standards:
+  No other metrics are affected. The two that share dhcp move together.
+  ─────────────────────────────────────────────────────────────────────────
+```
 
-1. **Time to Connect** (ms) - Client association latency
-2. **Throughput** (Mbps) - Data transfer rate
-3. **Coverage** (dBm) - Signal strength
-4. **Capacity** (%) - Bandwidth utilization
-5. **Roaming** (ms) - Handoff latency
-6. **Successful Connects** (%) - Connection success rate
-7. **AP Health** (0-100) - Access point health score
+There are **20 classifiers** in total, organized by the metric group they
+primarily serve. The table below is the definitive classifier-metric mapping.
+Weights show each classifier's contribution to its parent metric.
 
-## Development Status
+| Metric               | Classifiers and Weights                                                                       |
+|----------------------|-----------------------------------------------------------------------------------------------|
+| successful_connects  | association 20% · authorization 25% · dhcp 40% · dns 15%                                     |
+| time_to_connect      | association 20% · authorization 25% · dhcp 40% · dns 15%                                     |
+| capacity             | client_density 50% · cochannel_interference 30% · nonwifi_interference 20%                   |
+| throughput           | airtime_utilization 45% · channel_width 25% · retry_rate 30%                                 |
+| coverage             | signal_strength 50% · ap_density 30% · cell_overlap 20%                                      |
+| roaming              | handoff_latency 50% · rssi_tuning 30% · 80211rk_support 20%                                  |
+| ap_health            | cpu 30% · memory 25% · uptime 30% · temperature 15%                                          |
 
-**Current Phase**: Phase 1 Complete! ✅
+```
+  Decomposition example: ap_health
+  ─────────────────────────────────────────────────────────────
+  ap_health
+  ├── cpu           30%   CPU utilization (high load = lower score)
+  ├── memory        25%   Memory pressure (high pressure = lower score)
+  ├── uptime        30%   Restart and crash stability
+  └── temperature   15%   Thermal health (heat stress = lower score)
+  ─────────────────────────────────────────────────────────────
+  Each classifier runs its own mean-reverting noise process.
+  Events like heat_event or device_crash suppress specific classifiers.
+```
 
-**Implemented**:
+**What each classifier represents:**
 
-- [x] Documentation structure
-- [x] Backend simulator (metrics + events)
-- [x] Storage layer (TinyFlux + SQLite)
-- [x] WebSocket event bus
-- [x] HTTP query API
-- [x] Frontend chart architecture
-- [x] Distribution ribbon renderer
-- [x] Event markers overlay
-- [x] Minimal UI
+- association — 802.11 association success rate
+- authorization — RADIUS / 802.1X authentication success rate
+- dhcp — DHCP lease acquisition success rate
+- dns — DNS resolution success rate
+- client_density — client load per radio cell (high density = lower score)
+- cochannel_interference — co-channel interference level (high interference = lower score)
+- nonwifi_interference — Bluetooth, microwave, and other non-WiFi interference
+- airtime_utilization — airtime efficiency across the radio cells
+- channel_width — 80 MHz / 160 MHz channel availability
+- retry_rate — frame retry rate (high retries = lower score)
+- signal_strength — RF signal quality across the coverage area
+- ap_density — access point deployment density
+- cell_overlap — cell overlap and coverage redundancy
+- handoff_latency — 802.11 client handoff latency (high latency = lower score)
+- rssi_tuning — RSSI threshold tuning quality for roaming decisions
+- 80211rk_support — 802.11r/k fast roaming protocol support
+- cpu — access point CPU utilization (high CPU = lower score)
+- memory — access point memory pressure (high pressure = lower score)
+- uptime — AP stability; restarts and crashes degrade this score
+- temperature — device temperature (thermal stress = lower score)
 
-All Phase 1 features are complete and ready for demo!
+---
 
-## Design Philosophy
+## Events and Perturbations
 
-This prototype balances:
+Events are the mechanism by which things *happen* in the network. The
+simulator fires events continuously on a realistic schedule. Each event type
+targets specific classifiers with a defined magnitude and decay behavior.
 
-- **Realism**: Looks/feels like a production system
-- **Speed**: Prototype shortcuts where appropriate
-- **Extensibility**: Solid foundation for future features
+```
+  Event cascade example: interference_event
+  ──────────────────────────────────────────────────────────────────────────
+     interference_event
+          │
+          ├──→ cochannel_interference  −0.30  (sudden_recovery, 5 min)
+          │         └──→  capacity metric degrades automatically
+          │
+          ├──→ retry_rate              −0.20  (sudden_recovery, 5 min)
+          │         └──→  throughput metric degrades automatically
+          │
+          └──→ signal_strength         −0.15  (sudden_recovery, 5 min)
+                    └──→  coverage metric degrades automatically
+  ──────────────────────────────────────────────────────────────────────────
+  Three metrics degrade from one event. All recover automatically.
+```
 
-**We invest in**:
+**All 13 event types and their classifier targets:**
 
-- Data schemas (stable, well-documented)
-- Storage API (clean abstraction)
-- Chart architecture (extensible generators)
+| Event Type              | Classifiers Affected                                     | Recovery Shape       |
+|-------------------------|----------------------------------------------------------|----------------------|
+| device_restart          | uptime, cpu                                              | exponential          |
+| device_crash            | uptime, cpu, client_density                              | exponential          |
+| firmware_update         | uptime, cpu                                              | exponential          |
+| heat_event              | temperature, cpu                                         | sudden_recovery      |
+| dhcp_server_overload    | dhcp                                                     | exponential          |
+| radius_timeout          | authorization                                            | exponential          |
+| dns_resolution_failure  | dns                                                      | exponential          |
+| interference_event      | cochannel_interference, retry_rate, signal_strength      | sudden_recovery      |
+| high_density_event      | client_density, airtime_utilization                      | linear               |
+| rogue_ap                | cell_overlap, retry_rate                                 | sudden_recovery      |
+| config_change           | channel_width                                            | exponential          |
+| channel_change          | channel_width, rssi_tuning                               | exponential          |
+| ai_action               | channel_width, client_density                            | gradual_improvement  |
 
-**We skip** (for now):
+**Recovery shapes** determine how a classifier returns to normal after an event:
 
-- Authentication, authorization
-- Production error handling
-- Automated tests
-- Deployment tooling
+- Exponential — fast initial impact, gradual tail recovery (most common)
+- Linear — steady uniform recovery over the full duration
+- Sudden recovery — full effect for 80% of duration, then rapid snap to normal
+- Gradual improvement — starts at zero effect, ramps upward (used for ai_action
+  events where the optimization benefit takes time to materialize)
 
-See [docs/decisions.md](docs/decisions.md) for rationale on all design choices.
+---
 
-## Future Extensions
+## What Makes the Data Look Real
 
-After Phase 1 infrastructure is complete:
+Four mechanisms combine to give each metric a distinct, realistic character.
 
-- **Phase 2**: Multi-metric dashboard (7 charts, synchronized time)
-- **Phase 3**: Alert system (thresholds, flap detection)
-- **Phase 4**: AI action tracking (highlight reasoning)
-- **Phase 5**: What-if scenarios (predictive modeling)
+**1. Daily profiles (diurnal patterns)**
 
-## Contributing
+Every metric has its own smooth time-of-day curve derived from how that metric
+behaves on a real network. capacity and throughput peak during business hours
+when the most clients are active. time_to_connect degrades slightly during
+morning login rushes. ap_health varies more at night when maintenance windows
+run. These are deterministic, sinusoidal curves — not random. They give each
+metric a recognizable daily shape.
 
-This is a prototype for executive demos. Focus on:
+**2. Mean-reverting noise (Ornstein-Uhlenbeck process)**
 
-1. Read `docs/` folder before making changes
-2. Follow patterns in `docs/chart-design.md`
-3. Document decisions in `docs/decisions.md`
-4. Keep it simple - prototype, not production
+On top of the daily profile, each classifier runs its own Ornstein-Uhlenbeck
+noise process — a continuous, mean-reverting random walk. It drifts randomly
+from moment to moment but always gravitates back toward its natural resting
+level. This produces the kind of subtle, organic variation you see in real
+network telemetry: no sharp unnatural jumps, no drift to infinity, just
+realistic short-term fluctuation. Each classifier has its own mean-reversion
+rate and noise amplitude.
 
-## License
+**3. Bootstrap — 30 days of simulated history**
 
-[To be determined]
+When the backend starts, it generates 30 days of simulated history before
+serving any live data. This bootstrap process runs the full simulation
+(classifiers, noise, daily profiles) at accelerated speed to produce a deep
+historical record. From this history, it computes statistical baselines for
+each metric — the percentile distributions that define what "normal" looks
+like at every hour of the day. Health status thresholds (green / yellow / red)
+are derived from these bootstrap observations, not hardcoded, so they are
+always consistent with the simulated network's actual behavior.
 
-## Contact
+**4. Environmental condition: client_load**
 
-Tim Sheiner - [contact info]
+client_load is a special environmental variable that represents human activity
+— the number of people actively using the network. It runs its own
+mean-reverting noise process and follows its own diurnal curve. When
+client_load is high, classifiers like client_density and airtime_utilization
+naturally feel more pressure. This creates realistic coupling across multiple
+metrics without requiring hard-coded correlation rules: a busy morning
+organically degrades capacity, throughput, and connection times together.
+
+---
+
+## Network Profiles
+
+The simulator ships with three network environment profiles. Each profile
+defines the AP topology, metric baseline values, and timing patterns
+appropriate for that type of facility.
+
+**Enterprise** — A standard office environment with business-hours usage
+patterns. Client load peaks on weekday mornings and afternoons. Network usage
+is predictable and moderate. This is the default profile.
+
+**Campus** — A university environment with class schedules, labs, and dorm
+usage. Distinct demand spikes correspond to class periods. Evening and weekend
+patterns differ sharply from enterprise. High-density areas like lecture halls
+create periodic capacity stress.
+
+**Hospital** — A 24/7 critical-care facility with high reliability
+requirements and unusual load patterns. The network must maintain performance
+around the clock. There is no quiet night — clinical devices, monitoring
+systems, and shift handovers create continuous demand.
+
+The active profile is selected at startup via the NETWORK_PROFILE environment
+variable. Switching profiles changes the feel and character of the data
+without changing the simulation architecture.
+
+---
+
+## The Data Pipeline
+
+```
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Bootstrap (runs at startup, takes ~30–60 seconds)                   │
+  │  Simulates 30 days of history → computes baselines → stores in tiers │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      │
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Tiered Storage (automatic aggregation by age)                       │
+  │                                                                      │
+  │  raw (10s)  →  1-min  →  5-min  →  15-min  →  1-hour  →  12-hour   │
+  │  last 2h       2–3h     3–6h      6–18h      18h–4d     up to 30d   │
+  └───────────────────────────────────┬──────────────────────────────────┘
+                                      │
+                      ┌───────────────┴──────────────────┐
+                      ▼                                  ▼
+  ┌─────────────────────────┐        ┌─────────────────────────────────┐
+  │  HTTP API  (port 5011)  │        │  WebSocket stream  (port 5010)  │
+  │  Historical queries,    │        │  Live broadcast every 10 sec    │
+  │  baselines, events      │        │  to all connected consumers     │
+  └─────────────────────────┘        └─────────────────────────────────┘
+                      │                                  │
+                      └──────────────┬───────────────────┘
+                                     ▼
+                     ┌────────────────────────────────┐
+                     │  Browser Dashboard (port 5012) │
+                     │  or any other consumer         │
+                     └────────────────────────────────┘
+```
+
+The tiered storage system automatically selects the right resolution for any
+time range: full 10-second resolution for the last two hours, progressively
+coarser buckets as data ages, with a 30-day rolling window maintained by
+automatic daily cleanup.
+
+---
+
+## Running the Application
+
+**What you need installed:** Python 3.11 with conda, and Node.js (any recent
+version).
+
+**Start the backend**
+
+From the backend/ folder, activate the monitoring-app conda environment and
+run main.py. The backend will:
+
+1. Run the bootstrap phase — generates 30 days of simulated history and
+   computes statistical baselines (takes about 30 to 60 seconds)
+2. Begin streaming live observations every 10 seconds
+
+The HTTP API is available at port 5011. The WebSocket stream starts on
+port 5010. Both are ready after the bootstrap phase completes.
+
+**Start the frontend**
+
+From the frontend/ folder, run npm install (first time only), then npm run dev.
+The dashboard opens at port 5012.
+
+**What you will see**
+
+A time-series chart showing all seven metrics as stacked traces. Behind each
+metric trace, a soft distribution ribbon shows the expected percentile range
+for that time of day (derived from the bootstrap baselines). When events fire,
+vertical markers appear on the chart and the affected metrics visibly degrade
+and recover. All seven metric traces update live every 10 seconds.
+
+**Ports at a glance:**
+
+| Service               | Address                   |
+|-----------------------|---------------------------|
+| HTTP API              | http://localhost:5011     |
+| WebSocket stream      | ws://localhost:5010       |
+| Browser dashboard     | http://localhost:5012     |
