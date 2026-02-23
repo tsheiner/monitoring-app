@@ -1284,6 +1284,9 @@ export class ChartView {
       const [remainingMetric, remainingData] = Array.from(
         this.metrics.entries(),
       )[0];
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:removeMetric:distCheck',message:'Single metric remaining — distribution generator check',data:{removedMetric:metricName,remainingMetric,hasDistGen:!!remainingData.distributionGenerator,hasBaseline:!!remainingData.baseline,normalizedYDomain:[...remainingData.normalizedYDomain]},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-T3'})}).catch(()=>{});
+      // #endregion
       if (!remainingData.distributionGenerator) {
         remainingData.distributionGenerator = new DistributionRibbonGenerator(
           this.core.getChartGroup(),
@@ -1322,6 +1325,10 @@ export class ChartView {
       console.warn(`Cannot load data for unknown metric: ${metricName}`);
       return;
     }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:loadHistoricalData:entry',message:'Loading historical data — pre-state',data:{metricName,incomingCount:observations.length,currentBufferCount:metricData.dataTarget.getAll().length,normalizedYDomainBefore:[...metricData.normalizedYDomain],bufferedRangeBefore:metricData.bufferedRange?[...metricData.bufferedRange]:null,metricsSize:this.metrics.size,incomingRange:observations.length>0?[observations[0].timestamp,observations[observations.length-1].timestamp]:null},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
+    // #endregion
 
     console.log(
       `Loading ${observations.length} observations for ${metricName}`,
@@ -1429,6 +1436,10 @@ export class ChartView {
         );
       }
     }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:loadHistoricalData:postLoad',message:'Historical data loaded — post-state',data:{metricName,bufferCountAfter:metricData.dataTarget.getAll().length,normalizedYDomainAfter:[...metricData.normalizedYDomain],bufferedRangeAfter:metricData.bufferedRange?[...metricData.bufferedRange]:null},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
+    // #endregion
 
     // Mark that we've loaded historical data
     this.hasLoadedData = true;
@@ -1588,6 +1599,18 @@ export class ChartView {
     // Set range to [end - duration, end]
     this.chartStartTime = end - durationSeconds;
 
+    // #region agent log
+    const preState = Array.from(this.metrics.entries()).map(([name, md]) => ({
+      name,
+      bufferCount: md.dataTarget.getAll().length,
+      normalizedYDomain: [...md.normalizedYDomain],
+      bufferedRange: md.bufferedRange ? [...md.bufferedRange] : null,
+      hasBaseline: !!md.baseline,
+      hasDistGen: !!md.distributionGenerator,
+    }));
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:setTimeRange:entry',message:'setTimeRange called — pre-clear state',data:{durationSeconds,end,newStart:end-durationSeconds,metricsPreState:preState},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
+    // #endregion
+
     // Clear data for all metrics before changing range
     for (const [name, metricData] of this.metrics) {
       metricData.dataTarget.clear();
@@ -1595,6 +1618,15 @@ export class ChartView {
         metricData.distributionGenerator.hide();
       }
     }
+
+    // #region agent log
+    const postState = Array.from(this.metrics.entries()).map(([name, md]) => ({
+      name,
+      bufferCount: md.dataTarget.getAll().length,
+      normalizedYDomain: [...md.normalizedYDomain],
+      bufferedRange: md.bufferedRange ? [...md.bufferedRange] : null,
+    }));
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:setTimeRange:postClear',message:'setTimeRange post-clear — normalizedYDomain NOT reset (BUG-R1)',data:{metricsPostState:postState,NOTE:'normalizedYDomain and bufferedRange survive clear — this is the bug'},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
 
     this.sharedRange.setRange([this.chartStartTime, end]);
 

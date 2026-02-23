@@ -59,6 +59,9 @@ class MonitoringApp {
   private dataFetchDebounceTimer: number | null = null;
   private toggleInProgress: string | null = null;
   private initialLoadPromise: Promise<void> = Promise.resolve();
+  // #region agent log
+  private _loadGeneration: number = 0; // Monotonic counter to detect concurrent loadDataForRange calls
+  // #endregion
 
   // Metric configuration
   private metrics: MetricInfo[] = [
@@ -265,25 +268,8 @@ class MonitoringApp {
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
     // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "main.ts:loadDataForRange:entry",
-        message: "Loading data for range",
-        data: {
-          start,
-          end,
-          duration: end - start,
-          startDate: new Date(start * 1000).toISOString(),
-          endDate: new Date(end * 1000).toISOString(),
-          isValidRange: start < end,
-        },
-        timestamp: Date.now(),
-        runId: "422-debug",
-        hypothesisId: "H1",
-      }),
-    }).catch(() => {});
+    const thisGen = ++this._loadGeneration;
+    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:loadDataForRange:entry',message:'loadDataForRange starting',data:{generation:thisGen,start,end,duration:end-start,startDate:new Date(start*1000).toISOString(),endDate:new Date(end*1000).toISOString(),toggleInProgress:this.toggleInProgress,enabledMetrics:this.metrics.filter(m=>m.enabled).map(m=>m.name)},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-T2'})}).catch(()=>{});
     // #endregion
 
     try {
@@ -324,6 +310,11 @@ class MonitoringApp {
       }
       const adjustedEnd = latestDataTs > 0 ? latestDataTs : end;
 
+      // #region agent log
+      const staleCheck = this._loadGeneration !== thisGen;
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:loadDataForRange:preClear',message:'About to setTimeRange (clear+load)',data:{generation:thisGen,currentGeneration:this._loadGeneration,isStale:staleCheck,fetchedMetrics:fetchedData.map(f=>({name:f.metric.name,obsCount:f.data.observations.length})),adjustedEnd,toggleInProgress:this.toggleInProgress},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-T2'})}).catch(()=>{});
+      // #endregion
+
       // Set chart range (clears old data) — synchronous, no repaint yet
       this.chart.setTimeRange(duration, adjustedEnd);
 
@@ -343,6 +334,11 @@ class MonitoringApp {
       const lateMetrics = this.metrics.filter(
         (m) => m.enabled && !fetchedNames.has(m.name),
       );
+      // #region agent log
+      if (lateMetrics.length > 0) {
+        fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:loadDataForRange:lateMetrics',message:'Late metrics detected — fetching',data:{generation:thisGen,lateMetricNames:lateMetrics.map(m=>m.name),fetchedNames:Array.from(fetchedNames)},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-T2'})}).catch(()=>{});
+      }
+      // #endregion
       for (const metric of lateMetrics) {
         if (!this.chart.hasMetric(metric.name)) {
           this.chart.addMetric(metric.name, metric.color, metric.label);
@@ -645,8 +641,15 @@ class MonitoringApp {
       "time-range",
     ) as HTMLSelectElement;
     timeRangeSelect.addEventListener("change", async () => {
+      const oldRange = this.currentTimeRangeSeconds;
       this.currentTimeRangeSeconds = parseInt(timeRangeSelect.value);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:rangeSelector:change',message:'Range selector changed',data:{oldRangeSec:oldRange,newRangeSec:this.currentTimeRangeSeconds,toggleInProgress:this.toggleInProgress,enabledMetrics:this.metrics.filter(m=>m.enabled).map(m=>m.name)},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
+      // #endregion
       await this.loadData();
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:rangeSelector:complete',message:'Range change loadData complete',data:{newRangeSec:this.currentTimeRangeSeconds},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
+      // #endregion
     });
 
     // Live mode toggle
@@ -1002,6 +1005,9 @@ class MonitoringApp {
             gapStart,
             now,
           );
+          // #region agent log
+          fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'main.ts:onReconnect:gapData',message:'Gap data fetched but NOT applied to chart (BUG-X1)',data:{metricName:metric.name,obsCount:gapData.observations.length,gapStart,now,gapDuration},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-X1'})}).catch(()=>{});
+          // #endregion
           console.log(
             `Recovered ${gapData.observations.length} observations for ${metric.name}`,
           );
