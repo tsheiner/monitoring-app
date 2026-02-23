@@ -41,7 +41,6 @@ export class ChartView {
   private metrics: Map<string, MetricData> = new Map();
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
-  private hasLoadedData: boolean = false; // Track if historical data loaded
   private onDataNeededCallback?: (range: [number, number]) => void;
 
   // Track chart start time for growth phase
@@ -194,7 +193,8 @@ export class ChartView {
     this.tooltipElement.style.boxSizing = "border-box";
     this.tooltipElement.style.flexDirection = "column";
     this.tooltipElement.style.gap = "3px";
-    this.tooltipElement.style.boxShadow = "0 8px 32px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.5)";
+    this.tooltipElement.style.boxShadow =
+      "0 8px 32px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.5)";
     container.appendChild(this.tooltipElement);
 
     // Add mouse event handlers for crosshair
@@ -341,35 +341,6 @@ export class ChartView {
       });
     }
 
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "d92944",
-      },
-      body: JSON.stringify({
-        sessionId: "d92944",
-        runId: "pre-fix-1",
-        hypothesisId: "H5",
-        location: "ChartView.ts:updateCrosshairDots",
-        message: "Crosshair dot nearest-point placement",
-        data: {
-          cursorX: x,
-          cursorTime,
-          metricCount: this.metrics.size,
-          dots: dotData.map((d) => ({
-            metricName: d.metricName,
-            y: d.y,
-            closestTs: d.closestTs,
-            timeDiffSec: d.timeDiffSec,
-          })),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     // Bind data to dot elements using D3 enter/update/exit
     const dots = this.crosshairDots
       .selectAll<SVGCircleElement, (typeof dotData)[0]>(".crosshair-dot")
@@ -384,8 +355,8 @@ export class ChartView {
       .enter()
       .append("circle")
       .attr("class", "crosshair-dot")
-      .attr("r", (d) => (isNearest(d) ? 4.8 : 4))
-      .attr("fill", (d) => (isNearest(d) ? "white" : d.color))
+      .attr("r", 4)
+      .attr("fill", (d) => d.color)
       .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
       .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
       .attr("cx", x)
@@ -418,7 +389,6 @@ export class ChartView {
 
     // Convert pixel coordinates to data coordinates
     const cursorTime = xScale.invert(x).getTime() / 1000; // Unix timestamp
-    const cursorValue = yScale.invert(y);
 
     let nearestMetricName: string | null = null;
     let minDistance = Infinity;
@@ -474,34 +444,6 @@ export class ChartView {
         nearestMetricName = metricName;
       }
     }
-
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "d92944",
-      },
-      body: JSON.stringify({
-        sessionId: "d92944",
-        runId: "pre-fix-1",
-        hypothesisId: "H1",
-        location: "ChartView.ts:findNearestMetric",
-        message: "Nearest metric distance comparison",
-        data: {
-          cursorX: x,
-          cursorY: y,
-          cursorTime,
-          cursorValue,
-          metricCount: this.metrics.size,
-          chosenNearestMetric: nearestMetricName,
-          chosenRawDistance: minDistance,
-          distanceBreakdown,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     this.nearestMetric = nearestMetricName;
   }
@@ -577,57 +519,6 @@ export class ChartView {
     // Handle active metric hysteresis
     this.updateActiveMetric();
 
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "d92944",
-      },
-      body: JSON.stringify({
-        sessionId: "d92944",
-        runId: "pre-fix-1",
-        hypothesisId: "H2-H4",
-        location: "ChartView.ts:updateTooltip",
-        message: "Tooltip data snapshot",
-        data: {
-          cursorTime,
-          nearestMetric: this.nearestMetric,
-          activeMetric: this.activeMetric,
-          metricCount: this.metrics.size,
-          rows: metricsAtCursor.map((metric) => {
-            const baselinePresent = !!this.metrics.get(metric.name)?.baseline;
-            const classifierCount = metric.classifiers
-              ? Object.keys(metric.classifiers).length
-              : 0;
-            const baselineStatus =
-              metric.value !== null
-                ? this.getMetricStatus(metric.name, metric.value, cursorTime)
-                : null;
-            const classifierAggregateStatus = this.getClassifierAggregateStatus(
-              metric.classifiers,
-            );
-            return {
-              name: metric.name,
-              value: metric.value,
-              timeDiffSec: metric.timeDiffSec,
-              baselinePresent,
-              classifierCount,
-              classifierSource: metric.classifierSource ?? "none",
-              baselineStatus,
-              classifierAggregateStatus,
-              statusMismatch:
-                baselineStatus !== null &&
-                classifierAggregateStatus !== null &&
-                baselineStatus !== classifierAggregateStatus,
-            };
-          }),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     // Build tooltip HTML
     const tooltipHtml = this.buildTooltipContent(metricsAtCursor, cursorTime);
     this.tooltipElement.innerHTML = tooltipHtml;
@@ -668,30 +559,6 @@ export class ChartView {
     // First hover frame: pick nearest immediately so classifier panel is never empty.
     if (this.activeMetric === null && this.nearestMetric !== null) {
       this.activeMetric = this.nearestMetric;
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "d92944",
-          },
-          body: JSON.stringify({
-            sessionId: "d92944",
-            runId: "post-fix-3",
-            hypothesisId: "H4b",
-            location: "ChartView.ts:updateActiveMetric",
-            message: "Initialized active metric from nearest",
-            data: {
-              nearestMetric: this.nearestMetric,
-              activeMetric: this.activeMetric,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       return;
     }
 
@@ -712,57 +579,9 @@ export class ChartView {
     }
 
     const targetMetric = this.nearestMetric;
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "d92944",
-      },
-      body: JSON.stringify({
-        sessionId: "d92944",
-        runId: "pre-fix-1",
-        hypothesisId: "H4",
-        location: "ChartView.ts:updateActiveMetric",
-        message: "Scheduling active metric switch",
-        data: {
-          nearestMetric: this.nearestMetric,
-          activeMetric: this.activeMetric,
-          targetMetric,
-          hysteresisMs: this.HYSTERESIS_MS,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     this.activeMetricTimer = window.setTimeout(() => {
       this.activeMetric = targetMetric;
       this.activeMetricTimer = null;
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "d92944",
-          },
-          body: JSON.stringify({
-            sessionId: "d92944",
-            runId: "pre-fix-1",
-            hypothesisId: "H4",
-            location: "ChartView.ts:updateActiveMetric:timer",
-            message: "Committed active metric switch",
-            data: {
-              activeMetric: this.activeMetric,
-              nearestMetric: this.nearestMetric,
-              targetMetric,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       // Re-render tooltip in case mouse has stopped (no mousemove incoming)
       if (this.lastMetricsAtCursor.length > 0) {
         this.tooltipElement.innerHTML = this.buildTooltipContent(
@@ -795,27 +614,6 @@ export class ChartView {
       (d) => d.hour === hour,
     );
     if (!hourlyDist) {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "d92944",
-          },
-          body: JSON.stringify({
-            sessionId: "d92944",
-            runId: "pre-fix-1",
-            hypothesisId: "H3",
-            location: "ChartView.ts:getMetricStatus",
-            message: "Missing hourly baseline for metric status",
-            data: { metricName, cursorTimeSec, lookupHourUtc: hour },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       return null;
     }
 
@@ -841,36 +639,6 @@ export class ChartView {
       else status = "red";
     }
 
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "d92944",
-      },
-      body: JSON.stringify({
-        sessionId: "d92944",
-        runId: "pre-fix-1",
-        hypothesisId: "H3",
-        location: "ChartView.ts:getMetricStatus",
-        message: "Computed metric status",
-        data: {
-          metricName,
-          value,
-          cursorTimeSec,
-          lookupHourUtc: hour,
-          polarity,
-          p5,
-          p10,
-          p90,
-          p95,
-          status,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-
     return status;
   }
 
@@ -887,10 +655,7 @@ export class ChartView {
   }
 
   /** Inline SVG icon helpers for status indicators (14×14, Figma-specified shapes) */
-  private static statusIcon(
-    status: "green" | "yellow" | "red" | null,
-    fallbackColor: string,
-  ): string {
+  private static statusIcon(status: "green" | "yellow" | "red" | null): string {
     const base = `style="margin-right:6px;flex-shrink:0;vertical-align:middle"`;
     if (status === "green") {
       return `<svg class="status-green" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#139BEB"/><path d="M3.5 7.2L5.8 9.8L10.5 4.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -959,49 +724,10 @@ export class ChartView {
         metric.classifiers,
       );
 
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "0e5a4a",
-          },
-          body: JSON.stringify({
-            sessionId: "0e5a4a",
-            runId: "status-debug",
-            hypothesisId: "H2a",
-            location: "ChartView.ts:buildTooltipContent:statusIcon",
-            message: "Status icon decision",
-            data: {
-              metricName: metric.name,
-              metricValue: metric.value,
-              metricStatus: status,
-              classifierAggStatus: fallbackClassifierStatus,
-              chosenStatus: status ?? fallbackClassifierStatus,
-              classifierDetails: metric.classifiers
-                ? Object.fromEntries(
-                    Object.entries(metric.classifiers).map(([k, v]) => [
-                      k,
-                      { value: v.value, status: v.status },
-                    ]),
-                  )
-                : null,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
       // Colored legend dot — shown to the left of the status icon
       // gap(dot→icon) = 5px (margin-right on dot); gap(icon→name) = 6px (margin-right on icon)
       html += ChartView.legendDot(metric.color);
-      html += ChartView.statusIcon(
-        status ?? fallbackClassifierStatus,
-        metric.color,
-      );
+      html += ChartView.statusIcon(status ?? fallbackClassifierStatus);
 
       // FD-025: Format value with appropriate units and decimal precision
       const unit = ChartView.METRIC_UNITS[metric.name] ?? "";
@@ -1281,12 +1007,7 @@ export class ChartView {
 
     // If we're back to single metric, may need to recreate distribution
     if (this.metrics.size === 1 && this.config.showDistribution) {
-      const [remainingMetric, remainingData] = Array.from(
-        this.metrics.entries(),
-      )[0];
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:removeMetric:distCheck',message:'Single metric remaining — distribution generator check',data:{removedMetric:metricName,remainingMetric,hasDistGen:!!remainingData.distributionGenerator,hasBaseline:!!remainingData.baseline,normalizedYDomain:[...remainingData.normalizedYDomain]},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-T3'})}).catch(()=>{});
-      // #endregion
+      const [, remainingData] = Array.from(this.metrics.entries())[0];
       if (!remainingData.distributionGenerator) {
         remainingData.distributionGenerator = new DistributionRibbonGenerator(
           this.core.getChartGroup(),
@@ -1316,6 +1037,10 @@ export class ChartView {
     return this.metrics.has(metricName);
   }
 
+  _getMetricStateForTest(metricName: string): MetricData | undefined {
+    return this.metrics.get(metricName);
+  }
+
   /**
    * Load historical data for a specific metric.
    */
@@ -1325,10 +1050,6 @@ export class ChartView {
       console.warn(`Cannot load data for unknown metric: ${metricName}`);
       return;
     }
-
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:loadHistoricalData:entry',message:'Loading historical data — pre-state',data:{metricName,incomingCount:observations.length,currentBufferCount:metricData.dataTarget.getAll().length,normalizedYDomainBefore:[...metricData.normalizedYDomain],bufferedRangeBefore:metricData.bufferedRange?[...metricData.bufferedRange]:null,metricsSize:this.metrics.size,incomingRange:observations.length>0?[observations[0].timestamp,observations[observations.length-1].timestamp]:null},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
-    // #endregion
 
     console.log(
       `Loading ${observations.length} observations for ${metricName}`,
@@ -1437,18 +1158,11 @@ export class ChartView {
       }
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:loadHistoricalData:postLoad',message:'Historical data loaded — post-state',data:{metricName,bufferCountAfter:metricData.dataTarget.getAll().length,normalizedYDomainAfter:[...metricData.normalizedYDomain],bufferedRangeAfter:metricData.bufferedRange?[...metricData.bufferedRange]:null},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
-    // #endregion
-
-    // Mark that we've loaded historical data
-    this.hasLoadedData = true;
-
     // Compute global Y domain across all visible metrics (normalized to 0-100)
     this.updateGlobalYDomain();
 
     // Ensure line generators have updated scales
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -1468,39 +1182,12 @@ export class ChartView {
       new Error().stack?.split("\n")[2]?.trim(),
     );
 
-    // #region agent log
-    const currentRange = this.sharedRange.getRange();
-    const allMetricsData = Array.from(this.metrics.entries()).map(
-      ([name, data]) => ({
-        name,
-        bufferCount: data.dataTarget.getAll().length,
-        domain: data.normalizedYDomain,
-      }),
-    );
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "ChartView.ts:updateGlobalYDomain",
-        message: "Y-domain recalculation",
-        data: {
-          metricCount: this.metrics.size,
-          visibleRange: currentRange,
-          allMetricsData,
-        },
-        timestamp: Date.now(),
-        runId: "pan-rescale-debug",
-        hypothesisId: "H3",
-      }),
-    }).catch(() => {});
-    // #endregion
-
     if (this.metrics.size > 1) {
       // Multiple metrics: use normalized 0-100 range
       this.core.updateYDomain([0, 100]);
     } else if (this.metrics.size === 1) {
       // Single metric: use actual values from entire dataset
-      const [metricName, metricData] = Array.from(this.metrics.entries())[0];
+      const [, metricData] = Array.from(this.metrics.entries())[0];
 
       // Use the stored normalizedYDomain which contains min/max from all loaded data
       if (metricData.normalizedYDomain[0] !== Infinity) {
@@ -1567,7 +1254,7 @@ export class ChartView {
 
         // Prune old data for all metrics
         const pruneStart = newRange[0] - this.durationSeconds;
-        for (const [name, data] of this.metrics) {
+        for (const [, data] of this.metrics) {
           data.dataTarget.pruneOutsideRange(pruneStart, newRange[1]);
         }
       }
@@ -1599,40 +1286,21 @@ export class ChartView {
     // Set range to [end - duration, end]
     this.chartStartTime = end - durationSeconds;
 
-    // #region agent log
-    const preState = Array.from(this.metrics.entries()).map(([name, md]) => ({
-      name,
-      bufferCount: md.dataTarget.getAll().length,
-      normalizedYDomain: [...md.normalizedYDomain],
-      bufferedRange: md.bufferedRange ? [...md.bufferedRange] : null,
-      hasBaseline: !!md.baseline,
-      hasDistGen: !!md.distributionGenerator,
-    }));
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:setTimeRange:entry',message:'setTimeRange called — pre-clear state',data:{durationSeconds,end,newStart:end-durationSeconds,metricsPreState:preState},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
-    // #endregion
-
     // Clear data for all metrics before changing range
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.dataTarget.clear();
+      metricData.normalizedYDomain = [Infinity, -Infinity];
+      metricData.bufferedRange = null;
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.hide();
       }
     }
 
-    // #region agent log
-    const postState = Array.from(this.metrics.entries()).map(([name, md]) => ({
-      name,
-      bufferCount: md.dataTarget.getAll().length,
-      normalizedYDomain: [...md.normalizedYDomain],
-      bufferedRange: md.bufferedRange ? [...md.bufferedRange] : null,
-    }));
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:JSON.stringify({sessionId:'a62cc6',location:'ChartView.ts:setTimeRange:postClear',message:'setTimeRange post-clear — normalizedYDomain NOT reset (BUG-R1)',data:{metricsPostState:postState,NOTE:'normalizedYDomain and bufferedRange survive clear — this is the bug'},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-R1'})}).catch(()=>{});
-
     this.sharedRange.setRange([this.chartStartTime, end]);
 
     // Update scales and render to ensure chart is not blank
     this.updateGlobalYDomain();
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -1886,13 +1554,19 @@ export class ChartView {
         const interpolated: Record<string, number> = {};
         for (const key of percentileKeys) {
           const a =
-            (currentDist.distribution as Record<string, number>)[key] ?? 0;
-          const b = (nextDist.distribution as Record<string, number>)[key] ?? 0;
+            (currentDist.distribution as unknown as Record<string, number>)[
+              key
+            ] ?? 0;
+          const b =
+            (nextDist.distribution as unknown as Record<string, number>)[key] ??
+            0;
           interpolated[key] = a + (b - a) * t;
         }
         // Preserve count from current hour
         interpolated["count"] =
-          (currentDist.distribution as Record<string, number>)["count"] ?? 0;
+          (currentDist.distribution as unknown as Record<string, number>)[
+            "count"
+          ] ?? 0;
 
         distributionPoints.push({
           timestamp,
@@ -1918,45 +1592,9 @@ export class ChartView {
     const range = this.sharedRange.getRange();
 
     // Render each metric
-    for (const [metricName, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       // Get ALL buffered data (not just visible range) for pre-rendering
       const allObservations = metricData.dataTarget.getAll();
-
-      // #region agent log
-      if (this.metrics.size > 1) {
-        const sampleVals = allObservations.slice(0, 3).map((o) => o.value);
-        fetch(
-          "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "0e5a4a",
-            },
-            body: JSON.stringify({
-              sessionId: "0e5a4a",
-              runId: "render-debug",
-              hypothesisId: "H3",
-              location: "ChartView.ts:render:multiMetric",
-              message: "Render multi-metric",
-              data: {
-                metricName,
-                metricsSize: this.metrics.size,
-                obsCount: allObservations.length,
-                normalizedYDomain: metricData.normalizedYDomain,
-                sampleRawValues: sampleVals,
-                sampleNormalized: sampleVals.map((v) =>
-                  this.normalizeValue(v, metricData.normalizedYDomain),
-                ),
-                yScaleDomain: this.core.getYScale().domain(),
-                range,
-              },
-              timestamp: Date.now(),
-            }),
-          },
-        ).catch(() => {});
-      }
-      // #endregion
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
@@ -2009,7 +1647,7 @@ export class ChartView {
     this.core.resize(width, height);
 
     // Update scales for all generators after core resize
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -2039,7 +1677,7 @@ export class ChartView {
   destroy(): void {
     this.core.destroy();
 
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.destroy();
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.destroy();

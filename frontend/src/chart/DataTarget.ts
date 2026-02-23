@@ -18,26 +18,27 @@ export class DataTarget {
    * Add observations to buffer.
    */
   push(observations: Observation[]): void {
-    const sizeBefore = this.buffer.length;
     this.buffer.push(...observations);
-
-    // Update Y domain
-    observations.forEach((obs) => {
-      if (obs.value < this.yMin) this.yMin = obs.value;
-      if (obs.value > this.yMax) this.yMax = obs.value;
-    });
 
     // Sort by timestamp
     this.buffer.sort((a, b) => a.timestamp - b.timestamp);
 
-    // #region agent log
-    const tsSet = new Set(this.buffer.map(o => o.timestamp));
-    const dupCount = this.buffer.length - tsSet.size;
-    if (dupCount > 0 || this.buffer.length > 2000) {
-      const logPayload = JSON.stringify({sessionId:'a62cc6',location:'DataTarget.ts:push',message:'Buffer state after push',data:{addedCount:observations.length,sizeBefore,sizeAfter:this.buffer.length,uniqueTimestamps:tsSet.size,duplicateCount:dupCount,yMin:this.yMin,yMax:this.yMax},timestamp:Date.now(),runId:'transition-diag',hypothesisId:'BUG-X2'});
-      fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a62cc6'},body:logPayload}).catch(()=>{});
+    // Deduplicate by timestamp (keep the latest observation for each timestamp)
+    if (this.buffer.length > 1) {
+      this.buffer = this.buffer.filter(
+        (obs, index, arr) =>
+          index === arr.length - 1 ||
+          obs.timestamp !== arr[index + 1].timestamp,
+      );
     }
-    // #endregion
+
+    // Recompute Y domain from deduplicated buffer
+    this.yMin = Infinity;
+    this.yMax = -Infinity;
+    for (const obs of this.buffer) {
+      if (obs.value < this.yMin) this.yMin = obs.value;
+      if (obs.value > this.yMax) this.yMax = obs.value;
+    }
   }
 
   /**
