@@ -267,27 +267,14 @@ class MonitoringApp {
       const duration = end - start;
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
-      // 1. Fetch ALL data first. Old chart stays visible during the fetch,
-      //    preventing the "flash" (blank frame between clear and load).
-      const fetchedData: Array<{
-        metric: (typeof this.metrics)[0];
-        data: Awaited<ReturnType<typeof this.api.fetchMetricHistory>>;
-      }> = [];
-
-      for (const metric of enabledMetrics) {
-        console.log(
-          `Fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
-        );
-        const metricData = await this.api.fetchMetricHistory(
-          metric.name,
-          start,
-          end,
-        );
-        console.log(
-          `Received ${metricData.observations.length} observations for ${metric.name}`,
-        );
-        fetchedData.push({ metric, data: metricData });
-      }
+      // 1. Fetch ALL data first in parallel. Old chart stays visible during
+      //    the fetch, preventing the "flash" (blank frame between clear and load).
+      const fetchedData = await Promise.all(
+        enabledMetrics.map(async (metric) => {
+          const data = await this.api.fetchMetricHistory(metric.name, start, end);
+          return { metric, data };
+        }),
+      );
 
       // 2. Snap the right edge to the actual latest data point so the line
       //    fills the full X axis (avoids gap when client "now" is ahead of data).
@@ -339,16 +326,15 @@ class MonitoringApp {
         );
       }
 
-      // 4. Fetch baseline once per visible metric so tooltip status can resolve.
-      for (const metric of enabledMetrics) {
-        await this.ensureBaseline(metric.name);
-      }
+      // 4. Fetch baselines and events in parallel (both independent of each other).
+      const [, eventsData] = await Promise.all([
+        Promise.all(enabledMetrics.map((m) => this.ensureBaseline(m.name))),
+        this.api.fetchEvents(start, end),
+      ]);
 
       // Track the actual range used for this data load
       this.loadedRange = [start, end];
 
-      // Load events for the requested range
-      const eventsData = await this.api.fetchEvents(start, end);
       this.allEvents = eventsData.events;
       this.updateEventDisplay();
 
@@ -377,29 +363,25 @@ class MonitoringApp {
     try {
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
-      // Fetch data for each enabled metric
-      for (const metric of enabledMetrics) {
-        console.log(
-          `Incrementally fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
-        );
-        const metricData = await this.api.fetchMetricHistory(
-          metric.name,
-          start,
-          end,
-        );
-        console.log(
-          `Received ${metricData.observations.length} observations for ${metric.name}`,
-        );
+      // Fetch all metrics and events in parallel
+      const [metricResults, eventsData] = await Promise.all([
+        Promise.all(
+          enabledMetrics.map(async (metric) => {
+            const data = await this.api.fetchMetricHistory(metric.name, start, end);
+            return { metric, data };
+          }),
+        ),
+        this.api.fetchEvents(start, end),
+      ]);
 
-        // Load data incrementally (appends to buffer, doesn't clear)
+      // Load each metric's data incrementally (appends to buffer, doesn't clear)
+      for (const { metric, data } of metricResults) {
         this.chart.loadHistoricalData(
           metric.name,
-          normalizeObservations(metricData.observations),
+          normalizeObservations(data.observations),
         );
       }
 
-      // Load events for the extended range
-      const eventsData = await this.api.fetchEvents(start, end);
       // Merge with existing events, removing duplicates
       const existingIds = new Set(
         this.allEvents.map((e) => `${e.timestamp}-${e.event_type}`),

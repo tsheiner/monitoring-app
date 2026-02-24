@@ -169,7 +169,8 @@ async def query_metric(
     else:
         observations = store.query_range(metric, start, end, entity=entity)
     
-    distribution = store.compute_distribution(metric, start, end, entity=None if entity == "_aggregated" else entity if entity != "_all" else None)
+    # Compute distribution from already-fetched observations (avoids re-querying the store)
+    distribution = store.compute_distribution(metric, start, end, observations=observations)
     
     # Convert to response models
     obs_models = [

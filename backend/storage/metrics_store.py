@@ -55,7 +55,16 @@ class MetricsStore:
     def _save_classifiers(self) -> None:
         """Save classifier sidecar data."""
         with open(self.classifiers_path, 'w') as f:
-            json.dump(self._classifiers_cache, f, indent=2)
+            json.dump(self._classifiers_cache, f)
+
+    def flush_classifiers(self) -> None:
+        """Persist the in-memory classifier cache to disk.
+        
+        Call this once after a batch of insert_observation() calls
+        rather than saving on every individual insert.
+        """
+        if self._classifiers_cache:
+            self._save_classifiers()
     
     def _classifier_key(self, timestamp: int, metric: str, entity: str) -> str:
         """Generate key for classifier lookup."""
@@ -87,7 +96,6 @@ class MetricsStore:
                 observation.get("entity", "_global")
             )
             self._classifiers_cache[key] = observation["classifiers"]
-            self._save_classifiers()
     
     def insert_batch(self, observations: List[Dict]) -> None:
         """
@@ -182,7 +190,8 @@ class MetricsStore:
         metric: str,
         start: int,
         end: int,
-        entity: Optional[str] = None
+        entity: Optional[str] = None,
+        observations: Optional[List[Dict]] = None
     ) -> Optional[Dict]:
         """
         Compute statistical distribution for metric in time range.
@@ -192,12 +201,14 @@ class MetricsStore:
             start: Start timestamp
             end: End timestamp
             entity: Optional entity filter
+            observations: Pre-fetched observations to compute from (avoids re-query)
             
         Returns:
             Dict with percentiles (p1, p5, p10, p25, p50, p75, p90, p95, p99), mean, stddev
             None if no data in range
         """
-        observations = self.query_range(metric, start, end, entity=entity)
+        if observations is None:
+            observations = self.query_range(metric, start, end, entity=entity)
         
         if not observations:
             return None

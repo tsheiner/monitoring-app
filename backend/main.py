@@ -84,6 +84,9 @@ async def stream_metrics_loop():
                     metrics_store.insert_observation(observation)
                     ap_observations.append(observation)
                 
+                # Flush classifier cache once per metric (not per AP)
+                metrics_store.flush_classifiers()
+                
                 # Broadcast aggregated value (mean across all APs)
                 mean_value = sum(obs["value"] for obs in ap_observations) / len(ap_observations)
                 
