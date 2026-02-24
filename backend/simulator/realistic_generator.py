@@ -448,9 +448,9 @@ class RealisticMetricsGenerator:
         Compute classifier status (green/yellow/red) based on bootstrap-derived thresholds.
         
         Thresholds are hour-specific and derived from observed percentiles:
-        - green: value >= p10 (normal range)
-        - yellow: p2 <= value < p10 (degraded but not critical)
-        - red: value < p2 (critical)
+        - green: value >= p25 (normal, expected range)
+        - yellow: p10 <= value < p25 (slightly degraded)
+        - red: value < p10 (critical)
         
         Args:
             classifier_name: Name of classifier
@@ -470,9 +470,10 @@ class RealisticMetricsGenerator:
         if thresholds is None:
             # Fallback: if no thresholds available, use simple heuristics
             # This should only happen before first bootstrap or if baselines are missing
-            if value >= 0.90:
+            # Heuristics use p25/p10 sensitivity to match the bootstrap-derived policy
+            if value >= 0.95:
                 return "green"
-            elif value >= 0.80:
+            elif value >= 0.90:
                 return "yellow"
             else:
                 return "red"

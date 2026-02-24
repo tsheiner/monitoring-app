@@ -72,7 +72,7 @@ def test_thresholds_come_from_baseline_percentiles():
     # This test verifies the concept - in a real bootstrap, thresholds should
     # be computed from observed data, not from config constants
     
-    # Mock classifier baseline data with percentiles
+    # Mock classifier baseline data with percentiles (including p25 for new policy)
     classifier_baseline = {
         "hour": 12,
         "distribution": {
@@ -80,6 +80,7 @@ def test_thresholds_come_from_baseline_percentiles():
             "p2": 0.870,
             "p5": 0.900,
             "p10": 0.920,
+            "p25": 0.940,
             "p90": 0.995,
             "p95": 0.997,
             "p98": 0.998,
@@ -87,31 +88,31 @@ def test_thresholds_come_from_baseline_percentiles():
         }
     }
     
-    # Policy: green if > p10, yellow if > p2, red if <= p2
+    # Policy: green if >= p25, yellow if >= p10, red if < p10
     # These thresholds come from the observed distribution
-    green_threshold = classifier_baseline["distribution"]["p10"]  # 0.920
-    yellow_threshold = classifier_baseline["distribution"]["p2"]  # 0.870
+    green_threshold = classifier_baseline["distribution"]["p25"]  # 0.940
+    yellow_threshold = classifier_baseline["distribution"]["p10"]  # 0.920
     
     # Test status classification
-    assert green_threshold == 0.920
-    assert yellow_threshold == 0.870
+    assert green_threshold == 0.940
+    assert yellow_threshold == 0.920
     
-    # Value above p10 → green
-    assert 0.950 > green_threshold  # Would be green
+    # Value above p25 → green
+    assert 0.960 > green_threshold  # Would be green
     
-    # Value between p2 and p10 → yellow
-    assert yellow_threshold < 0.900 < green_threshold  # Would be yellow
+    # Value between p10 and p25 → yellow
+    assert yellow_threshold < 0.930 < green_threshold  # Would be yellow
     
-    # Value below p2 → red
-    assert 0.860 < yellow_threshold  # Would be red
+    # Value below p10 → red
+    assert 0.910 < yellow_threshold  # Would be red
 
 
 def test_status_classification_green_yellow_red():
     """Test that classifier status is correctly classified based on thresholds."""
     # Define thresholds (these would come from bootstrap in real system)
     thresholds = {
-        "green": 0.920,   # p10 from bootstrap
-        "yellow": 0.870,  # p2 from bootstrap
+        "green": 0.940,   # p25 from bootstrap
+        "yellow": 0.920,  # p10 from bootstrap
     }
     
     def classify_status(value, thresholds):
@@ -123,12 +124,45 @@ def test_status_classification_green_yellow_red():
             return "red"
     
     # Test status classification
+    assert classify_status(0.960, thresholds) == "green"
     assert classify_status(0.950, thresholds) == "green"
-    assert classify_status(0.925, thresholds) == "green"
-    assert classify_status(0.900, thresholds) == "yellow"
-    assert classify_status(0.880, thresholds) == "yellow"
+    assert classify_status(0.930, thresholds) == "yellow"   # p10–p25 zone
+    assert classify_status(0.925, thresholds) == "yellow"   # p10–p25 zone
+    assert classify_status(0.910, thresholds) == "red"      # below p10
     assert classify_status(0.850, thresholds) == "red"
     assert classify_status(0.800, thresholds) == "red"
+
+
+def test_classifier_status_green_requires_p25():
+    """A value between p10 and p25 should be yellow, not green.
+    
+    This verifies the new threshold policy: green requires >= p25 (not just >= p10).
+    With the old p10 green threshold, a p15 value would incorrectly return 'green'.
+    """
+    from simulator.realistic_generator import RealisticMetricsGenerator
+    
+    # Instantiate a minimal generator with thresholds at the new p25/p10 policy
+    gen = object.__new__(RealisticMetricsGenerator)
+    gen._classifier_thresholds = {
+        "dhcp": {
+            12: {
+                "green_min": 0.960,   # p25 — green requires this or better
+                "yellow_min": 0.940,  # p10 — yellow requires this or better
+            }
+        }
+    }
+    
+    # Value at ~p15: between p10 (0.940) and p25 (0.960)
+    p15_value = 0.950
+    
+    # Timestamp resolves to hour 12 UTC (2025-01-15 12:00:00 UTC)
+    timestamp = 1736942400
+    
+    status = gen._compute_classifier_status("dhcp", p15_value, timestamp)
+    assert status == "yellow", (
+        f"Value {p15_value} is in the p10–p25 zone: expected 'yellow', got '{status}'. "
+        "Green should require >= p25."
+    )
 
 
 def test_classifier_thresholds_vary_by_hour():
@@ -139,26 +173,26 @@ def test_classifier_thresholds_vary_by_hour():
     hour_3_baseline = {
         "hour": 3,
         "distribution": {
-            "p2": 0.980,   # Night time - very stable
-            "p10": 0.990,
+            "p10": 0.985,   # Night time — very stable, tight band
+            "p25": 0.990,   # Green boundary at p25
         }
     }
     
     hour_15_baseline = {
         "hour": 15,
         "distribution": {
-            "p2": 0.920,   # Peak load - more variation
-            "p10": 0.950,
+            "p10": 0.950,   # Peak load — more variation
+            "p25": 0.965,   # Green boundary at p25
         }
     }
     
-    # Thresholds are different based on hour
-    assert hour_3_baseline["distribution"]["p10"] > hour_15_baseline["distribution"]["p10"]
+    # Green threshold (p25) is higher at night (less variation expected)
+    assert hour_3_baseline["distribution"]["p25"] > hour_15_baseline["distribution"]["p25"]
     
-    # A value of 0.960 would be:
-    # - Green at hour 3 (below p90, around p10)
-    # - Green at hour 15 (above p10)
-    # This demonstrates hour-specific context
+    # A value of 0.975 would be:
+    # - Yellow at hour 3: 0.975 >= p10(0.985)? No — 0.975 < 0.985 → red (night is very stable)
+    # - Green at hour 15: 0.975 >= p25(0.965) → green
+    # This demonstrates hour-specific context matters
 
 
 def test_changing_ou_sigma_changes_derived_thresholds(deterministic_seed):

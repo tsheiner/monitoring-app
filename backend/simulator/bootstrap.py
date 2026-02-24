@@ -294,12 +294,12 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
                 },
                 "sample_count": len(values),
                 "thresholds": {
-                    # Threshold policy: green >= p10, yellow >= p2, red < p2
-                    # These are derived from observed bootstrap data, ensuring
-                    # that values the simulation regularly produces during healthy
-                    # operation won't be incorrectly flagged as degraded
-                    "green_min": float(np.percentile(values, 10)),  # p10
-                    "yellow_min": float(np.percentile(values, 2)),   # p2
+                    # Threshold policy: green >= p25, yellow >= p10, red < p10
+                    # Tighter than the old p10/p2 policy so that disagreements between
+                    # metric status and classifier status are genuine signals, not artefacts
+                    # of different sensitivities.
+                    "green_min": float(np.percentile(values, 25)),  # p25
+                    "yellow_min": float(np.percentile(values, 10)),  # p10
                 }
             })
         

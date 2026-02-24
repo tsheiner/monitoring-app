@@ -86,23 +86,6 @@ export class ChartView {
     ap_health: 0,
   };
 
-  // FD-024: Per-metric polarity determines which distribution tail is "bad".
-  // lower_is_better: only high tail is yellow/red (fast connect time is fine)
-  // higher_is_better: only low tail is yellow/red (high throughput is fine)
-  // symmetric: both tails flagged (capacity too low OR too high can be an issue)
-  private static readonly METRIC_POLARITY: Record<
-    string,
-    "lower_is_better" | "higher_is_better" | "symmetric"
-  > = {
-    time_to_connect: "lower_is_better",
-    roaming: "lower_is_better",
-    throughput: "higher_is_better",
-    coverage: "higher_is_better",
-    successful_connects: "higher_is_better",
-    ap_health: "higher_is_better",
-    capacity: "symmetric",
-  };
-
   // Interaction state
   private isPanning: boolean = false;
 
@@ -596,10 +579,14 @@ export class ChartView {
   /**
    * Determine the health status of a metric value relative to its hourly baseline distribution.
    * Returns 'green' | 'yellow' | 'red', or null when no baseline is available.
-   * Classification:
-   *   green  — value within [p10, p90]
-   *   yellow — value within [p5, p10) or (p90, p95]
-   *   red    — value below p5 or above p95
+   *
+   * All metrics use symmetric (both-tail) status — no polarity.
+   * Any value outside the expected range is flagged, regardless of direction.
+   *
+   * Classification (aligned with distribution ribbon bands):
+   *   green  — value within [p25, p75]  (innermost band)
+   *   yellow — value within [p10, p25) or (p75, p90]
+   *   red    — value below p10 or above p90
    */
   getMetricStatus(
     metricName: string,
@@ -618,29 +605,11 @@ export class ChartView {
       return null;
     }
 
-    const { p5, p10, p90, p95 } = hourlyDist.distribution;
-    const polarity = ChartView.METRIC_POLARITY[metricName] ?? "symmetric";
+    const { p10, p25, p75, p90 } = hourlyDist.distribution;
 
-    let status: "green" | "yellow" | "red";
-    if (polarity === "lower_is_better") {
-      // Low values are good — only flag the HIGH tail
-      if (value <= p90) status = "green";
-      else if (value <= p95) status = "yellow";
-      else status = "red";
-    } else if (polarity === "higher_is_better") {
-      // High values are good — only flag the LOW tail
-      if (value >= p10) status = "green";
-      else if (value >= p5) status = "yellow";
-      else status = "red";
-    } else {
-      // Symmetric — flag both tails
-      if (value >= p10 && value <= p90) status = "green";
-      else if ((value >= p5 && value < p10) || (value > p90 && value <= p95))
-        status = "yellow";
-      else status = "red";
-    }
-
-    return status;
+    if (value >= p25 && value <= p75) return "green";
+    if ((value >= p10 && value < p25) || (value > p75 && value <= p90)) return "yellow";
+    return "red";
   }
 
   /**
