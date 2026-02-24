@@ -167,9 +167,9 @@ export class ChartView {
     this.crosshairVertical = this.crosshairGroup
       .append("line")
       .attr("class", "crosshair-vertical")
-      .attr("stroke", "#888")
-      .attr("stroke-width", 1);
-    // No stroke-dasharray — must be solid per FD-022 spec
+      .attr("stroke", "#656C75")
+      .attr("stroke-width", 2);
+    // No stroke-dasharray — must be solid per redesign spec
 
     // Container for highlighted dots at trace intersections (FD-022)
     this.crosshairDots = this.crosshairGroup
@@ -182,19 +182,20 @@ export class ChartView {
     this.tooltipElement.style.position = "absolute";
     this.tooltipElement.style.display = "none";
     this.tooltipElement.style.pointerEvents = "none";
-    this.tooltipElement.style.backgroundColor = "#23282E";
-    this.tooltipElement.style.color = "#fff";
+    this.tooltipElement.style.backgroundColor = "#2C3440";
+    this.tooltipElement.style.color = "#F7F7F7";
     this.tooltipElement.style.padding = "12px 16px";
     this.tooltipElement.style.borderRadius = "6px";
-    this.tooltipElement.style.border = "2px solid #C1C6CC";
-    this.tooltipElement.style.fontSize = "12px";
+    this.tooltipElement.style.border = "2px solid #656C75";
+    this.tooltipElement.style.fontSize = "14px";
+    this.tooltipElement.style.fontFamily = "'Inter', sans-serif";
     this.tooltipElement.style.zIndex = "1000";
-    this.tooltipElement.style.width = "215px";
+    this.tooltipElement.style.width = "292px";
     this.tooltipElement.style.boxSizing = "border-box";
     this.tooltipElement.style.flexDirection = "column";
-    this.tooltipElement.style.gap = "3px";
+    this.tooltipElement.style.gap = "6px";
     this.tooltipElement.style.boxShadow =
-      "0 8px 32px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.5)";
+      "0px 4px 12px rgba(0,0,0,0.18)";
     container.appendChild(this.tooltipElement);
 
     // Add mouse event handlers for crosshair
@@ -350,24 +351,24 @@ export class ChartView {
     const isNearest = (d: (typeof dotData)[0]) =>
       d.metricName === this.nearestMetric;
 
-    // Enter: create new dots
+    // Enter: create new dots — knockout border effect, nearest gets highlight ring
     dots
       .enter()
       .append("circle")
       .attr("class", "crosshair-dot")
-      .attr("r", 4)
+      .attr("r", 5.5)
       .attr("fill", (d) => d.color)
-      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
-      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
+      .attr("stroke", (d) => (isNearest(d) ? "#C1C6CC" : "#2A2A2A"))
+      .attr("stroke-width", 3)
       .attr("cx", x)
       .attr("cy", (d) => d.y);
 
     // Update: reposition existing dots and re-apply styles (nearestMetric may have changed)
     dots
-      .attr("r", (d) => (isNearest(d) ? 4.8 : 4))
-      .attr("fill", (d) => (isNearest(d) ? "white" : d.color))
-      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
-      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
+      .attr("r", 5.5)
+      .attr("fill", (d) => d.color)
+      .attr("stroke", (d) => (isNearest(d) ? "#C1C6CC" : "#2A2A2A"))
+      .attr("stroke-width", 3)
       .attr("cx", x)
       .attr("cy", (d) => d.y);
 
@@ -527,7 +528,7 @@ export class ChartView {
     const svgRect = (
       this.core.getSVG().node() as SVGSVGElement
     ).getBoundingClientRect();
-    const tooltipX = svgRect.left + this.config.margin.left + x + 15;
+    const tooltipX = svgRect.left + this.config.margin.left + x + 40;
     const tooltipY = svgRect.top + this.config.margin.top + y + 15;
 
     this.tooltipElement.style.left = `${tooltipX}px`;
@@ -654,25 +655,43 @@ export class ChartView {
     return `${parts[0]} ${parts[1]} ${parts[2]} ${hh}:${mm}`;
   }
 
-  /** Inline SVG icon helpers for status indicators (14×14, Figma-specified shapes) */
-  private static statusIcon(status: "green" | "yellow" | "red" | null): string {
-    const base = `style="margin-right:6px;flex-shrink:0;vertical-align:middle"`;
+  /** Inline SVG icon helpers for status indicators (16×16, redesign-specified shapes) */
+  private static statusIcon(
+    status: "green" | "yellow" | "red" | null,
+    size: number = 16,
+  ): string {
+    const s = size;
+    const half = s / 2;
+    const base = `style="flex-shrink:0;vertical-align:middle"`;
     if (status === "green") {
-      return `<svg class="status-green" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#139BEB"/><path d="M3.5 7.2L5.8 9.8L10.5 4.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      // Blue circle with white checkmark
+      const ckX1 = (3.5 / 14) * s, ckY1 = (7.2 / 14) * s;
+      const ckX2 = (5.8 / 14) * s, ckY2 = (9.8 / 14) * s;
+      const ckX3 = (10.5 / 14) * s, ckY3 = (4.5 / 14) * s;
+      return `<svg class="status-green" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="${half}" cy="${half}" r="${half}" fill="#33BBF5"/><path d="M${ckX1} ${ckY1}L${ckX2} ${ckY2}L${ckX3} ${ckY3}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
     if (status === "yellow") {
-      return `<svg class="status-yellow" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><path d="M7 1L13.5 12.5H0.5L7 1Z" fill="#CC8604"/><rect x="6.4" y="4.5" width="1.2" height="4.5" rx="0.6" fill="white"/><circle cx="7" cy="10.5" r="0.7" fill="white"/></svg>`;
+      // Yellow/amber triangle with exclamation
+      const triTop = (1 / 14) * s, triBot = (12.5 / 14) * s;
+      const triLeft = (0.5 / 14) * s, triRight = (13.5 / 14) * s;
+      const rx = (6.4 / 14) * s, ry = (4.5 / 14) * s;
+      const rw = (1.2 / 14) * s, rh = (4.5 / 14) * s;
+      const cx = half, cy = (10.5 / 14) * s;
+      return `<svg class="status-yellow" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><path d="M${half} ${triTop}L${triRight} ${triBot}H${triLeft}L${half} ${triTop}Z" fill="#F0C243"/><rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="${rw / 2}" fill="white"/><circle cx="${cx}" cy="${cy}" r="${(0.7 / 14) * s}" fill="white"/></svg>`;
     }
     if (status === "red") {
-      return `<svg class="status-red" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#CC2D37"/><path d="M4.5 4.5L9.5 9.5M9.5 4.5L4.5 9.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+      // Red circle with white X
+      const x1 = (4.5 / 14) * s, y1 = (4.5 / 14) * s;
+      const x2 = (9.5 / 14) * s, y2 = (9.5 / 14) * s;
+      return `<svg class="status-red" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="${half}" cy="${half}" r="${half}" fill="#FA5762"/><path d="M${x1} ${y1}L${x2} ${y2}M${x2} ${y1}L${x1} ${y2}" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`;
     }
-    // No status data — question-mark placeholder (same 14px width as SVG icons for alignment)
-    return `<span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;font-size:11px;opacity:0.55;margin-right:6px;flex-shrink:0;vertical-align:middle;">?</span>`;
+    // No status data — question-mark placeholder (same width as SVG icons for alignment)
+    return `<span style="display:inline-flex;width:${s}px;height:${s}px;align-items:center;justify-content:center;font-size:${Math.round(s * 0.7)}px;opacity:0.55;flex-shrink:0;vertical-align:middle;">?</span>`;
   }
 
-  /** Colored circle matching the metric's trace color — always shown to the left of the status icon */
+  /** Colored circle matching the metric's trace color — shown to the left of the metric name */
   private static legendDot(color: string): string {
-    return `<span style="display:inline-block;width:14px;height:14px;background-color:${color};border-radius:50%;margin-right:5px;flex-shrink:0;vertical-align:middle;"></span>`;
+    return `<span style="display:inline-block;width:10px;height:10px;background-color:${color};border:2px solid ${color};border-radius:50%;margin-right:6px;flex-shrink:0;vertical-align:middle;"></span>`;
   }
 
   /**
@@ -691,10 +710,10 @@ export class ChartView {
     // No outer wrapper — tooltipElement is the flex column container
     let html = "";
 
-    // FD-023: Timestamp header at the top of the tooltip
+    // Timestamp header at the top of the tooltip — Inter SemiBold 12px
     if (cursorTimeSec !== undefined) {
       const tsLabel = this.formatTooltipTimestamp(cursorTimeSec);
-      html += `<div class="tooltip-timestamp" style="opacity:0.7;font-size:12px;font-weight:bold;margin-bottom:3px;">${tsLabel}</div>`;
+      html += `<div class="tooltip-timestamp" style="font-size:12px;font-weight:600;line-height:18px;color:#F7F7F7;">${tsLabel}</div>`;
     }
 
     const expandedMetricName = this.resolveExpandedMetricName(metricsAtCursor);
@@ -712,10 +731,10 @@ export class ChartView {
       const isActive = metric.name === expandedMetricName;
       const activeClass = isActive ? " active" : "";
 
-      html += `<div class="tooltip-metric${activeClass}">`;
-      html += `<div style="display:flex;align-items:center;">`;
+      html += `<div class="tooltip-metric${activeClass}" style="padding:3px 13px;border-radius:4px;">`;
+      html += `<div style="display:flex;align-items:center;height:20px;">`;
 
-      // FD-024: Health-aware leading icon based on baseline comparison
+      // Health-aware status icon based on baseline comparison
       const status =
         metric.value !== null && cursorTimeSec !== undefined
           ? this.getMetricStatus(metric.name, metric.value, cursorTimeSec)
@@ -724,12 +743,10 @@ export class ChartView {
         metric.classifiers,
       );
 
-      // Colored legend dot — shown to the left of the status icon
-      // gap(dot→icon) = 5px (margin-right on dot); gap(icon→name) = 6px (margin-right on icon)
+      // Colored legend dot — shown to the left of the metric name
       html += ChartView.legendDot(metric.color);
-      html += ChartView.statusIcon(status ?? fallbackClassifierStatus);
 
-      // FD-025: Format value with appropriate units and decimal precision
+      // Format value with appropriate units and decimal precision
       const unit = ChartView.METRIC_UNITS[metric.name] ?? "";
       const decimals = ChartView.METRIC_DECIMALS[metric.name] ?? 2;
       const formattedValue =
@@ -737,7 +754,9 @@ export class ChartView {
           ? `${metric.value.toFixed(decimals)}${unit}`
           : "N/A";
 
-      html += `${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}`;
+      // Layout: [dot] name : value [icon] — icon is right-aligned at end of row
+      html += `<span style="flex:1;font-size:14px;line-height:12px;">${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}</span>`;
+      html += ChartView.statusIcon(status ?? fallbackClassifierStatus);
       html += `</div>`; // close flex row
 
       // Expand classifiers only for the active metric
@@ -750,30 +769,30 @@ export class ChartView {
             metric.classifiers,
           );
 
-          // Indent = legendDot(14px) + gap1(5px) + statusIcon(14px) + gap2(6px) = 39px
+          // Indent = legendDot(10px + 2px border) + gap(6px) = ~20px
           // aligns classifier left-edge with first letter of the metric name above
           html +=
-            '<div style="margin-left:39px;font-size:11px;opacity:0.85;display:flex;flex-direction:column;gap:2px;">';
+            '<div style="margin-left:20px;display:flex;flex-direction:column;gap:3px;padding-right:4px;">';
           for (const [name, data] of classifiers) {
-            const statusColor =
+            const classifierStatus: "green" | "yellow" | "red" =
               data.status === "red"
-                ? "#f44336"
+                ? "red"
                 : data.status === "yellow"
-                  ? "#ff9800"
-                  : "#4caf50";
+                  ? "yellow"
+                  : "green";
 
             const isPrimary = name === primaryClassifier;
             const primaryStyle = isPrimary ? "font-weight:600;" : "";
 
-            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="display:flex;justify-content:space-between;align-items:center;${primaryStyle}">`;
-            html += `<span style="color:${statusColor};margin-right:4px;">●</span>`;
-            html += `<span style="flex:1;">${name}</span>`;
+            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="display:flex;justify-content:space-between;align-items:center;height:14px;${primaryStyle}">`;
+            html += `<span style="color:#1D69CC;font-size:10px;font-weight:600;flex:1;">${name}</span>`;
             // Show as 0-100 score if value is a normalized 0-1 ratio, else raw
             const displayVal =
               data.value <= 1.0
                 ? `${Math.round(data.value * 100)}`
                 : `${Math.round(data.value)}`;
-            html += `<span style="opacity:0.7;">${displayVal}</span>`;
+            html += `<span style="font-size:10px;color:#F7F7F7;margin-right:2px;">${displayVal}</span>`;
+            html += ChartView.statusIcon(classifierStatus, 9);
             html += `</div>`;
           }
           html += "</div>";
