@@ -177,8 +177,7 @@ export class ChartView {
     this.tooltipElement.style.boxSizing = "border-box";
     this.tooltipElement.style.flexDirection = "column";
     this.tooltipElement.style.gap = "6px";
-    this.tooltipElement.style.boxShadow =
-      "0px 4px 12px rgba(0,0,0,0.18)";
+    this.tooltipElement.style.boxShadow = "0px 4px 12px rgba(0,0,0,0.18)";
     container.appendChild(this.tooltipElement);
 
     // Add mouse event handlers for crosshair
@@ -608,7 +607,8 @@ export class ChartView {
     const { p10, p25, p75, p90 } = hourlyDist.distribution;
 
     if (value >= p25 && value <= p75) return "green";
-    if ((value >= p10 && value < p25) || (value > p75 && value <= p90)) return "yellow";
+    if ((value >= p10 && value < p25) || (value > p75 && value <= p90))
+      return "yellow";
     return "red";
   }
 
@@ -634,24 +634,34 @@ export class ChartView {
     const base = `style="flex-shrink:0;vertical-align:middle"`;
     if (status === "green") {
       // Blue circle with white checkmark
-      const ckX1 = (3.5 / 14) * s, ckY1 = (7.2 / 14) * s;
-      const ckX2 = (5.8 / 14) * s, ckY2 = (9.8 / 14) * s;
-      const ckX3 = (10.5 / 14) * s, ckY3 = (4.5 / 14) * s;
+      const ckX1 = (3.5 / 14) * s,
+        ckY1 = (7.2 / 14) * s;
+      const ckX2 = (5.8 / 14) * s,
+        ckY2 = (9.8 / 14) * s;
+      const ckX3 = (10.5 / 14) * s,
+        ckY3 = (4.5 / 14) * s;
       return `<svg class="status-green" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="${half}" cy="${half}" r="${half}" fill="#33BBF5"/><path d="M${ckX1} ${ckY1}L${ckX2} ${ckY2}L${ckX3} ${ckY3}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
     if (status === "yellow") {
       // Yellow/amber triangle with exclamation
-      const triTop = (1 / 14) * s, triBot = (12.5 / 14) * s;
-      const triLeft = (0.5 / 14) * s, triRight = (13.5 / 14) * s;
-      const rx = (6.4 / 14) * s, ry = (4.5 / 14) * s;
-      const rw = (1.2 / 14) * s, rh = (4.5 / 14) * s;
-      const cx = half, cy = (10.5 / 14) * s;
+      const triTop = (1 / 14) * s,
+        triBot = (12.5 / 14) * s;
+      const triLeft = (0.5 / 14) * s,
+        triRight = (13.5 / 14) * s;
+      const rx = (6.4 / 14) * s,
+        ry = (4.5 / 14) * s;
+      const rw = (1.2 / 14) * s,
+        rh = (4.5 / 14) * s;
+      const cx = half,
+        cy = (10.5 / 14) * s;
       return `<svg class="status-yellow" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><path d="M${half} ${triTop}L${triRight} ${triBot}H${triLeft}L${half} ${triTop}Z" fill="#F0C243"/><rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" rx="${rw / 2}" fill="white"/><circle cx="${cx}" cy="${cy}" r="${(0.7 / 14) * s}" fill="white"/></svg>`;
     }
     if (status === "red") {
       // Red circle with white X
-      const x1 = (4.5 / 14) * s, y1 = (4.5 / 14) * s;
-      const x2 = (9.5 / 14) * s, y2 = (9.5 / 14) * s;
+      const x1 = (4.5 / 14) * s,
+        y1 = (4.5 / 14) * s;
+      const x2 = (9.5 / 14) * s,
+        y2 = (9.5 / 14) * s;
       return `<svg class="status-red" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="${half}" cy="${half}" r="${half}" fill="#FA5762"/><path d="M${x1} ${y1}L${x2} ${y2}M${x2} ${y1}L${x1} ${y2}" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`;
     }
     // No status data — question-mark placeholder (same width as SVG icons for alignment)

@@ -302,9 +302,15 @@ describe("FD-024: Tooltip Metric State Icons", () => {
 
     it("yellow_on_high_tail_p75_p90", () => {
       // Value in p75–p90 zone → yellow for throughput (was green with higher_is_better)
-      const chart = new ChartView(container, { ...config, metric: "throughput" });
+      const chart = new ChartView(container, {
+        ...config,
+        metric: "throughput",
+      });
       chart.addMetric("throughput", "#3498DB", "Throughput");
-      chart.setBaseline("throughput", { ...SYM_BASELINE, metric: "throughput" });
+      chart.setBaseline("throughput", {
+        ...SYM_BASELINE,
+        metric: "throughput",
+      });
       chart.loadHistoricalData("throughput", [
         { timestamp: FIXED_TS - 600, value: 7.0 }, // p75(6) < 7.0 < p90(8) → yellow
       ]);
@@ -328,9 +334,15 @@ describe("FD-024: Tooltip Metric State Icons", () => {
 
     it("red_above_p90_for_throughput", () => {
       // Value above p90 → red for throughput (was green with higher_is_better)
-      const chart = new ChartView(container, { ...config, metric: "throughput" });
+      const chart = new ChartView(container, {
+        ...config,
+        metric: "throughput",
+      });
       chart.addMetric("throughput", "#3498DB", "Throughput");
-      chart.setBaseline("throughput", { ...SYM_BASELINE, metric: "throughput" });
+      chart.setBaseline("throughput", {
+        ...SYM_BASELINE,
+        metric: "throughput",
+      });
       chart.loadHistoricalData("throughput", [
         { timestamp: FIXED_TS - 600, value: 9.0 }, // 9.0 > p90(8) → red
       ]);
@@ -356,9 +368,15 @@ describe("FD-024: Tooltip Metric State Icons", () => {
 
     it("polarity_removal_throughput_above_p90_is_red_not_green", () => {
       // Explicit polarity removal proof: throughput above p90 must be RED
-      const chart = new ChartView(container, { ...config, metric: "throughput" });
+      const chart = new ChartView(container, {
+        ...config,
+        metric: "throughput",
+      });
       chart.addMetric("throughput", "#3498DB", "Throughput");
-      chart.setBaseline("throughput", { ...SYM_BASELINE, metric: "throughput" });
+      chart.setBaseline("throughput", {
+        ...SYM_BASELINE,
+        metric: "throughput",
+      });
       chart.loadHistoricalData("throughput", [
         { timestamp: FIXED_TS - 600, value: 10.0 }, // well above p90(8) → red
       ]);
