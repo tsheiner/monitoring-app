@@ -1,8 +1,17 @@
 """
 Pydantic models for API request/response validation.
 """
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 from pydantic import BaseModel, Field
+
+
+class ClassifierStatus(BaseModel):
+    """Status of a single classifier contributing to a metric value."""
+    name: str = Field(..., description="Classifier name (e.g., 'dhcp', 'dns', 'association')")
+    value: float = Field(..., description="Classifier value (e.g., success rate)")
+    status: Literal["green", "yellow", "red"] = Field(..., description="Health status based on bootstrap-derived thresholds")
+    contribution: float = Field(..., description="Weight/contribution to parent metric (0.0-1.0)")
+    weight: Optional[float] = Field(None, description="Optional classifier weight in metric calculation")
 
 
 class MetricObservation(BaseModel):
@@ -11,6 +20,7 @@ class MetricObservation(BaseModel):
     metric: str = Field(..., description="Metric name")
     value: float = Field(..., description="Observed value")
     entity: Optional[str] = Field(None, description="Entity name (AP, switch, etc.) or null for aggregated")
+    classifiers: Optional[List[ClassifierStatus]] = Field(None, description="Optional classifier breakdown for this observation")
 
 
 class Distribution(BaseModel):
@@ -76,3 +86,26 @@ class BaselineResponse(BaseModel):
     lookback_days: int = Field(..., description="Days of history used")
     timezone: str = Field(..., description="Timezone used for hour-of-day grouping")
     hourly_distributions: List[HourlyDistribution] = Field(..., description="24 hourly baselines")
+
+
+class CurrentClassifiersResponse(BaseModel):
+    """Response for current classifier state of a metric."""
+    metric: str = Field(..., description="Metric name")
+    timestamp: int = Field(..., description="Timestamp of observation")
+    value: float = Field(..., description="Metric value")
+    entity: Optional[str] = Field(None, description="Entity name")
+    classifiers: List[ClassifierStatus] = Field(..., description="Current classifier breakdown")
+
+
+class ClassifierHourlyDistribution(BaseModel):
+    """Distribution for a classifier at a specific hour of day."""
+    hour: int = Field(..., description="Hour of day (0-23)")
+    distribution: Distribution = Field(..., description="Distribution for this hour")
+    sample_count: int = Field(..., description="Number of observations used")
+
+
+class ClassifierBaselineResponse(BaseModel):
+    """Response for classifier baseline query."""
+    classifier: str = Field(..., description="Classifier name")
+    lookback_days: int = Field(..., description="Days of history used")
+    hourly_distributions: List[ClassifierHourlyDistribution] = Field(..., description="24 hourly baselines")

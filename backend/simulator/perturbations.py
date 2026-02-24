@@ -1,22 +1,23 @@
 """
-Perturbation system for event-driver causality.
+Perturbation system for event-classifier causality.
 
-Perturbations are temporary, decaying effects on DRIVERS caused by events
-or usage patterns. Since metrics are derived from drivers, perturbing a
-single driver naturally cascades to all affected metrics.
+Perturbations are temporary, decaying effects on CLASSIFIERS caused by events
+or usage patterns. Since metrics are derived from classifiers, perturbing a
+single classifier naturally cascades to all affected metrics.
 
-Drivers:
-- client_load: Network demand from connected devices (0-1)
-- rf_quality: Radio frequency environment quality (0-1)
-- infra_health: Infrastructure hardware/software state (0-1)
+Classifiers represent infrastructure sub-components (e.g., dhcp, dns, association).
+Each classifier has:
+- Value (0-1, where 1 = perfect/healthy)
+- Its own OU process for natural variation
+- Status thresholds (green/yellow/red)
 
 Each perturbation defines:
-- Which drivers are affected and by how much
+- Which classifiers are affected and by how much
 - How the effect decays over time
 - Duration of the effect
 
 The PerturbationManager tracks all active perturbations and computes
-their combined effect on any driver at any timestamp.
+their combined effect on any classifier at any timestamp.
 """
 import math
 from dataclasses import dataclass, field
@@ -25,29 +26,29 @@ from typing import Dict, List, Optional
 
 @dataclass
 class Perturbation:
-    """A temporary effect on one or more drivers."""
+    """A temporary effect on one or more classifiers."""
 
     start_time: int  # Unix timestamp when perturbation begins
     duration_seconds: int  # How long the full effect lasts
-    affected_metrics: Dict[str, float]  # driver_name -> magnitude (additive)
+    affected_classifiers: Dict[str, float]  # classifier_name -> magnitude (additive)
     decay_type: str = "exponential"  # exponential, linear, sudden_recovery, gradual_improvement
     source_event_type: str = ""  # What caused this perturbation
     source_entity: str = ""  # Which entity is affected
 
-    def effect_at(self, metric: str, timestamp: int) -> float:
+    def effect_at(self, classifier: str, timestamp: int) -> float:
         """
-        Compute the effect of this perturbation on a driver at a given time.
+        Compute the effect of this perturbation on a classifier at a given time.
 
-        Returns 0.0 if the driver isn't affected or the perturbation has expired.
+        Returns 0.0 if the classifier isn't affected or the perturbation has expired.
         """
-        if metric not in self.affected_metrics:
+        if classifier not in self.affected_classifiers:
             return 0.0
 
         elapsed = timestamp - self.start_time
         if elapsed < 0 or elapsed > self.duration_seconds:
             return 0.0
 
-        magnitude = self.affected_metrics[metric]
+        magnitude = self.affected_classifiers[classifier]
         progress = elapsed / self.duration_seconds  # 0.0 to 1.0
 
         if self.decay_type == "exponential":
@@ -91,12 +92,12 @@ class PerturbationManager:
         """Add a new perturbation."""
         self._active.append(perturbation)
 
-    def total_effect(self, driver: str, timestamp: int, entity: str = None) -> float:
+    def total_effect(self, classifier: str, timestamp: int, entity: str = None) -> float:
         """
-        Compute the combined effect of all active perturbations on a driver.
+        Compute the combined effect of all active perturbations on a classifier.
 
         Args:
-            driver: Driver name (client_load, rf_quality, infra_health)
+            classifier: Classifier name (e.g., dhcp, dns, association)
             timestamp: Current timestamp
             entity: Optional entity filter. If provided, only includes
                     perturbations for this entity or global perturbations.
@@ -116,7 +117,7 @@ class PerturbationManager:
             if entity is not None and p.source_entity and p.source_entity != entity:
                 continue
 
-            total += p.effect_at(driver, timestamp)
+            total += p.effect_at(classifier, timestamp)
 
         self._active = still_active
         return total
@@ -135,77 +136,144 @@ class PerturbationManager:
 
 
 # --- Perturbation Templates ---
-# These affect DRIVERS, not metrics. A single driver perturbation naturally
-# cascades to all metrics through the derivation functions.
+# These affect CLASSIFIERS (infrastructure sub-components).
+# A single classifier perturbation naturally cascades to all metrics
+# that reference that classifier.
 #
-# Drivers: client_load (0-1), rf_quality (0-1), infra_health (0-1)
+# Classifiers are flat, shared names (e.g., 'dhcp', not 'successful_connects.dhcp')
 
 PERTURBATION_TEMPLATES = {
+    # Connection/authentication events
+    "dhcp_server_overload": {
+        "affected_classifiers": {
+            "dhcp": -0.35,            # DHCP server under load
+        },
+        "duration_seconds": 180,
+        "decay_type": "exponential",
+    },
+    "radius_timeout": {
+        "affected_classifiers": {
+            "authorization": -0.30,   # RADIUS auth failures
+        },
+        "duration_seconds": 120,
+        "decay_type": "exponential",
+    },
+    "dns_resolution_failure": {
+        "affected_classifiers": {
+            "dns": -0.40,             # DNS server issues
+        },
+        "duration_seconds": 150,
+        "decay_type": "exponential",
+    },
+    
+    # Infrastructure health events
     "device_crash": {
-        "affected_metrics": {
-            "infra_health": -0.40,   # Major infrastructure degradation
-            "client_load": -0.08,    # Clients disconnect from crashed AP
+        "affected_classifiers": {
+            "uptime": -0.50,          # Major uptime degradation
+            "cpu": -0.20,             # CPU impact from crash recovery
+            "client_density": -0.10,  # Clients redistribute
         },
         "duration_seconds": 120,
         "decay_type": "exponential",
     },
     "device_restart": {
-        "affected_metrics": {
-            "infra_health": -0.20,   # Moderate health dip
-            "client_load": -0.04,    # Brief client disruption
+        "affected_classifiers": {
+            "uptime": -0.30,          # Moderate uptime dip
+            "cpu": -0.10,             # Brief CPU impact
         },
         "duration_seconds": 60,
         "decay_type": "exponential",
     },
     "firmware_update": {
-        "affected_metrics": {
-            "infra_health": -0.08,   # Brief dip during update
+        "affected_classifiers": {
+            "uptime": -0.15,          # Brief uptime dip during update
+            "cpu": -0.08,             # CPU load from update process
         },
         "duration_seconds": 30,
         "decay_type": "exponential",
     },
+    "heat_event": {
+        "affected_classifiers": {
+            "temperature": -0.35,     # Thermal stress
+            "cpu": -0.15,             # CPU throttling
+        },
+        "duration_seconds": 240,
+        "decay_type": "sudden_recovery",
+    },
+    
+    # RF and capacity events
+    "interference_event": {
+        "affected_classifiers": {
+            "cochannel_interference": -0.30,  # Co-channel interference
+            "retry_rate": -0.20,              # More retries needed
+            "signal_strength": -0.15,         # RF degradation
+        },
+        "duration_seconds": 300,     # 5 minutes
+        "decay_type": "sudden_recovery",
+    },
+    "high_density_event": {
+        "affected_classifiers": {
+            "client_density": -0.25,          # High client load
+            "airtime_utilization": -0.20,     # Airtime congestion
+        },
+        "duration_seconds": 1800,    # 30 minutes
+        "decay_type": "linear",
+    },
+    "rogue_ap": {
+        "affected_classifiers": {
+            "cell_overlap": -0.30,            # Coverage interference
+            "retry_rate": -0.25,              # Increased retries
+        },
+        "duration_seconds": 600,     # 10 minutes
+        "decay_type": "sudden_recovery",
+    },
+    
+    # Configuration events
     "config_change": {
-        "affected_metrics": {
-            "rf_quality": -0.05,     # Brief RF disruption during reconfiguration
+        "affected_classifiers": {
+            "channel_width": -0.05,   # Brief impact during reconfiguration
         },
         "duration_seconds": 20,
         "decay_type": "exponential",
     },
+    "channel_change": {
+        "affected_classifiers": {
+            "channel_width": -0.10,   # Channel reconfiguration
+            "rssi_tuning": -0.08,     # RSSI threshold adjustment
+        },
+        "duration_seconds": 40,
+        "decay_type": "exponential",
+    },
+    
+    # AI optimization events
     "ai_action": {
-        "affected_metrics": {
-            "rf_quality": 0.08,      # AI optimizes RF environment
-            "client_load": -0.03,    # Better load distribution
+        "affected_classifiers": {
+            "channel_width": 0.08,    # AI optimizes channel config
+            "client_density": -0.03,  # Better load distribution
         },
         "duration_seconds": 60,
         "decay_type": "gradual_improvement",
-    },
-    "interference": {
-        "affected_metrics": {
-            "rf_quality": -0.25,     # Significant RF degradation
-        },
-        "duration_seconds": 300,     # 5 minutes
-        "decay_type": "sudden_recovery",
     },
 }
 
 
 LOAD_PATTERN_TEMPLATES = {
     "meeting_room_surge": {
-        "affected_metrics": {
+        "affected_classifiers": {
             "client_load": 0.15,     # Conference room fills up
         },
         "duration_seconds": 2400,    # 40 minutes
         "decay_type": "sudden_recovery",
     },
     "large_download": {
-        "affected_metrics": {
+        "affected_classifiers": {
             "client_load": 0.10,     # Bandwidth-heavy transfer
         },
         "duration_seconds": 600,     # 10 minutes
         "decay_type": "sudden_recovery",
     },
     "shift_change": {
-        "affected_metrics": {
+        "affected_classifiers": {
             "client_load": 0.12,     # Wave of reconnections
         },
         "duration_seconds": 1200,    # 20 minutes
@@ -223,7 +291,7 @@ def create_load_perturbation(pattern_name: str, timestamp: int) -> Optional[Pert
     return Perturbation(
         start_time=timestamp,
         duration_seconds=template["duration_seconds"],
-        affected_metrics=dict(template["affected_metrics"]),
+        affected_classifiers=dict(template["affected_classifiers"]),
         decay_type=template["decay_type"],
         source_event_type=f"load:{pattern_name}",
         source_entity="",
@@ -245,7 +313,7 @@ def create_perturbation_from_event(event: Dict) -> Optional[Perturbation]:
     return Perturbation(
         start_time=event.get("timestamp", 0),
         duration_seconds=template["duration_seconds"],
-        affected_metrics=dict(template["affected_metrics"]),
+        affected_classifiers=dict(template["affected_classifiers"]),
         decay_type=template["decay_type"],
         source_event_type=event_type,
         source_entity=event.get("entity", ""),

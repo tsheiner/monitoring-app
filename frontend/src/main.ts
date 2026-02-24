@@ -5,7 +5,49 @@
 import "./style.css";
 import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
-import { ChartConfig, Event } from "./chart/types";
+import { ChartConfig, Event, Observation } from "./chart/types";
+
+/**
+ * Normalize raw observations from the HTTP API.
+ * The backend returns `classifiers` as an array; the chart expects a Record.
+ * This converts array form [{name, value, status, ...}, ...] → {name: {value, status}, ...}.
+ */
+function normalizeObservations(observations: Observation[]): Observation[] {
+  let hasArrayClassifiers = false;
+  for (const obs of observations) {
+    if (obs.classifiers && Array.isArray(obs.classifiers)) {
+      hasArrayClassifiers = true;
+      break;
+    }
+  }
+
+  if (!hasArrayClassifiers) {
+    return observations;
+  }
+
+  for (const obs of observations) {
+    if (!obs.classifiers || !Array.isArray(obs.classifiers)) continue;
+
+    const rawArr = obs.classifiers as unknown as Array<{
+      name: string;
+      value: number;
+      status: string;
+    }>;
+    const normalized: Record<
+      string,
+      { value: number; status: "green" | "yellow" | "red" }
+    > = Object.fromEntries(
+      rawArr.map((c) => [
+        c.name,
+        { value: c.value, status: c.status as "green" | "yellow" | "red" },
+      ]),
+    );
+
+    (obs as Observation & { classifiers?: unknown }).classifiers = normalized;
+  }
+
+  return observations;
+}
 
 // Metric configuration
 interface MetricInfo {
@@ -24,13 +66,30 @@ interface EventGroup {
   icon: string; // SVG path data
 }
 
+type APIClientLike = Pick<
+  APIClient,
+  | "fetchMetricHistory"
+  | "fetchBaseline"
+  | "fetchEvents"
+  | "connectWebSocket"
+  | "onMetric"
+  | "onEvent"
+  | "onConnected"
+  | "onDisconnected"
+  | "onReconnect"
+>;
+
 class MonitoringApp {
   private chart: ChartView;
-  private api: APIClient;
+  private api: APIClientLike;
   private currentTimeRangeSeconds: number = 3600; // Start with 1 hour
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
   private dataFetchDebounceTimer: number | null = null;
+  private togglesInProgress: Set<string> = new Set();
+  private initialLoadPromise: Promise<void> = Promise.resolve();
+  private _loadGeneration: number = 0;
+  private baselineLoadedForMetric: Set<string> = new Set();
 
   // Metric configuration
   private metrics: MetricInfo[] = [
@@ -90,9 +149,15 @@ class MonitoringApp {
     },
   ];
 
-  constructor() {
+  constructor(
+    options: {
+      autoStart?: boolean;
+      connectWebSocket?: boolean;
+      apiClient?: APIClientLike;
+    } = {},
+  ) {
     // Initialize API client
-    this.api = new APIClient();
+    this.api = options.apiClient ?? new APIClient();
 
     // Initialize chart - measure container for responsive sizing
     const container = document.getElementById("chart");
@@ -130,14 +195,12 @@ class MonitoringApp {
     // Add initial metric (time_to_connect)
     const initialMetric = this.metrics.find((m) => m.enabled);
     if (initialMetric) {
-      this.chart.addMetric(initialMetric.name, initialMetric.color);
+      this.chart.addMetric(
+        initialMetric.name,
+        initialMetric.color,
+        initialMetric.label,
+      );
     }
-
-    // Setup UI controls
-    this.setupControls();
-
-    // Setup API callbacks
-    this.setupAPICallbacks();
 
     // Wire up data fetching when user pans/zooms to new range
     // Debounce to avoid firing dozens of requests during a pan gesture
@@ -166,14 +229,24 @@ class MonitoringApp {
       }, 300);
     });
 
-    // Load initial data
-    this.loadData();
+    if (options.autoStart !== false) {
+      // Setup UI controls
+      this.setupControls();
 
-    // Connect WebSocket
-    this.api.connectWebSocket();
+      // Setup API callbacks
+      this.setupAPICallbacks();
 
-    // Handle window resize
-    window.addEventListener("resize", () => this.handleResize());
+      // Load initial data — store promise so toggleMetric can wait for it
+      this.initialLoadPromise = this.loadData();
+
+      // Connect WebSocket
+      if (options.connectWebSocket !== false) {
+        this.api.connectWebSocket();
+      }
+
+      // Handle window resize
+      window.addEventListener("resize", () => this.handleResize());
+    }
   }
 
   private getTimeRange(): [number, number] {
@@ -188,53 +261,20 @@ class MonitoringApp {
   }
 
   private async loadDataForRange(start: number, end: number): Promise<void> {
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "main.ts:loadDataForRange:entry",
-        message: "Loading data for range",
-        data: {
-          start,
-          end,
-          duration: end - start,
-          startDate: new Date(start * 1000).toISOString(),
-          endDate: new Date(end * 1000).toISOString(),
-          isValidRange: start < end,
-        },
-        timestamp: Date.now(),
-        runId: "422-debug",
-        hypothesisId: "H1",
-      }),
-    }).catch(() => {});
-    // #endregion
+    const thisGen = ++this._loadGeneration;
 
     try {
       const duration = end - start;
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
-      // 1. Fetch ALL data first. Old chart stays visible during the fetch,
-      //    preventing the "flash" (blank frame between clear and load).
-      const fetchedData: Array<{
-        metric: (typeof this.metrics)[0];
-        data: Awaited<ReturnType<typeof this.api.fetchMetricHistory>>;
-      }> = [];
-
-      for (const metric of enabledMetrics) {
-        console.log(
-          `Fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
-        );
-        const metricData = await this.api.fetchMetricHistory(
-          metric.name,
-          start,
-          end,
-        );
-        console.log(
-          `Received ${metricData.observations.length} observations for ${metric.name}`,
-        );
-        fetchedData.push({ metric, data: metricData });
-      }
+      // 1. Fetch ALL data first in parallel. Old chart stays visible during
+      //    the fetch, preventing the "flash" (blank frame between clear and load).
+      const fetchedData = await Promise.all(
+        enabledMetrics.map(async (metric) => {
+          const data = await this.api.fetchMetricHistory(metric.name, start, end);
+          return { metric, data };
+        }),
+      );
 
       // 2. Snap the right edge to the actual latest data point so the line
       //    fills the full X axis (avoids gap when client "now" is ahead of data).
@@ -248,31 +288,53 @@ class MonitoringApp {
       }
       const adjustedEnd = latestDataTs > 0 ? latestDataTs : end;
 
+      if (this._loadGeneration !== thisGen) {
+        return;
+      }
+
       // Set chart range (clears old data) — synchronous, no repaint yet
       this.chart.setTimeRange(duration, adjustedEnd);
 
       // 3. Load fetched data — synchronous, same JS tick as step 2.
       //    Browser won't repaint between clear and load, so no flash.
       for (const { metric, data } of fetchedData) {
-        this.chart.loadHistoricalData(metric.name, data.observations);
+        this.chart.loadHistoricalData(
+          metric.name,
+          normalizeObservations(data.observations),
+        );
       }
 
-      // 4. Fetch and set baseline for single-metric view
-      if (enabledMetrics.length === 1) {
-        const metric = enabledMetrics[0];
-        try {
-          const baseline = await this.api.fetchBaseline(metric.name, null, 30);
-          this.chart.setBaseline(metric.name, baseline);
-        } catch (error) {
-          console.warn(`Failed to fetch baseline for ${metric.name}:`, error);
+      // 3b. Recover metrics toggled on during the fetch window.
+      // setTimeRange above cleared all dataTargets. Any metric enabled
+      // after enabledMetrics was captured will have an empty buffer.
+      const fetchedNames = new Set(enabledMetrics.map((m) => m.name));
+      const lateMetrics = this.metrics.filter(
+        (m) => m.enabled && !fetchedNames.has(m.name),
+      );
+      for (const metric of lateMetrics) {
+        if (!this.chart.hasMetric(metric.name)) {
+          this.chart.addMetric(metric.name, metric.color, metric.label);
         }
+        const lateData = await this.api.fetchMetricHistory(
+          metric.name,
+          start,
+          adjustedEnd,
+        );
+        this.chart.loadHistoricalData(
+          metric.name,
+          normalizeObservations(lateData.observations),
+        );
       }
+
+      // 4. Fetch baselines and events in parallel (both independent of each other).
+      const [, eventsData] = await Promise.all([
+        Promise.all(enabledMetrics.map((m) => this.ensureBaseline(m.name))),
+        this.api.fetchEvents(start, end),
+      ]);
 
       // Track the actual range used for this data load
       this.loadedRange = [start, end];
 
-      // Load events for the requested range
-      const eventsData = await this.api.fetchEvents(start, end);
       this.allEvents = eventsData.events;
       this.updateEventDisplay();
 
@@ -283,25 +345,6 @@ class MonitoringApp {
       );
       this.updateStats(totalObs, this.allEvents.length);
     } catch (error) {
-      // #region agent log
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "main.ts:loadDataForRange:error",
-            message: "Failed to load data",
-            data: { start, end, duration: end - start, error: errorMsg },
-            timestamp: Date.now(),
-            runId: "422-debug",
-            hypothesisId: "H1",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-
       console.error("Error loading data:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -320,37 +363,25 @@ class MonitoringApp {
     try {
       const enabledMetrics = this.metrics.filter((m) => m.enabled);
 
-      // Fetch data for each enabled metric
-      for (const metric of enabledMetrics) {
-        console.log(
-          `Incrementally fetching ${metric.name} from ${new Date(start * 1000).toISOString()} to ${new Date(end * 1000).toISOString()}`,
-        );
-        const metricData = await this.api.fetchMetricHistory(
+      // Fetch all metrics and events in parallel
+      const [metricResults, eventsData] = await Promise.all([
+        Promise.all(
+          enabledMetrics.map(async (metric) => {
+            const data = await this.api.fetchMetricHistory(metric.name, start, end);
+            return { metric, data };
+          }),
+        ),
+        this.api.fetchEvents(start, end),
+      ]);
+
+      // Load each metric's data incrementally (appends to buffer, doesn't clear)
+      for (const { metric, data } of metricResults) {
+        this.chart.loadHistoricalData(
           metric.name,
-          start,
-          end,
+          normalizeObservations(data.observations),
         );
-        console.log(
-          `Received ${metricData.observations.length} observations for ${metric.name}`,
-        );
-
-        // Load data incrementally (appends to buffer, doesn't clear)
-        this.chart.loadHistoricalData(metric.name, metricData.observations);
       }
 
-      // Fetch baseline for single-metric  view
-      if (enabledMetrics.length === 1) {
-        const metric = enabledMetrics[0];
-        try {
-          const baseline = await this.api.fetchBaseline(metric.name, null, 30);
-          this.chart.setBaseline(metric.name, baseline);
-        } catch (error) {
-          console.warn(`Failed to fetch baseline for ${metric.name}:`, error);
-        }
-      }
-
-      // Load events for the extended range
-      const eventsData = await this.api.fetchEvents(start, end);
       // Merge with existing events, removing duplicates
       const existingIds = new Set(
         this.allEvents.map((e) => `${e.timestamp}-${e.event_type}`),
@@ -436,6 +467,9 @@ class MonitoringApp {
   }
 
   private setupControls(): void {
+    // Inform the chart of the canonical legend order (top→bottom = array order)
+    this.chart.setLegendOrder(this.metrics.map((m) => m.name));
+
     // Build metric toggles
     const metricsList = document.getElementById("metrics-list");
     if (metricsList) {
@@ -538,71 +572,108 @@ class MonitoringApp {
   }
 
   private async toggleMetric(metricName: string): Promise<void> {
+    await this.initialLoadPromise;
+
     const metric = this.metrics.find((m) => m.name === metricName);
     if (!metric) return;
 
+    // Concurrency guard: skip duplicate clicks while this metric is in-flight.
+    if (this.togglesInProgress.has(metricName)) {
+      return;
+    }
+    this.togglesInProgress.add(metricName);
+    const generationAtToggleStart = this._loadGeneration;
+
     metric.enabled = !metric.enabled;
 
-    // Update UI
+    // Update UI immediately so the indicator responds to the click
+    this.updateMetricIndicator(metricName, metric.enabled, metric.color);
+
+    try {
+      if (metric.enabled) {
+        this.chart.addMetric(metricName, metric.color, metric.label);
+        const [rangeStart, rangeEnd] = this.chart.getTimeRange();
+
+        // Fetch history and baseline in parallel instead of sequentially
+        const [metricData, baseline] = await Promise.all([
+          this.api.fetchMetricHistory(metricName, rangeStart, rangeEnd),
+          this.baselineLoadedForMetric.has(metricName)
+            ? Promise.resolve(null)
+            : this.api.fetchBaseline(metricName, null, 30).catch(() => null),
+        ]);
+
+        if (this._loadGeneration !== generationAtToggleStart) {
+          return;
+        }
+
+        // Bail out if metric was disabled during the async gap
+        if (!metric.enabled || !this.chart.hasMetric(metricName)) {
+          return;
+        }
+
+        this.chart.loadHistoricalData(
+          metricName,
+          normalizeObservations(metricData.observations),
+        );
+        if (baseline) {
+          this.chart.setBaseline(metricName, baseline);
+          this.baselineLoadedForMetric.add(metricName);
+        }
+      } else {
+        this.chart.removeMetric(metricName);
+
+        // If exactly one metric remains, refresh its baseline (non-blocking).
+        const remaining = this.metrics.filter((m) => m.enabled);
+        if (remaining.length === 1) {
+          this.ensureBaseline(remaining[0].name);
+        }
+      }
+    } catch (error) {
+      // Roll back failed enable so UI and chart state remain consistent.
+      if (metric.enabled) {
+        metric.enabled = false;
+        this.chart.removeMetric(metricName);
+        this.updateMetricIndicator(metricName, false, metric.color);
+      }
+      console.error(`Failed to toggle metric ${metricName}:`, error);
+    } finally {
+      this.togglesInProgress.delete(metricName);
+    }
+  }
+
+  private updateMetricIndicator(
+    metricName: string,
+    enabled: boolean,
+    color: string,
+  ): void {
     const toggle = document.querySelector(
       `.metric-toggle[data-metric="${metricName}"]`,
     );
-    if (toggle) {
-      const indicator = toggle.querySelector(".metric-indicator");
-      if (indicator) {
-        if (metric.enabled) {
-          indicator.classList.add("active");
-          (indicator as HTMLElement).style.backgroundColor = metric.color;
-        } else {
-          indicator.classList.remove("active");
-          (indicator as HTMLElement).style.backgroundColor = "";
-        }
-      }
+    if (!toggle) return;
+
+    const indicator = toggle.querySelector(".metric-indicator");
+    if (!indicator) return;
+
+    if (enabled) {
+      indicator.classList.add("active");
+      (indicator as HTMLElement).style.backgroundColor = color;
+    } else {
+      indicator.classList.remove("active");
+      (indicator as HTMLElement).style.backgroundColor = "";
+    }
+  }
+
+  private async ensureBaseline(metricName: string): Promise<void> {
+    if (this.baselineLoadedForMetric.has(metricName)) {
+      return;
     }
 
-    // Update chart
-    if (metric.enabled) {
-      this.chart.addMetric(metricName, metric.color);
-      // Load data using the chart's current range (anchored to data),
-      // not getTimeRange() which always uses "now" and may overshoot.
-      const [rangeStart, rangeEnd] = this.chart.getTimeRange();
-      const metricData = await this.api.fetchMetricHistory(
-        metricName,
-        rangeStart,
-        rangeEnd,
-      );
-      this.chart.loadHistoricalData(metricName, metricData.observations);
-
-      // Fetch baseline if this is now the only metric
-      const enabledCount = this.metrics.filter((m) => m.enabled).length;
-      if (enabledCount === 1) {
-        try {
-          const baseline = await this.api.fetchBaseline(metricName, null, 30);
-          this.chart.setBaseline(metricName, baseline);
-        } catch (error) {
-          console.warn(`Failed to fetch baseline for ${metricName}:`, error);
-        }
-      }
-    } else {
-      this.chart.removeMetric(metricName);
-
-      // If exactly one metric remains, fetch its baseline
-      const remaining = this.metrics.filter((m) => m.enabled);
-      if (remaining.length === 1) {
-        try {
-          const baseline = await this.api.fetchBaseline(
-            remaining[0].name,
-            null,
-            30,
-          );
-          this.chart.setBaseline(remaining[0].name, baseline);
-        } catch (error) {
-          console.warn(
-            `Failed to fetch baseline for ${remaining[0].name}:`,
-            error,
-          );
-        }
-      }
+    try {
+      const baseline = await this.api.fetchBaseline(metricName, null, 30);
+      this.chart.setBaseline(metricName, baseline);
+      this.baselineLoadedForMetric.add(metricName);
+    } catch (error) {
+      console.warn(`Failed to fetch baseline for ${metricName}:`, error);
     }
   }
 
@@ -635,9 +706,40 @@ class MonitoringApp {
         (m) => m.name === message.metric && m.enabled,
       );
       if (metric) {
+        // FD-021/FD-026: WS sends classifiers as an array [{name, value, status, ...}, ...].
+        // Transform to Record<string, ClassifierValue> expected by the chart.
+        let classifiers:
+          | Record<
+              string,
+              { value: number; status: "green" | "yellow" | "red" }
+            >
+          | undefined;
+        const rawCls = (message as any).classifiers;
+        if (rawCls) {
+          if (Array.isArray(rawCls)) {
+            classifiers = Object.fromEntries(
+              (
+                rawCls as Array<{ name: string; value: number; status: string }>
+              ).map((c) => [
+                c.name,
+                {
+                  value: c.value,
+                  status: c.status as "green" | "yellow" | "red",
+                },
+              ]),
+            );
+          } else {
+            classifiers = rawCls as Record<
+              string,
+              { value: number; status: "green" | "yellow" | "red" }
+            >;
+          }
+        }
+
         this.chart.appendLiveData(message.metric, {
           timestamp: message.timestamp,
           value: message.value,
+          classifiers,
         });
       }
     });
@@ -680,6 +782,10 @@ class MonitoringApp {
             metric.name,
             gapStart,
             now,
+          );
+          this.chart.loadHistoricalData(
+            metric.name,
+            normalizeObservations(gapData.observations),
           );
           console.log(
             `Recovered ${gapData.observations.length} observations for ${metric.name}`,
@@ -732,6 +838,10 @@ class MonitoringApp {
 }
 
 // Initialize app when DOM is ready
-document.addEventListener("DOMContentLoaded", () => {
-  new MonitoringApp();
-});
+if (!import.meta.env.TEST) {
+  document.addEventListener("DOMContentLoaded", () => {
+    new MonitoringApp();
+  });
+}
+
+export { MonitoringApp, normalizeObservations };

@@ -29,7 +29,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
@@ -37,119 +37,198 @@ import numpy as np
 from simulator.perturbations import PerturbationManager, create_load_perturbation
 
 
-# --- Default driver parameters ---
-# These are used when the config file doesn't specify driver-specific values.
-# theta: mean reversion rate (1/s) — higher = faster return to mean
-# sigma: noise intensity — controls magnitude of random fluctuations
-# normal_level: the "normal" level used as reference for metric derivation
-DRIVER_DEFAULTS = {
-    "client_load": {
-        "theta": 0.002,       # ~6 min half-life: smooth but responsive
-        "sigma": 0.004,       # Stationary std ≈ 0.063
-        "normal_level": 0.45,
+# --- Classifier definitions (Phase 1: Classifier Simulation Engine) ---
+# Classifiers are the simulation primitive. Each represents a specific
+# infrastructure sub-component with its own OU process.
+# Values are normalized 0.0-1.0 where 1.0 = perfect/healthy.
+# Thresholds (green/yellow/red) are derived from bootstrap percentiles.
+CLASSIFIER_DEFINITIONS = {
+    # Connection sub-components (successful_connects, time_to_connect)
+    "association": {
+        "theta": 0.0003,
+        "sigma": 0.0008,
+        "initial_level": 0.98,
+        "description": "802.11 association success rate"
     },
-    "rf_quality": {
-        "theta": 0.0005,      # ~23 min half-life: very slow drift
-        "sigma": 0.001,       # Stationary std ≈ 0.032
-        "normal_level": 0.90,
+    "authorization": {
+        "theta": 0.0004,
+        "sigma": 0.0010,
+        "initial_level": 0.97,
+        "description": "RADIUS/802.1X auth success rate"
     },
-    "infra_health": {
-        "theta": 0.0003,      # ~38 min half-life: persistent state
-        "sigma": 0.0005,      # Stationary std ≈ 0.020
-        "normal_level": 0.95,
+    "dhcp": {
+        "theta": 0.0003,
+        "sigma": 0.0006,
+        "initial_level": 0.99,
+        "description": "DHCP lease acquisition success rate"
+    },
+    "dns": {
+        "theta": 0.0002,
+        "sigma": 0.0004,
+        "initial_level": 0.995,
+        "description": "DNS resolution success rate"
+    },
+    
+    # Capacity sub-components
+    "client_density": {
+        "theta": 0.0005,
+        "sigma": 0.0015,
+        "initial_level": 0.70,
+        "description": "Client density (inverse - lower density = healthier)"
+    },
+    "cochannel_interference": {
+        "theta": 0.0003,
+        "sigma": 0.0010,
+        "initial_level": 0.85,
+        "description": "Co-channel interference level (inverse)"
+    },
+    "nonwifi_interference": {
+        "theta": 0.0002,
+        "sigma": 0.0005,
+        "initial_level": 0.95,
+        "description": "Non-WiFi interference level (inverse)"
+    },
+    
+    # Throughput sub-components
+    "airtime_utilization": {
+        "theta": 0.0006,
+        "sigma": 0.0020,
+        "initial_level": 0.65,
+        "description": "Airtime utilization efficiency"
+    },
+    "channel_width": {
+        "theta": 0.0001,
+        "sigma": 0.0003,
+        "initial_level": 0.90,
+        "description": "Channel width availability (80/160MHz)"
+    },
+    "retry_rate": {
+        "theta": 0.0005,
+        "sigma": 0.0012,
+        "initial_level": 0.88,
+        "description": "Frame retry rate (inverse - lower retries = healthier)"
+    },
+    
+    # Coverage sub-components
+    "signal_strength": {
+        "theta": 0.0003,
+        "sigma": 0.0008,
+        "initial_level": 0.82,
+        "description": "RF signal strength quality"
+    },
+    "ap_density": {
+        "theta": 0.0001,
+        "sigma": 0.0002,
+        "initial_level": 0.88,
+        "description": "AP deployment density"
+    },
+    "cell_overlap": {
+        "theta": 0.0002,
+        "sigma": 0.0005,
+        "initial_level": 0.85,
+        "description": "Cell overlap and coverage redundancy"
+    },
+    
+    # Roaming sub-components
+    "handoff_latency": {
+        "theta": 0.0004,
+        "sigma": 0.0015,
+        "initial_level": 0.80,
+        "description": "802.11 handoff latency (inverse)"
+    },
+    "rssi_tuning": {
+        "theta": 0.0002,
+        "sigma": 0.0005,
+        "initial_level": 0.85,
+        "description": "RSSI threshold tuning quality"
+    },
+    "80211rk_support": {
+        "theta": 0.0001,
+        "sigma": 0.0002,
+        "initial_level": 0.92,
+        "description": "802.11r/k fast roaming support"
+    },
+    
+    # AP Health sub-components
+    "cpu": {
+        "theta": 0.0003,
+        "sigma": 0.0010,
+        "initial_level": 0.85,
+        "description": "CPU utilization (inverse)"
+    },
+    "memory": {
+        "theta": 0.0002,
+        "sigma": 0.0008,
+        "initial_level": 0.88,
+        "description": "Memory pressure (inverse)"
+    },
+    "uptime": {
+        "theta": 0.0001,
+        "sigma": 0.0005,
+        "initial_level": 0.98,
+        "description": "Uptime stability (crashes reduce this)"
+    },
+    "temperature": {
+        "theta": 0.0002,
+        "sigma": 0.0006,
+        "initial_level": 0.90,
+        "description": "Device temperature (inverse)"
     },
 }
 
 
-# --- Shared driver sensitivity (WEAK — ~20-30% of variation) ---
-# These produce small cross-metric correlations from demand/environment events.
-# Kept deliberately small so shared drivers modulate, not dominate.
-# Shared effect = sum(sensitivity * driver_deviation) * metric_range
-METRIC_SENSITIVITIES = {
-    "capacity": {
-        "client_load": 0.12,       # Utilization rises a bit with demand
-        "rf_quality": -0.01,
-        "infra_health": 0.02,
-    },
-    "throughput": {
-        "client_load": -0.04,      # Contention under load
-        "rf_quality": 0.06,
-        "infra_health": 0.05,
+# --- Metric-to-classifier mappings ---
+# Each metric is computed from 2-4 classifiers with defined weights.
+# Weights determine each classifier's contribution to the metric value.
+METRIC_CLASSIFIERS = {
+    "successful_connects": {
+        "association": 0.20,
+        "authorization": 0.25,
+        "dhcp": 0.40,
+        "dns": 0.15,
     },
     "time_to_connect": {
-        "client_load": 0.04,       # Auth queue under load
-        "rf_quality": -0.02,
-        "infra_health": -0.08,     # Infra health matters most here
+        "association": 0.20,
+        "authorization": 0.25,
+        "dhcp": 0.40,
+        "dns": 0.15,
+    },
+    "capacity": {
+        "client_density": 0.50,
+        "cochannel_interference": 0.30,
+        "nonwifi_interference": 0.20,
+    },
+    "throughput": {
+        "airtime_utilization": 0.45,
+        "channel_width": 0.25,
+        "retry_rate": 0.30,
     },
     "coverage": {
-        "client_load": 0.0,        # Zero — signal is physics
-        "rf_quality": 0.08,        # RF environment affects RSSI
-        "infra_health": 0.0,
+        "signal_strength": 0.50,
+        "ap_density": 0.30,
+        "cell_overlap": 0.20,
     },
     "roaming": {
-        "client_load": 0.03,
-        "rf_quality": -0.04,
-        "infra_health": -0.03,
-    },
-    "successful_connects": {
-        "client_load": -0.01,
-        "rf_quality": 0.01,
-        "infra_health": 0.06,      # Infra outages kill success rate
+        "handoff_latency": 0.50,
+        "rssi_tuning": 0.30,
+        "80211rk_support": 0.20,
     },
     "ap_health": {
-        "client_load": -0.02,
-        "rf_quality": 0.01,
-        "infra_health": 0.30,      # Direct mapping, but moderate
+        "cpu": 0.30,
+        "memory": 0.25,
+        "uptime": 0.30,
+        "temperature": 0.15,
     },
 }
 
 
-# --- Per-metric OU noise (PRIMARY stochastic component — ~70% of variation) ---
-# Each metric gets its own OU process producing Gaussian, mean-reverting noise.
-# This is what gives each metric its unique "personality" and prevents lockstep.
-#
-# theta: mean reversion rate (1/s) — higher = faster reversion = less correlated
-# sigma: noise intensity — controls spread of the Gaussian distribution
-# weight: fraction of metric_range this noise contributes (sets amplitude)
-#
-# Stationary std of OU = sigma / sqrt(2*theta)
-# Typical swing = ±2*std * weight * metric_range (in metric units)
-METRIC_OU_NOISE = {
-    "coverage": {
-        "theta": 0.0003,    # ~38 min half-life: slow RF environment drift
-        "sigma": 0.0012,    # Stationary std ≈ 0.049
-        "weight": 0.035,    # ±2.7 dBm (2σ swing)
-    },
-    "throughput": {
-        "theta": 0.0006,    # ~19 min half-life: channel quality fluctuation
-        "sigma": 0.0020,    # Stationary std ≈ 0.058
-        "weight": 0.035,    # ±28 Mbps (2σ swing)
-    },
-    "time_to_connect": {
-        "theta": 0.0008,    # ~14 min half-life: auth/DHCP variability
-        "sigma": 0.0025,    # Stationary std ≈ 0.063
-        "weight": 0.035,    # ±4.1 ms (2σ swing)
-    },
-    "capacity": {
-        "theta": 0.0005,    # ~23 min half-life
-        "sigma": 0.0018,    # Stationary std ≈ 0.057
-        "weight": 0.030,    # ±2.3% (2σ swing)
-    },
-    "roaming": {
-        "theta": 0.0004,    # ~29 min half-life: mobility patterns
-        "sigma": 0.0015,    # Stationary std ≈ 0.053
-        "weight": 0.030,    # ±2.0 ms (2σ swing)
-    },
-    "successful_connects": {
-        "theta": 0.0002,    # ~58 min half-life: very persistent
-        "sigma": 0.0006,    # Stationary std ≈ 0.030
-        "weight": 0.020,    # ±0.23% (2σ swing) — still tight
-    },
-    "ap_health": {
-        "theta": 0.0002,    # ~58 min half-life: firmware/thermal drift
-        "sigma": 0.0008,    # Stationary std ≈ 0.040
-        "weight": 0.025,    # ±1.4% (2σ swing)
-    },
+# --- Environmental condition: client_load ---
+# client_load is kept as the sole environmental condition (not a classifier).
+# It models diurnal human activity and modulates classifier behavior.
+CLIENT_LOAD_CONFIG = {
+    "theta": 0.002,       # ~6 min half-life: smooth but responsive
+    "sigma": 0.004,       # Stationary std ≈ 0.063
+    "normal_level": 0.45,
 }
 
 
@@ -181,9 +260,7 @@ def get_config_path() -> Path:
 
 
 class RealisticMetricsGenerator:
-    """Generate realistic network metrics from underlying physical drivers."""
-
-    DRIVERS = ["client_load", "rf_quality", "infra_health"]
+    """Generate realistic network metrics from classifier-based simulation."""
 
     ENTITIES = [
         "AP-Floor1-01", "AP-Floor1-02",
@@ -193,7 +270,7 @@ class RealisticMetricsGenerator:
 
     def __init__(self, start_time: int = None, config_path: str = None):
         """
-        Initialize the driver-based metrics generator.
+        Initialize the classifier-based metrics generator.
 
         Args:
             start_time: Unix timestamp to start from (defaults to now)
@@ -211,33 +288,27 @@ class RealisticMetricsGenerator:
         # AP topology from config
         self._topology = self.config.get("ap_topology", {})
 
-        # Driver parameters (config overrides defaults)
-        self._driver_config = {}
-        cfg_drivers = self.config.get("drivers", {})
-        for driver in self.DRIVERS:
-            defaults = DRIVER_DEFAULTS[driver]
-            driver_cfg = cfg_drivers.get(driver, {})
-            self._driver_config[driver] = {
-                "theta": driver_cfg.get("theta", defaults["theta"]),
-                "sigma": driver_cfg.get("sigma", defaults["sigma"]),
-                "normal_level": driver_cfg.get("normal_level", defaults["normal_level"]),
-            }
-
-        # Per-AP driver state (shared drivers)
-        self._driver_state: Dict[str, Dict[str, float]] = {}
+        # Classifier state (shared pool)
+        # Key: classifier name, Value: float (current value 0.0-1.0)
+        self._classifier_state: Dict[str, float] = {}
+        
+        # Classifier thresholds (loaded from baselines.json)
+        # Key: classifier name, Value: Dict[hour]->Dict[green_min, yellow_min]
+        self._classifier_thresholds: Dict[str, Dict[int, Dict[str, float]]] = {}
+        
+        # Client load state (environmental condition)
+        # Key: entity_key, Value: float
+        self._client_load_state: Dict[str, float] = {}
+        
+        # Last update times
         self._last_update_time: Dict[str, int] = {}
 
-        # Per-AP independent metric noise state
-        # Key: entity_key, Value: {metric_name: float} (current noise level)
-        self._metric_noise_state: Dict[str, Dict[str, float]] = {}
-        self._metric_noise_last_update: Dict[str, int] = {}
+        # Initialize global state
+        self._init_entity_state("_global", self.start_time)
 
         # Initialize per-entity state
         for entity in self.ENTITIES:
             self._init_entity_state(entity, self.start_time)
-
-        # Global state for queries without entity
-        self._init_entity_state("_global", self.start_time)
 
         # Perturbation manager
         self.perturbation_manager = PerturbationManager()
@@ -247,20 +318,24 @@ class RealisticMetricsGenerator:
 
         # Track last load pattern injection time
         self._last_load_check = self.start_time
+        
+        # Load classifier thresholds from baselines if available
+        self._load_classifier_thresholds()
 
     def generate_observation(
-        self, metric: str, timestamp: int = None, entity: str = None
+        self, metric: str, timestamp: int = None, entity: str = None, include_classifiers: bool = False
     ) -> Dict:
         """
-        Generate a single metric observation by deriving from driver state.
+        Generate a single metric observation by deriving from classifier state.
 
         Args:
             metric: Metric name (e.g., "throughput", "ap_health")
             timestamp: Unix timestamp (defaults to current generator time)
             entity: Optional AP entity for per-AP variation
+            include_classifiers: If True, include classifier breakdown in result (FD-013)
 
         Returns:
-            Observation dict with timestamp, metric, value
+            Observation dict with timestamp, metric, value, and optionally classifiers
         """
         if metric not in self.get_all_metrics():
             raise ValueError(f"Unknown metric: {metric}")
@@ -269,14 +344,14 @@ class RealisticMetricsGenerator:
         entity_key = entity or "_global"
 
         # Ensure entity exists in state
-        if entity_key not in self._driver_state:
+        if entity_key not in self._client_load_state:
             self._init_entity_state(entity_key, ts)
 
-        # Update drivers for this entity at this timestamp
-        drivers = self._update_drivers(entity_key, ts)
+        # Update classifiers and client_load at this timestamp
+        self._update_state(entity_key, ts)
 
-        # Derive metric value from daily profile + OU noise + shared drivers
-        value = self._derive_metric(metric, drivers, entity_key, timestamp=ts)
+        # Derive metric value from daily profile + classifiers
+        value = self._derive_metric(metric, entity_key, timestamp=ts)
 
         # Inject load patterns during business hours
         self._maybe_inject_load_patterns(ts)
@@ -288,99 +363,215 @@ class RealisticMetricsGenerator:
         }
         if entity is not None:
             result["entity"] = entity
+        
+        # Include classifier breakdown if requested (FD-013)
+        if include_classifiers:
+            result["classifiers"] = self._get_classifier_breakdown(metric, ts)
 
         return result
 
+    def _load_classifier_thresholds(self) -> None:
+        """
+        Load classifier thresholds from baselines.json.
+        
+        Thresholds are derived from bootstrap percentiles and stored per hour-of-day.
+        If baselines don't exist, thresholds remain empty and status will default to
+        a fallback computation.
+        """
+        baselines_path = Path("data/baselines.json")
+        if not baselines_path.exists():
+            return
+        
+        try:
+            with open(baselines_path) as f:
+                baselines = json.load(f)
+            
+            classifiers = baselines.get("classifiers", {})
+            for classifier_name, hourly_data in classifiers.items():
+                self._classifier_thresholds[classifier_name] = {}
+                
+                for hour_entry in hourly_data:
+                    hour = hour_entry["hour"]
+                    thresholds = hour_entry.get("thresholds", {})
+                    
+                    if thresholds:
+                        self._classifier_thresholds[classifier_name][hour] = {
+                            "green_min": thresholds["green_min"],
+                            "yellow_min": thresholds["yellow_min"],
+                        }
+        except (json.JSONDecodeError, KeyError, IOError):
+            # If baselines are malformed or missing, continue without thresholds
+            pass
+    
+    def _get_classifier_breakdown(self, metric: str, timestamp: int) -> list[dict]:
+        """
+        Get classifier breakdown for a metric (FD-013).
+        
+        Returns list of classifier status objects with name, value, status, contribution, weight.
+        
+        Args:
+            metric: Metric name
+            timestamp: Current timestamp
+            
+        Returns:
+            List of classifier dicts with name, value, status, contribution, weight
+        """
+        metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
+        classifiers = []
+        
+        for classifier_name, weight in metric_classifiers.items():
+            classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
+            current_value = self._classifier_state[classifier_name]
+            
+            # Compute status based on thresholds
+            status = self._compute_classifier_status(classifier_name, current_value, timestamp)
+            
+            # Compute contribution (deviation from normal, weighted)
+            normal_level = classifier_cfg["initial_level"]
+            deviation = current_value - normal_level
+            contribution = weight * deviation
+            
+            classifiers.append({
+                "name": classifier_name,
+                "value": round(current_value, 4),
+                "status": status,
+                "contribution": round(contribution, 4),
+                "weight": round(weight, 4)
+            })
+        
+        return classifiers
+
+    def _compute_classifier_status(
+        self, classifier_name: str, value: float, timestamp: int
+    ) -> str:
+        """
+        Compute classifier status (green/yellow/red) based on bootstrap-derived thresholds.
+        
+        Thresholds are hour-specific and derived from observed percentiles:
+        - green: value >= p10 (normal range)
+        - yellow: p2 <= value < p10 (degraded but not critical)
+        - red: value < p2 (critical)
+        
+        Args:
+            classifier_name: Name of classifier
+            value: Current classifier value (0.0-1.0)
+            timestamp: Current timestamp for hour-of-day lookup
+            
+        Returns:
+            "green", "yellow", or "red"
+        """
+        # Get hour of day
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        hour = dt.hour
+        
+        # Look up thresholds for this classifier and hour
+        thresholds = self._classifier_thresholds.get(classifier_name, {}).get(hour)
+        
+        if thresholds is None:
+            # Fallback: if no thresholds available, use simple heuristics
+            # This should only happen before first bootstrap or if baselines are missing
+            if value >= 0.90:
+                return "green"
+            elif value >= 0.80:
+                return "yellow"
+            else:
+                return "red"
+        
+        # Apply bootstrap-derived thresholds
+        green_min = thresholds["green_min"]
+        yellow_min = thresholds["yellow_min"]
+        
+        if value >= green_min:
+            return "green"
+        elif value >= yellow_min:
+            return "yellow"
+        else:
+            return "red"
+
     def _init_entity_state(self, entity_key: str, timestamp: int) -> None:
-        """Initialize shared driver state and independent metric noise for an entity."""
+        """Initialize classifier state (shared pool) and client_load for an entity."""
         entity = entity_key if entity_key != "_global" else None
 
-        # Shared driver state
-        self._driver_state[entity_key] = {}
-        for driver in self.DRIVERS:
-            self._driver_state[entity_key][driver] = self._driver_mean(
-                driver, entity, timestamp
-            )
+        # Initialize shared classifier pool (only once for the first entity)
+        if not self._classifier_state:
+            for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items():
+                self._classifier_state[classifier_name] = cfg["initial_level"]
+
+        # Initialize client_load for this entity
+        self._client_load_state[entity_key] = self._client_load_mean(entity, timestamp)
         self._last_update_time[entity_key] = timestamp
 
-        # Independent metric noise state (starts at 0 = no deviation)
-        self._metric_noise_state[entity_key] = {}
-        for metric in self.get_all_metrics():
-            self._metric_noise_state[entity_key][metric] = 0.0
-        self._metric_noise_last_update[entity_key] = timestamp
-
-    def _update_drivers(self, entity_key: str, timestamp: int) -> Dict[str, float]:
+    def _update_state(self, entity_key: str, timestamp: int) -> None:
         """
-        Update shared driver state and independent metric noise using OU processes.
+        Update shared classifier state and client_load using OU processes.
 
         The OU process produces smooth, mean-reverting curves:
         x(t+dt) = μ + (x(t) - μ) * exp(-θ*dt) + noise
 
-        Returns shared driver values with perturbation effects applied.
-        Independent metric noise is updated as a side-effect and read by _derive_metric.
+        Classifiers are shared across all entities (one pool).
+        client_load is per-entity (environmental condition).
+        
+        After OU update, perturbations are applied to classifiers.
         """
         last_t = self._last_update_time.get(entity_key, timestamp)
         dt = max(0, timestamp - last_t)
         entity = entity_key if entity_key != "_global" else None
 
         if dt > 0:
-            # OU process update for each shared driver
-            for driver in self.DRIVERS:
-                cfg = self._driver_config[driver]
+            # OU process update for each classifier (shared pool)
+            for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items():
                 theta = cfg["theta"]
                 sigma = cfg["sigma"]
-
-                # Time-varying mean
-                mu = self._driver_mean(driver, entity, timestamp)
-
+                
+                # Classifiers revert to their initial_level (normal state)
+                mu = cfg["initial_level"]
+                
                 # Current state
-                x = self._driver_state[entity_key][driver]
-
-                # Exact OU update (works for any dt, including large bootstrap gaps)
+                x = self._classifier_state[classifier_name]
+                
+                # Exact OU update
                 decay = math.exp(-theta * dt)
-
+                
                 if theta > 0:
                     noise_var = (sigma ** 2) / (2 * theta) * (1 - math.exp(-2 * theta * dt))
                     noise_std = math.sqrt(max(0, noise_var))
                 else:
                     noise_std = 0
-
+                
                 x_new = mu + (x - mu) * decay + noise_std * self._rng.normal()
-                self._driver_state[entity_key][driver] = float(np.clip(x_new, 0.0, 1.0))
-
-            # OU process update for each per-metric noise
-            for metric, noise_cfg in METRIC_OU_NOISE.items():
-                theta_m = noise_cfg["theta"]
-                sigma_m = noise_cfg["sigma"]
-
-                x = self._metric_noise_state[entity_key].get(metric, 0.0)
-
-                # Mean-reverting to 0 (noise is centered)
-                decay = math.exp(-theta_m * dt)
-                if theta_m > 0:
-                    noise_var = (sigma_m ** 2) / (2 * theta_m) * (1 - math.exp(-2 * theta_m * dt))
-                    noise_std = math.sqrt(max(0, noise_var))
-                else:
-                    noise_std = 0
-
-                x_new = x * decay + noise_std * self._rng.normal()
-                self._metric_noise_state[entity_key][metric] = float(np.clip(x_new, -0.5, 0.5))
-
+                
+                # Apply perturbations (additive effects from events)
+                perturbation_effect = self.perturbation_manager.total_effect(
+                    classifier_name, timestamp, entity
+                )
+                x_new += perturbation_effect
+                
+                self._classifier_state[classifier_name] = float(np.clip(x_new, 0.0, 1.0))
+            
+            # OU process update for client_load (per-entity environmental condition) 
+            theta_load = CLIENT_LOAD_CONFIG["theta"]
+            sigma_load = CLIENT_LOAD_CONFIG["sigma"]
+            
+            # Time-varying mean for client_load
+            mu_load = self._client_load_mean(entity, timestamp)
+            
+            x_load = self._client_load_state[entity_key]
+            decay_load = math.exp(-theta_load * dt)
+            
+            if theta_load > 0:
+                noise_var_load = (sigma_load ** 2) / (2 * theta_load) * (1 - math.exp(-2 * theta_load * dt))
+                noise_std_load = math.sqrt(max(0, noise_var_load))
+            else:
+                noise_std_load = 0
+            
+            x_load_new = mu_load + (x_load - mu_load) * decay_load + noise_std_load * self._rng.normal()
+            self._client_load_state[entity_key] = float(np.clip(x_load_new, 0.0, 1.0))
+            
             self._last_update_time[entity_key] = timestamp
-            self._metric_noise_last_update[entity_key] = timestamp
 
-        # Build driver values with perturbation effects
-        drivers = {}
-        for driver in self.DRIVERS:
-            base = self._driver_state[entity_key][driver]
-            pert_effect = self.perturbation_manager.total_effect(driver, timestamp)
-            drivers[driver] = float(np.clip(base + pert_effect, 0.0, 1.0))
-
-        return drivers
-
-    def _driver_mean(self, driver: str, entity: Optional[str], timestamp: int) -> float:
+    def _client_load_mean(self, entity: Optional[str], timestamp: int) -> float:
         """
-        Compute the time-varying mean for a driver, adjusted for AP topology.
+        Compute the time-varying mean for client_load, adjusted for AP topology.
 
         The mean follows daily/weekly rhythms, shifted by per-AP characteristics.
         """
@@ -389,36 +580,16 @@ class RealisticMetricsGenerator:
         weekday = dt.weekday()  # 0=Monday, 6=Sunday
         is_weekend = weekday >= 5  # Saturday=5, Sunday=6
 
-        if driver == "client_load":
-            base_mean = self._client_load_daily(hour)
+        base_mean = self._client_load_daily(hour)
 
-            # Weekend reduction
-            if is_weekend:
-                base_mean *= 0.4
+        # Weekend reduction
+        if is_weekend:
+            base_mean *= 0.4
 
-            # Per-AP topology offset
-            if entity and entity in self._topology:
-                ap_baseline = self._topology[entity].get("load_baseline", 0.45)
-                base_mean += (ap_baseline - 0.45)
-
-        elif driver == "rf_quality":
-            base_mean = self._driver_config["rf_quality"]["normal_level"]
-
-            # Slightly more interference during business hours (more devices)
-            if 9 <= hour <= 17:
-                base_mean -= 0.02
-
-            # Per-AP topology offset
-            if entity and entity in self._topology:
-                ap_rf = self._topology[entity].get("rf_baseline", 0.90)
-                base_mean += (ap_rf - 0.90)
-
-        elif driver == "infra_health":
-            # Infrastructure health has no daily pattern — it's event-driven
-            base_mean = self._driver_config["infra_health"]["normal_level"]
-
-        else:
-            base_mean = 0.5
+        # Per-AP topology offset
+        if entity and entity in self._topology:
+            ap_baseline = self._topology[entity].get("load_baseline", 0.45)
+            base_mean += (ap_baseline - 0.45)
 
         return float(np.clip(base_mean, 0.0, 1.0))
 
@@ -596,20 +767,20 @@ class RealisticMetricsGenerator:
 
         return baseline
 
-    def _derive_metric(self, metric: str, drivers: Dict[str, float],
-                       entity_key: str = "_global",
+    def _derive_metric(self, metric: str, entity_key: str = "_global",
                        timestamp: int = None) -> float:
         """
         Derive a metric value from:
           1. Per-metric daily profile (deterministic shape)
-          2. Per-metric OU noise (Gaussian, metric-specific variation)
-          3. Weak shared driver effect (cross-metric correlation)
+          2. Classifier deviations (weighted contributions)
 
-        value = daily_profile(hour) + OU_noise * weight * range + shared_effect * range
+        Formula:
+        value = daily_profile(hour) + Σ(classifier_weight × classifier_deviation × metric_range)
+        
+        where classifier_deviation = classifier_value - classifier_normal_level
         """
         cfg = self.config[metric]
         metric_range = cfg["max"] - cfg["min"]
-        sensitivities = METRIC_SENSITIVITIES[metric]
 
         # 1. Per-metric daily profile: deterministic baseline by hour
         ts = timestamp or (self.start_time + self.current_offset)
@@ -617,21 +788,22 @@ class RealisticMetricsGenerator:
         hour = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
         profile_value = self._metric_daily_profile(metric, hour)
 
-        # 2. Per-metric OU noise (primary stochastic component)
-        noise_cfg = METRIC_OU_NOISE.get(metric, {})
-        noise_weight = noise_cfg.get("weight", 0.0)
-        noise_state = self._metric_noise_state.get(entity_key, {}).get(metric, 0.0)
-        ou_noise = noise_state * noise_weight * metric_range
+        # 2. Classifier-based deviation
+        classifier_contribution = 0.0
+        metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
+        
+        for classifier_name, weight in metric_classifiers.items():
+            classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
+            normal_level = classifier_cfg["initial_level"]
+            current_value = self._classifier_state[classifier_name]
+            
+            # Deviation from normal (can be positive or negative)
+            deviation = current_value - normal_level
+            
+            # Contribution to metric (scaled by weight and metric range)
+            classifier_contribution += weight * deviation * metric_range
 
-        # 3. Weak shared driver effect
-        shared_effect = 0.0
-        for driver, sensitivity in sensitivities.items():
-            normal = self._driver_config[driver]["normal_level"]
-            deviation = drivers.get(driver, normal) - normal
-            shared_effect += sensitivity * deviation
-        shared_contribution = shared_effect * metric_range
-
-        value = profile_value + ou_noise + shared_contribution
+        value = profile_value + classifier_contribution
         return float(np.clip(value, cfg["min"], cfg["max"]))
 
     def _maybe_inject_load_patterns(self, timestamp: int) -> None:
@@ -668,7 +840,7 @@ class RealisticMetricsGenerator:
         Generate all metric values for one entity at one timestamp.
 
         More efficient than calling generate_observation() for each metric,
-        because drivers are updated only once per (entity, timestamp).
+        because state is updated only once per (entity, timestamp).
 
         Args:
             timestamp: Unix timestamp
@@ -678,16 +850,16 @@ class RealisticMetricsGenerator:
             Dict mapping metric name to rounded value
         """
         # Ensure entity exists in state
-        if entity not in self._driver_state:
+        if entity not in self._client_load_state:
             self._init_entity_state(entity, timestamp)
 
-        # Update drivers once for this entity/timestamp
-        drivers = self._update_drivers(entity, timestamp)
+        # Update state once for this entity/timestamp
+        self._update_state(entity, timestamp)
 
-        # Derive all metrics from daily profile + OU noise + shared drivers
+        # Derive all metrics from daily profile + classifiers
         result = {}
         for metric in self.get_all_metrics():
-            result[metric] = round(self._derive_metric(metric, drivers, entity, timestamp=timestamp), 2)
+            result[metric] = round(self._derive_metric(metric, entity, timestamp=timestamp), 2)
         return result
 
     @classmethod
@@ -725,20 +897,18 @@ def reset_generator() -> None:
 
 def reset_for_live_streaming(start_time: int = None) -> None:
     """
-    Reset generator for live streaming while preserving driver state.
+    Reset generator for live streaming while preserving classifier state.
 
     After bootstrap, the generator has start_time from days ago.
-    This resets to current time while keeping driver state and perturbations
+    This resets to current time while keeping classifier state and perturbations
     so live data flows smoothly from historical data.
     """
     global _generator_instance
     if _generator_instance is not None:
         # Preserve state for continuity
-        preserved_drivers = {
-            k: dict(v) for k, v in _generator_instance._driver_state.items()
-        }
-        preserved_noise = {
-            k: dict(v) for k, v in _generator_instance._metric_noise_state.items()
+        preserved_classifiers = dict(_generator_instance._classifier_state)
+        preserved_client_load = {
+            k: v for k, v in _generator_instance._client_load_state.items()
         }
         preserved_perturbations = _generator_instance.perturbation_manager
 
@@ -746,12 +916,10 @@ def reset_for_live_streaming(start_time: int = None) -> None:
         _generator_instance = RealisticMetricsGenerator(start_time=new_start)
 
         # Restore preserved state
-        _generator_instance._driver_state = preserved_drivers
-        _generator_instance._metric_noise_state = preserved_noise
+        _generator_instance._classifier_state = preserved_classifiers
+        _generator_instance._client_load_state = preserved_client_load
         _generator_instance.perturbation_manager = preserved_perturbations
 
-        # Reset update times to new start
-        for key in _generator_instance._last_update_time:
-            _generator_instance._last_update_time[key] = new_start
-        for key in _generator_instance._metric_noise_last_update:
-            _generator_instance._metric_noise_last_update[key] = new_start
+        # Update last update times to new start time
+        for entity_key in _generator_instance._client_load_state.keys():
+            _generator_instance._last_update_time[entity_key] = new_start

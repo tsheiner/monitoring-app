@@ -3,6 +3,8 @@ FastAPI HTTP API for historical data queries.
 
 Provides endpoints for querying metrics with distributions and events.
 """
+import json
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +17,10 @@ from .models import (
     Event,
     MetricsListResponse,
     HourlyDistribution,
-    BaselineResponse
+    BaselineResponse,
+    CurrentClassifiersResponse,
+    ClassifierHourlyDistribution,
+    ClassifierBaselineResponse
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
@@ -94,27 +99,78 @@ async def query_metric(
     # Handle aggregation: if entity="_aggregated", compute mean across all entities per timestamp
     if entity == "_aggregated":
         all_observations = store.query_range(metric, start, end, entity=None)
-        # Group by timestamp and compute mean
+        # Group by timestamp and compute mean value + aggregate classifiers
         from collections import defaultdict
-        timestamp_values = defaultdict(list)
+        timestamp_groups = defaultdict(list)
         for obs in all_observations:
-            timestamp_values[obs["timestamp"]].append(obs["value"])
-        
-        observations = [
-            {
+            timestamp_groups[obs["timestamp"]].append(obs)
+
+        def _derive_status(value: float, classifiers_list: list) -> str:
+            """Derive worst status from a list of per-AP classifier records."""
+            statuses = [c.get("status", "green") for c in classifiers_list]
+            if "red" in statuses:
+                return "red"
+            if "yellow" in statuses:
+                return "yellow"
+            return "green"
+
+        def _aggregate_classifiers(obs_list: list):
+            """
+            Average classifier values across APs; derive status from worst-of-APs.
+            Returns None if no observations have classifiers.
+            """
+            # Collect per-classifier values across all APs
+            classifier_values = defaultdict(list)
+            classifier_all_recs = defaultdict(list)
+            classifier_weights = {}
+            has_any = False
+            for obs in obs_list:
+                if obs.get("classifiers"):
+                    has_any = True
+                    for c in obs["classifiers"]:
+                        name = c["name"]
+                        classifier_values[name].append(c["value"])
+                        classifier_all_recs[name].append(c)
+                        if "weight" in c:
+                            classifier_weights[name] = c["weight"]
+            if not has_any:
+                return None
+            result = []
+            for name, vals in classifier_values.items():
+                avg_val = sum(vals) / len(vals)
+                worst_status = _derive_status(avg_val, classifier_all_recs[name])
+                agg_c = {
+                    "name": name,
+                    "value": avg_val,
+                    "status": worst_status,
+                    "contribution": 0.0,
+                }
+                if name in classifier_weights:
+                    agg_c["weight"] = classifier_weights[name]
+                result.append(agg_c)
+            # Preserve insertion order of classifiers (first AP's ordering)
+            return result if result else None
+
+        observations = []
+        for ts, obs_list in sorted(timestamp_groups.items()):
+            values = [o["value"] for o in obs_list]
+            agg_classifiers = _aggregate_classifiers(obs_list)
+            obs_dict = {
                 "timestamp": ts,
                 "metric": metric,
                 "value": sum(values) / len(values),
-                "entity": None
+                "entity": None,
             }
-            for ts, values in sorted(timestamp_values.items())
-        ]
+            if agg_classifiers is not None:
+                obs_dict["classifiers"] = agg_classifiers
+            observations.append(obs_dict)
     elif entity == "_all":
         observations = store.query_range(metric, start, end, entity=None)
     else:
         observations = store.query_range(metric, start, end, entity=entity)
     
-    distribution = store.compute_distribution(metric, start, end, entity=None if entity == "_aggregated" else entity if entity != "_all" else None)
+    # Compute distribution from already-fetched observations (avoids re-querying the store)
+    distribution = store.compute_distribution(metric, start, end, observations=observations)
     
     # Convert to response models
     obs_models = [
@@ -242,6 +298,93 @@ async def query_events(
         end=end,
         events=event_models,
         count=len(event_models)
+    )
+
+
+@app.get("/api/metrics/{metric}/classifiers/current", response_model=CurrentClassifiersResponse)
+async def get_current_classifiers(metric: str):
+    """
+    Get current classifier breakdown for a metric.
+    
+    Returns the most recent observation with its classifier decomposition.
+    
+    Args:
+        metric: Metric name
+        
+    Returns:
+        Current observation with classifier breakdown
+    """
+    # Validate metric name
+    if metric not in MetricsGenerator.get_all_metrics():
+        raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
+    
+    # Get latest observation from store
+    store = get_metrics_store()
+    latest = store.get_latest(metric, limit=1)
+    
+    if not latest or len(latest) == 0:
+        raise HTTPException(status_code=404, detail=f"No data available for metric '{metric}'")
+    
+    observation = latest[0]
+    
+    # Check if observation has classifiers
+    if "classifiers" not in observation or observation["classifiers"] is None:
+        raise HTTPException(status_code=404, detail=f"No classifier data available for metric '{metric}'")
+    
+    return CurrentClassifiersResponse(
+        metric=observation["metric"],
+        timestamp=observation["timestamp"],
+        value=observation["value"],
+        entity=observation.get("entity"),
+        classifiers=observation["classifiers"]
+    )
+
+
+@app.get("/api/classifiers/{classifier}/baseline", response_model=ClassifierBaselineResponse)
+async def get_classifier_baseline(classifier: str):
+    """
+    Get hourly baseline distributions for a classifier.
+    
+    Returns 24 hourly distributions representing typical daily pattern for the classifier,
+    computed from historical bootstrap data.
+    
+    Args:
+        classifier: Classifier name (e.g., 'dhcp', 'dns', 'association')
+        
+    Returns:
+        24 hourly baseline distributions
+    """
+    # Load baselines from file
+    baselines_path = Path("data/baselines.json")
+    if not baselines_path.exists():
+        raise HTTPException(status_code=503, detail="Baseline data not yet available")
+    
+    with open(baselines_path, 'r') as f:
+        baselines = json.load(f)
+    
+    # Check if classifier exists
+    if "classifiers" not in baselines or classifier not in baselines["classifiers"]:
+        raise HTTPException(status_code=404, detail=f"Classifier '{classifier}' not found")
+    
+    classifier_data = baselines["classifiers"][classifier]
+    
+    # Convert to response models
+    hourly_distributions = [
+        ClassifierHourlyDistribution(
+            hour=hour_data["hour"],
+            distribution=Distribution(
+                **hour_data["distribution"],
+                count=hour_data["sample_count"]  # Use sample_count as count for compatibility
+            ),
+            sample_count=hour_data["sample_count"]
+        )
+        for hour_data in classifier_data
+    ]
+    
+    return ClassifierBaselineResponse(
+        classifier=classifier,
+        lookback_days=int(baselines.get("lookback_days", 30)),
+        hourly_distributions=hourly_distributions
     )
 
 

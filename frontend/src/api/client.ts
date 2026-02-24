@@ -16,12 +16,53 @@ const WS_URL = "ws://localhost:5010";
 
 export class APIClient {
   private ws: WebSocket | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempts: number = 0;
+  private shouldReconnect: boolean = true;
   private onMetricCallback: ((message: MetricMessage) => void) | null = null;
   private onEventCallback: ((message: EventMessage) => void) | null = null;
   private onConnectedCallback: (() => void) | null = null;
   private onDisconnectedCallback: (() => void) | null = null;
   private disconnectTime: number | null = null; // Track when we disconnected
   private onReconnectCallback: ((gapDuration: number) => void) | null = null;
+
+  private async fetchJson<T>(
+    url: string,
+    timeoutMs: number = 10000,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error(`Request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.shouldReconnect || this.reconnectTimer !== null) {
+      return;
+    }
+
+    const delayMs = Math.min(3000, 250 * 2 ** this.reconnectAttempts);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.reconnectAttempts += 1;
+      this.connectWebSocket();
+    }, delayMs);
+  }
 
   /**
    * Fetch historical metric data.
@@ -35,63 +76,8 @@ export class APIClient {
     const startInt = Math.floor(start);
     const endInt = Math.ceil(end);
 
-    // #region agent log
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "APIClient.ts:fetchMetricHistory",
-        message: "Fetching metric history",
-        data: {
-          metric,
-          startRaw: start,
-          endRaw: end,
-          startInt,
-          endInt,
-          duration: endInt - startInt,
-          startDate: new Date(startInt * 1000).toISOString(),
-          endDate: new Date(endInt * 1000).toISOString(),
-        },
-        timestamp: Date.now(),
-        runId: "422-debug",
-        hypothesisId: "H1",
-      }),
-    }).catch(() => {});
-    // #endregion
-
     const url = `${HTTP_BASE_URL}/api/metrics/${metric}?start=${startInt}&end=${endInt}&entity=_aggregated`;
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      // #region agent log
-      const errorText = await response.text();
-      fetch(
-        "http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: "APIClient.ts:fetchMetricHistory:error",
-            message: "HTTP error from backend",
-            data: {
-              metric,
-              start: startInt,
-              end: endInt,
-              status: response.status,
-              statusText: response.statusText,
-              errorBody: errorText.substring(0, 200),
-            },
-            timestamp: Date.now(),
-            runId: "422-debug",
-            hypothesisId: "H1",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    return response.json();
+    return this.fetchJson<MetricResponse>(url, 12000);
   }
 
   /**
@@ -111,13 +97,7 @@ export class APIClient {
       url += `&event_type=${eventType}`;
     }
 
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    return response.json();
+    return this.fetchJson<EventsResponse>(url, 10000);
   }
 
   /**   * Fetch baseline distribution for a metric.
@@ -132,27 +112,23 @@ export class APIClient {
       url += `&entity=${entity}`;
     }
 
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    return response.json();
+    return this.fetchJson<BaselineResponse>(url, 8000);
   }
 
   /**   * Connect to WebSocket stream.
    */
   connectWebSocket(): void {
     if (this.ws) {
-      console.warn("WebSocket already connected");
       return;
     }
+
+    this.shouldReconnect = true;
 
     this.ws = new WebSocket(WS_URL);
 
     this.ws.onopen = () => {
       console.log("WebSocket connected");
+      this.reconnectAttempts = 0;
 
       // Check if we reconnected after a disconnection
       if (this.disconnectTime && this.onReconnectCallback) {
@@ -191,11 +167,7 @@ export class APIClient {
         this.onDisconnectedCallback();
       }
 
-      // Auto-reconnect after 3 seconds
-      setTimeout(() => {
-        console.log("Attempting WebSocket reconnection...");
-        this.connectWebSocket();
-      }, 3000);
+      this.scheduleReconnect();
     };
   }
 
@@ -203,6 +175,12 @@ export class APIClient {
    * Disconnect WebSocket.
    */
   disconnectWebSocket(): void {
+    this.shouldReconnect = false;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;

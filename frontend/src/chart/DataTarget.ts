@@ -20,14 +20,25 @@ export class DataTarget {
   push(observations: Observation[]): void {
     this.buffer.push(...observations);
 
-    // Update Y domain
-    observations.forEach((obs) => {
-      if (obs.value < this.yMin) this.yMin = obs.value;
-      if (obs.value > this.yMax) this.yMax = obs.value;
-    });
-
     // Sort by timestamp
     this.buffer.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Deduplicate by timestamp (keep the latest observation for each timestamp)
+    if (this.buffer.length > 1) {
+      this.buffer = this.buffer.filter(
+        (obs, index, arr) =>
+          index === arr.length - 1 ||
+          obs.timestamp !== arr[index + 1].timestamp,
+      );
+    }
+
+    // Recompute Y domain from deduplicated buffer
+    this.yMin = Infinity;
+    this.yMax = -Infinity;
+    for (const obs of this.buffer) {
+      if (obs.value < this.yMin) this.yMin = obs.value;
+      if (obs.value > this.yMax) this.yMax = obs.value;
+    }
   }
 
   /**

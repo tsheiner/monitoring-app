@@ -15,6 +15,7 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
+import * as d3 from "d3";
 import {
   ChartConfig,
   Observation,
@@ -29,6 +30,7 @@ interface MetricData {
   distributionGenerator: DistributionRibbonGenerator | null;
   baseline: BaselineResponse | null;
   color: string;
+  label: string; // Human-readable display label (FD-023)
   normalizedYDomain: [number, number]; // For independent normalization
   bufferedRange: [number, number] | null; // Track what time range is buffered
 }
@@ -39,12 +41,86 @@ export class ChartView {
   private metrics: Map<string, MetricData> = new Map();
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
-  private hasLoadedData: boolean = false; // Track if historical data loaded
   private onDataNeededCallback?: (range: [number, number]) => void;
 
   // Track chart start time for growth phase
   private chartStartTime: number;
   private durationSeconds: number;
+
+  // Crosshair elements
+  private crosshairGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private crosshairVertical: d3.Selection<
+    SVGLineElement,
+    unknown,
+    null,
+    undefined
+  >;
+  private crosshairDots: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private nearestMetric: string | null = null;
+  private legendOrder: string[] = [];
+
+  // Tooltip elements
+  private tooltipElement: HTMLDivElement;
+  private activeMetric: string | null = null;
+  private activeMetricTimer: number | null = null;
+  private readonly HYSTERESIS_MS = 150; // Delay before switching active metric
+
+  // FD-025: Metric unit suffixes and decimal precision maps
+  private static readonly METRIC_UNITS: Record<string, string> = {
+    time_to_connect: " ms",
+    throughput: " Mbps",
+    coverage: " dBm",
+    capacity: "%",
+    roaming: " ms",
+    successful_connects: "%",
+    ap_health: "",
+  };
+
+  private static readonly METRIC_DECIMALS: Record<string, number> = {
+    time_to_connect: 0,
+    throughput: 0,
+    coverage: 0,
+    capacity: 1,
+    roaming: 0,
+    successful_connects: 1,
+    ap_health: 0,
+  };
+
+  // FD-024: Per-metric polarity determines which distribution tail is "bad".
+  // lower_is_better: only high tail is yellow/red (fast connect time is fine)
+  // higher_is_better: only low tail is yellow/red (high throughput is fine)
+  // symmetric: both tails flagged (capacity too low OR too high can be an issue)
+  private static readonly METRIC_POLARITY: Record<
+    string,
+    "lower_is_better" | "higher_is_better" | "symmetric"
+  > = {
+    time_to_connect: "lower_is_better",
+    roaming: "lower_is_better",
+    throughput: "higher_is_better",
+    coverage: "higher_is_better",
+    successful_connects: "higher_is_better",
+    ap_health: "higher_is_better",
+    capacity: "symmetric",
+  };
+
+  // Interaction state
+  private isPanning: boolean = false;
+
+  // Cache last rendered state so hysteresis timer can re-render when mouse is stationary
+  private lastMetricsAtCursor: Array<{
+    name: string;
+    label: string;
+    value: number | null;
+    color: string;
+    classifiers?: Record<string, { value: number; status: string }>;
+  }> = [];
+  private lastCursorTimeSec: number | undefined;
+  // Persist most recent classifiers by metric so tooltip details don't disappear
+  // when hovered timestamp lands on an observation without classifiers.
+  private latestClassifiersByMetric: Map<
+    string,
+    Record<string, { value: number; status: string }>
+  > = new Map();
 
   constructor(container: HTMLElement, config: ChartConfig) {
     this.config = config;
@@ -80,12 +156,794 @@ export class ChartView {
     this.core.onRangeChange((range, userInitiated) => {
       this.handleZoomPanRangeChange(range, userInitiated);
     });
+
+    // Initialize crosshair
+    this.crosshairGroup = this.core
+      .getUnclippedChartGroup()
+      .append("g")
+      .attr("class", "crosshair-group")
+      .style("display", "none");
+
+    this.crosshairVertical = this.crosshairGroup
+      .append("line")
+      .attr("class", "crosshair-vertical")
+      .attr("stroke", "#888")
+      .attr("stroke-width", 1);
+    // No stroke-dasharray — must be solid per FD-022 spec
+
+    // Container for highlighted dots at trace intersections (FD-022)
+    this.crosshairDots = this.crosshairGroup
+      .append("g")
+      .attr("class", "crosshair-dots");
+
+    // Initialize tooltip — styled to Figma spec
+    this.tooltipElement = document.createElement("div");
+    this.tooltipElement.className = "chart-tooltip";
+    this.tooltipElement.style.position = "absolute";
+    this.tooltipElement.style.display = "none";
+    this.tooltipElement.style.pointerEvents = "none";
+    this.tooltipElement.style.backgroundColor = "#23282E";
+    this.tooltipElement.style.color = "#fff";
+    this.tooltipElement.style.padding = "12px 16px";
+    this.tooltipElement.style.borderRadius = "6px";
+    this.tooltipElement.style.border = "2px solid #C1C6CC";
+    this.tooltipElement.style.fontSize = "12px";
+    this.tooltipElement.style.zIndex = "1000";
+    this.tooltipElement.style.width = "215px";
+    this.tooltipElement.style.boxSizing = "border-box";
+    this.tooltipElement.style.flexDirection = "column";
+    this.tooltipElement.style.gap = "3px";
+    this.tooltipElement.style.boxShadow =
+      "0 8px 32px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.5)";
+    container.appendChild(this.tooltipElement);
+
+    // Add mouse event handlers for crosshair
+    this.setupCrosshairHandlers();
+
+    // Setup pan detection to suppress crosshair/tooltip during drag
+    this.setupPanDetection();
+  }
+
+  /**
+   * Setup crosshair mouse event handlers.
+   */
+  private setupCrosshairHandlers(): void {
+    const svg = this.core.getSVG();
+
+    svg.on("mousemove", (event: MouseEvent) => {
+      // Get mouse position relative to the SVG element
+      const svgRect = (svg.node() as SVGSVGElement).getBoundingClientRect();
+      const x = event.clientX - svgRect.left - this.config.margin.left;
+      const y = event.clientY - svgRect.top - this.config.margin.top;
+
+      this.updateCrosshair(x, y);
+    });
+
+    svg.on("mouseleave", () => {
+      this.hideCrosshair();
+    });
+  }
+
+  /**
+   * Setup pan detection to suppress crosshair/tooltip during drag.
+   */
+  private setupPanDetection(): void {
+    const zoom = this.core.getZoomBehavior();
+
+    // Listen to zoom start event to detect beginning of pan/zoom
+    zoom.on("start", () => {
+      this.isPanning = true;
+      // Hide crosshair and tooltip when pan starts
+      this.hideCrosshair();
+    });
+
+    // Listen to zoom end event to re-enable hover
+    zoom.on("end", () => {
+      this.isPanning = false;
+    });
+  }
+
+  /**
+   * Update crosshair position and find nearest metric.
+   */
+  private updateCrosshair(x: number, y: number): void {
+    // Suppress crosshair during pan/zoom
+    if (this.isPanning) {
+      return;
+    }
+
+    const chartWidth =
+      this.config.width - this.config.margin.left - this.config.margin.right;
+    const chartHeight =
+      this.config.height - this.config.margin.top - this.config.margin.bottom;
+
+    // Check if cursor is within plot area
+    if (x < 0 || x > chartWidth || y < 0 || y > chartHeight) {
+      this.hideCrosshair();
+      return;
+    }
+
+    // Show crosshair
+    this.crosshairGroup.style("display", null);
+
+    // Update vertical line (full height of chart) — solid, no horizontal
+    this.crosshairVertical
+      .attr("x1", x)
+      .attr("y1", 0)
+      .attr("x2", x)
+      .attr("y2", chartHeight);
+
+    // Find nearest metric first so special dot styling is current this frame
+    this.findNearestMetric(x, y);
+
+    // Update highlighted dots on each visible metric trace (FD-022)
+    this.updateCrosshairDots(x);
+
+    // Update and show tooltip
+    this.updateTooltip(x, y);
+  }
+
+  /**
+   * Hide the crosshair and tooltip.
+   */
+  private hideCrosshair(): void {
+    this.crosshairGroup.style("display", "none");
+    this.nearestMetric = null;
+    this.tooltipElement.style.display = "none";
+
+    // Clear active metric timer if hovering away
+    if (this.activeMetricTimer !== null) {
+      clearTimeout(this.activeMetricTimer);
+      this.activeMetricTimer = null;
+    }
+  }
+
+  /**
+   * Update highlighted dots at each metric trace's y-position for cursor x (FD-022).
+   * Dots are filled circles with radius 4 in the metric's trace color.
+   */
+  private updateCrosshairDots(x: number): void {
+    const xScale = this.core.getXScale();
+    const yScale = this.core.getYScale();
+    const cursorTime = xScale.invert(x).getTime() / 1000;
+
+    // Collect dot data for each visible metric
+    const dotData: Array<{
+      metricName: string;
+      y: number;
+      color: string;
+      closestTs: number;
+      timeDiffSec: number;
+    }> = [];
+
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+      if (observations.length === 0) continue;
+
+      const pointAtCursor = this.getPointAtTime(observations, cursorTime);
+      if (!pointAtCursor) continue;
+
+      // Compute normalized value for multi-metric display
+      let displayValue = pointAtCursor.value;
+      if (this.metrics.size > 1) {
+        displayValue = this.normalizeValue(
+          pointAtCursor.value,
+          metricData.normalizedYDomain,
+        );
+      }
+
+      dotData.push({
+        metricName,
+        y: yScale(displayValue),
+        color: metricData.color,
+        closestTs: pointAtCursor.closestObs.timestamp,
+        timeDiffSec: pointAtCursor.timeDiffSec,
+      });
+    }
+
+    // Bind data to dot elements using D3 enter/update/exit
+    const dots = this.crosshairDots
+      .selectAll<SVGCircleElement, (typeof dotData)[0]>(".crosshair-dot")
+      .data(dotData, (d) => d.metricName);
+
+    // Helper: is this dot for the nearest metric?
+    const isNearest = (d: (typeof dotData)[0]) =>
+      d.metricName === this.nearestMetric;
+
+    // Enter: create new dots
+    dots
+      .enter()
+      .append("circle")
+      .attr("class", "crosshair-dot")
+      .attr("r", 4)
+      .attr("fill", (d) => d.color)
+      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
+      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
+      .attr("cx", x)
+      .attr("cy", (d) => d.y);
+
+    // Update: reposition existing dots and re-apply styles (nearestMetric may have changed)
+    dots
+      .attr("r", (d) => (isNearest(d) ? 4.8 : 4))
+      .attr("fill", (d) => (isNearest(d) ? "white" : d.color))
+      .attr("stroke", (d) => (isNearest(d) ? d.color : "none"))
+      .attr("stroke-width", (d) => (isNearest(d) ? 2.5 : 0))
+      .attr("cx", x)
+      .attr("cy", (d) => d.y);
+
+    // Exit: remove dots for metrics no longer visible
+    dots.exit().remove();
+  }
+
+  /**
+   * Find the nearest metric to the cursor position.
+   */
+  private findNearestMetric(x: number, y: number): void {
+    if (this.metrics.size === 0) {
+      this.nearestMetric = null;
+      return;
+    }
+
+    const xScale = this.core.getXScale();
+    const yScale = this.core.getYScale();
+
+    // Convert pixel coordinates to data coordinates
+    const cursorTime = xScale.invert(x).getTime() / 1000; // Unix timestamp
+
+    let nearestMetricName: string | null = null;
+    let minDistance = Infinity;
+    const distanceBreakdown: Array<{
+      metricName: string;
+      rawDistance: number;
+      normalizedDistance: number | null;
+      closestValue: number;
+      closestTs: number;
+      timeDiffSec: number;
+    }> = [];
+
+    // For each metric, find the closest point in time and compute distance
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+
+      if (observations.length === 0) {
+        continue;
+      }
+
+      const pointAtCursor = this.getPointAtTime(observations, cursorTime);
+      if (!pointAtCursor) {
+        continue;
+      }
+
+      // In multi-metric mode traces are rendered in normalized space (0-100),
+      // so nearest-metric distance must also be measured in that same space.
+      const displayValue =
+        this.metrics.size > 1
+          ? this.normalizeValue(
+              pointAtCursor.value,
+              metricData.normalizedYDomain,
+            )
+          : pointAtCursor.value;
+      const obsPixelY = yScale(displayValue);
+      const distance = Math.abs(obsPixelY - y);
+
+      // Keep raw-distance in logs for diagnosis, but do not use it for selection in multi-metric mode.
+      const rawDistance = Math.abs(yScale(pointAtCursor.value) - y);
+      const normalizedDistance =
+        this.metrics.size > 1 ? Math.abs(yScale(displayValue) - y) : null;
+      distanceBreakdown.push({
+        metricName,
+        rawDistance,
+        normalizedDistance,
+        closestValue: pointAtCursor.value,
+        closestTs: pointAtCursor.closestObs.timestamp,
+        timeDiffSec: pointAtCursor.timeDiffSec,
+      });
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestMetricName = metricName;
+      }
+    }
+
+    this.nearestMetric = nearestMetricName;
+  }
+
+  /**
+   * Get the currently nearest metric to the cursor.
+   */
+  getNearestMetric(): string | null {
+    return this.nearestMetric;
+  }
+
+  /**
+   * Update and show the tooltip at the cursor position.
+   */
+  private updateTooltip(x: number, y: number): void {
+    if (this.metrics.size === 0) {
+      this.tooltipElement.style.display = "none";
+      return;
+    }
+
+    const xScale = this.core.getXScale();
+    const cursorTime = xScale.invert(x).getTime() / 1000;
+
+    // Collect values for all visible metrics at cursor time
+    const metricsAtCursor: Array<{
+      name: string;
+      label: string; // FD-023: human-readable display label
+      value: number | null;
+      color: string;
+      classifiers?: Record<string, { value: number; status: string }>;
+      timeDiffSec?: number;
+      classifierSource?: "point" | "cache" | "none";
+    }> = [];
+
+    for (const [metricName, metricData] of this.metrics.entries()) {
+      const observations = metricData.dataTarget.getAll();
+
+      if (observations.length === 0) {
+        continue;
+      }
+
+      const pointAtCursor = this.getPointAtTime(observations, cursorTime);
+      if (pointAtCursor) {
+        const pointClassifiers = pointAtCursor.closestObs.classifiers;
+        const cachedClassifiers =
+          this.latestClassifiersByMetric.get(metricName);
+        const effectiveClassifiers = pointClassifiers ?? cachedClassifiers;
+        metricsAtCursor.push({
+          name: metricName,
+          label: metricData.label, // FD-023
+          value: pointAtCursor.value,
+          color: metricData.color,
+          classifiers: effectiveClassifiers,
+          timeDiffSec: pointAtCursor.timeDiffSec,
+          classifierSource: pointClassifiers
+            ? "point"
+            : cachedClassifiers
+              ? "cache"
+              : "none",
+        });
+      }
+    }
+
+    if (metricsAtCursor.length === 0) {
+      this.tooltipElement.style.display = "none";
+      return;
+    }
+
+    // Cache for re-render when hysteresis timer fires while mouse is stationary
+    this.lastMetricsAtCursor = metricsAtCursor;
+    this.lastCursorTimeSec = cursorTime;
+
+    // Handle active metric hysteresis
+    this.updateActiveMetric();
+
+    // Build tooltip HTML
+    const tooltipHtml = this.buildTooltipContent(metricsAtCursor, cursorTime);
+    this.tooltipElement.innerHTML = tooltipHtml;
+
+    // Position tooltip
+    const svgRect = (
+      this.core.getSVG().node() as SVGSVGElement
+    ).getBoundingClientRect();
+    const tooltipX = svgRect.left + this.config.margin.left + x + 15;
+    const tooltipY = svgRect.top + this.config.margin.top + y + 15;
+
+    this.tooltipElement.style.left = `${tooltipX}px`;
+    this.tooltipElement.style.top = `${tooltipY}px`;
+    this.tooltipElement.style.display = "flex";
+  }
+
+  private captureLatestClassifiers(
+    metricName: string,
+    observations: Observation[],
+  ): void {
+    for (let i = observations.length - 1; i >= 0; i--) {
+      const cls = observations[i].classifiers;
+      if (cls && Object.keys(cls).length > 0) {
+        this.latestClassifiersByMetric.set(metricName, cls);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Update active metric with hysteresis to avoid rapid switching / flutter.
+   *
+   * Standard debounce: the timer RESETS on every nearest-metric change.
+   * The active metric only commits after the cursor has been continuously
+   * closer to the same metric for the full HYSTERESIS_MS window.
+   */
+  private updateActiveMetric(): void {
+    // First hover frame: pick nearest immediately so classifier panel is never empty.
+    if (this.activeMetric === null && this.nearestMetric !== null) {
+      this.activeMetric = this.nearestMetric;
+      return;
+    }
+
+    // Cursor still on the same metric — cancel any pending switch timer
+    if (this.nearestMetric === this.activeMetric) {
+      if (this.activeMetricTimer !== null) {
+        clearTimeout(this.activeMetricTimer);
+        this.activeMetricTimer = null;
+      }
+      return;
+    }
+
+    // Nearest metric changed — always cancel and restart so the window
+    // resets, preventing flutter when cursor oscillates between two lines.
+    if (this.activeMetricTimer !== null) {
+      clearTimeout(this.activeMetricTimer);
+      this.activeMetricTimer = null;
+    }
+
+    const targetMetric = this.nearestMetric;
+    this.activeMetricTimer = window.setTimeout(() => {
+      this.activeMetric = targetMetric;
+      this.activeMetricTimer = null;
+      // Re-render tooltip in case mouse has stopped (no mousemove incoming)
+      if (this.lastMetricsAtCursor.length > 0) {
+        this.tooltipElement.innerHTML = this.buildTooltipContent(
+          this.lastMetricsAtCursor,
+          this.lastCursorTimeSec,
+        );
+      }
+    }, this.HYSTERESIS_MS);
+  }
+
+  /**
+   * Determine the health status of a metric value relative to its hourly baseline distribution.
+   * Returns 'green' | 'yellow' | 'red', or null when no baseline is available.
+   * Classification:
+   *   green  — value within [p10, p90]
+   *   yellow — value within [p5, p10) or (p90, p95]
+   *   red    — value below p5 or above p95
+   */
+  getMetricStatus(
+    metricName: string,
+    value: number,
+    cursorTimeSec: number,
+  ): "green" | "yellow" | "red" | null {
+    const metricData = this.metrics.get(metricName);
+    if (!metricData || !metricData.baseline) return null;
+
+    // Keep status hour lookup aligned with distribution rendering, which uses local getHours().
+    const hour = new Date(cursorTimeSec * 1000).getHours();
+    const hourlyDist = metricData.baseline.hourly_distributions.find(
+      (d) => d.hour === hour,
+    );
+    if (!hourlyDist) {
+      return null;
+    }
+
+    const { p5, p10, p90, p95 } = hourlyDist.distribution;
+    const polarity = ChartView.METRIC_POLARITY[metricName] ?? "symmetric";
+
+    let status: "green" | "yellow" | "red";
+    if (polarity === "lower_is_better") {
+      // Low values are good — only flag the HIGH tail
+      if (value <= p90) status = "green";
+      else if (value <= p95) status = "yellow";
+      else status = "red";
+    } else if (polarity === "higher_is_better") {
+      // High values are good — only flag the LOW tail
+      if (value >= p10) status = "green";
+      else if (value >= p5) status = "yellow";
+      else status = "red";
+    } else {
+      // Symmetric — flag both tails
+      if (value >= p10 && value <= p90) status = "green";
+      else if ((value >= p5 && value < p10) || (value > p90 && value <= p95))
+        status = "yellow";
+      else status = "red";
+    }
+
+    return status;
+  }
+
+  /**
+   * Format a Unix timestamp (seconds) into tooltip header string.
+   * Format: "Mon Jan 1 09:30" (no year, 24h time)
+   */
+  private formatTooltipTimestamp(cursorTimeSec: number): string {
+    const d = new Date(cursorTimeSec * 1000);
+    const parts = d.toDateString().split(" "); // e.g. ["Mon", "Jan", "1", "2024"]
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${parts[0]} ${parts[1]} ${parts[2]} ${hh}:${mm}`;
+  }
+
+  /** Inline SVG icon helpers for status indicators (14×14, Figma-specified shapes) */
+  private static statusIcon(status: "green" | "yellow" | "red" | null): string {
+    const base = `style="margin-right:6px;flex-shrink:0;vertical-align:middle"`;
+    if (status === "green") {
+      return `<svg class="status-green" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#139BEB"/><path d="M3.5 7.2L5.8 9.8L10.5 4.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+    if (status === "yellow") {
+      return `<svg class="status-yellow" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><path d="M7 1L13.5 12.5H0.5L7 1Z" fill="#CC8604"/><rect x="6.4" y="4.5" width="1.2" height="4.5" rx="0.6" fill="white"/><circle cx="7" cy="10.5" r="0.7" fill="white"/></svg>`;
+    }
+    if (status === "red") {
+      return `<svg class="status-red" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" ${base}><circle cx="7" cy="7" r="7" fill="#CC2D37"/><path d="M4.5 4.5L9.5 9.5M9.5 4.5L4.5 9.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+    }
+    // No status data — question-mark placeholder (same 14px width as SVG icons for alignment)
+    return `<span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;font-size:11px;opacity:0.55;margin-right:6px;flex-shrink:0;vertical-align:middle;">?</span>`;
+  }
+
+  /** Colored circle matching the metric's trace color — always shown to the left of the status icon */
+  private static legendDot(color: string): string {
+    return `<span style="display:inline-block;width:14px;height:14px;background-color:${color};border-radius:50%;margin-right:5px;flex-shrink:0;vertical-align:middle;"></span>`;
+  }
+
+  /**
+   * Build tooltip HTML content showing all metrics and expanded classifiers for active metric.
+   */
+  private buildTooltipContent(
+    metricsAtCursor: Array<{
+      name: string;
+      label: string; // FD-023: human-readable display label
+      value: number | null;
+      color: string;
+      classifiers?: Record<string, { value: number; status: string }>;
+    }>,
+    cursorTimeSec?: number,
+  ): string {
+    // No outer wrapper — tooltipElement is the flex column container
+    let html = "";
+
+    // FD-023: Timestamp header at the top of the tooltip
+    if (cursorTimeSec !== undefined) {
+      const tsLabel = this.formatTooltipTimestamp(cursorTimeSec);
+      html += `<div class="tooltip-timestamp" style="opacity:0.7;font-size:12px;font-weight:bold;margin-bottom:3px;">${tsLabel}</div>`;
+    }
+
+    const expandedMetricName = this.resolveExpandedMetricName(metricsAtCursor);
+
+    // Sort metrics in legend order so tooltip rows always match the toggle-button column
+    if (this.legendOrder.length > 0) {
+      metricsAtCursor.sort((a, b) => {
+        const ai = this.legendOrder.indexOf(a.name);
+        const bi = this.legendOrder.indexOf(b.name);
+        return (ai === -1 ? 9999 : ai) - (bi === -1 ? 9999 : bi);
+      });
+    }
+
+    for (const metric of metricsAtCursor) {
+      const isActive = metric.name === expandedMetricName;
+      const activeClass = isActive ? " active" : "";
+
+      html += `<div class="tooltip-metric${activeClass}">`;
+      html += `<div style="display:flex;align-items:center;">`;
+
+      // FD-024: Health-aware leading icon based on baseline comparison
+      const status =
+        metric.value !== null && cursorTimeSec !== undefined
+          ? this.getMetricStatus(metric.name, metric.value, cursorTimeSec)
+          : null;
+      const fallbackClassifierStatus = this.getClassifierAggregateStatus(
+        metric.classifiers,
+      );
+
+      // Colored legend dot — shown to the left of the status icon
+      // gap(dot→icon) = 5px (margin-right on dot); gap(icon→name) = 6px (margin-right on icon)
+      html += ChartView.legendDot(metric.color);
+      html += ChartView.statusIcon(status ?? fallbackClassifierStatus);
+
+      // FD-025: Format value with appropriate units and decimal precision
+      const unit = ChartView.METRIC_UNITS[metric.name] ?? "";
+      const decimals = ChartView.METRIC_DECIMALS[metric.name] ?? 2;
+      const formattedValue =
+        metric.value !== null
+          ? `${metric.value.toFixed(decimals)}${unit}`
+          : "N/A";
+
+      html += `${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}`;
+      html += `</div>`; // close flex row
+
+      // Expand classifiers only for the active metric
+      if (isActive && metric.classifiers) {
+        const classifiers = Object.entries(metric.classifiers);
+
+        if (classifiers.length > 0) {
+          // Find primary classifier (worst status, or highest weight*deviation)
+          const primaryClassifier = this.findPrimaryClassifier(
+            metric.classifiers,
+          );
+
+          // Indent = legendDot(14px) + gap1(5px) + statusIcon(14px) + gap2(6px) = 39px
+          // aligns classifier left-edge with first letter of the metric name above
+          html +=
+            '<div style="margin-left:39px;font-size:11px;opacity:0.85;display:flex;flex-direction:column;gap:2px;">';
+          for (const [name, data] of classifiers) {
+            const statusColor =
+              data.status === "red"
+                ? "#f44336"
+                : data.status === "yellow"
+                  ? "#ff9800"
+                  : "#4caf50";
+
+            const isPrimary = name === primaryClassifier;
+            const primaryStyle = isPrimary ? "font-weight:600;" : "";
+
+            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="display:flex;justify-content:space-between;align-items:center;${primaryStyle}">`;
+            html += `<span style="color:${statusColor};margin-right:4px;">●</span>`;
+            html += `<span style="flex:1;">${name}</span>`;
+            // Show as 0-100 score if value is a normalized 0-1 ratio, else raw
+            const displayVal =
+              data.value <= 1.0
+                ? `${Math.round(data.value * 100)}`
+                : `${Math.round(data.value)}`;
+            html += `<span style="opacity:0.7;">${displayVal}</span>`;
+            html += `</div>`;
+          }
+          html += "</div>";
+        }
+      }
+
+      html += `</div>`; // close .tooltip-metric
+    }
+
+    // No outer wrapper close — tooltipElement is the flex container
+    return html;
+  }
+
+  /**
+   * Find the primary classifier for highlighting (worst status, tie-break by value deviation from 1.0).
+   */
+  private findPrimaryClassifier(
+    classifiers: Record<string, { value: number; status: string }>,
+  ): string | null {
+    if (Object.keys(classifiers).length === 0) {
+      return null;
+    }
+
+    const statusPriority = { red: 3, yellow: 2, green: 1 };
+
+    let primaryName: string | null = null;
+    let worstPriority = 0;
+    let maxDeviation = 0;
+
+    for (const [name, data] of Object.entries(classifiers)) {
+      const priority =
+        statusPriority[data.status as keyof typeof statusPriority] || 0;
+      const deviation = Math.abs(1.0 - data.value);
+
+      if (
+        priority > worstPriority ||
+        (priority === worstPriority && deviation > maxDeviation)
+      ) {
+        primaryName = name;
+        worstPriority = priority;
+        maxDeviation = deviation;
+      }
+    }
+
+    return primaryName;
+  }
+
+  /**
+   * Get point value at cursor time using linear interpolation.
+   * Also returns nearest source observation for classifier/status metadata.
+   */
+  private getPointAtTime(
+    observations: Observation[],
+    cursorTime: number,
+  ): { value: number; closestObs: Observation; timeDiffSec: number } | null {
+    if (observations.length === 0) return null;
+    if (observations.length === 1) {
+      const only = observations[0];
+      return {
+        value: only.value,
+        closestObs: only,
+        timeDiffSec: Math.abs(only.timestamp - cursorTime),
+      };
+    }
+
+    const bisect = d3.bisector((o: Observation) => o.timestamp).left;
+    const idx = bisect(observations, cursorTime);
+
+    if (idx <= 0) {
+      const first = observations[0];
+      return {
+        value: first.value,
+        closestObs: first,
+        timeDiffSec: Math.abs(first.timestamp - cursorTime),
+      };
+    }
+
+    if (idx >= observations.length) {
+      const last = observations[observations.length - 1];
+      return {
+        value: last.value,
+        closestObs: last,
+        timeDiffSec: Math.abs(last.timestamp - cursorTime),
+      };
+    }
+
+    const prev = observations[idx - 1];
+    const next = observations[idx];
+    const span = next.timestamp - prev.timestamp;
+    const t = span > 0 ? (cursorTime - prev.timestamp) / span : 0;
+    const clampedT = Math.max(0, Math.min(1, t));
+    const value = prev.value + (next.value - prev.value) * clampedT;
+    const prevDiff = Math.abs(prev.timestamp - cursorTime);
+    const nextDiff = Math.abs(next.timestamp - cursorTime);
+    const closestObs = prevDiff <= nextDiff ? prev : next;
+
+    return {
+      value,
+      closestObs,
+      timeDiffSec: Math.min(prevDiff, nextDiff),
+    };
+  }
+
+  /**
+   * Aggregate classifier statuses to one icon state for tooltip rows.
+   */
+  private getClassifierAggregateStatus(
+    classifiers?: Record<string, { value: number; status: string }>,
+  ): "green" | "yellow" | "red" | null {
+    if (!classifiers) return null;
+    const statuses = Object.values(classifiers).map((c) => c.status);
+    if (statuses.length === 0) return null;
+    if (statuses.includes("red")) return "red";
+    if (statuses.includes("yellow")) return "yellow";
+    return "green";
+  }
+
+  /**
+   * Choose which metric row should be expanded for classifier details.
+   * Preference: activeMetric (if it has classifiers) -> nearestMetric (if it has classifiers)
+   * -> first metric with classifiers -> activeMetric -> nearestMetric -> none.
+   */
+  private resolveExpandedMetricName(
+    metricsAtCursor: Array<{
+      name: string;
+      classifiers?: Record<string, { value: number; status: string }>;
+    }>,
+  ): string | null {
+    const hasClassifiers = (name: string | null): boolean => {
+      if (!name) return false;
+      const row = metricsAtCursor.find((m) => m.name === name);
+      return !!row?.classifiers && Object.keys(row.classifiers).length > 0;
+    };
+
+    if (hasClassifiers(this.activeMetric)) return this.activeMetric;
+    if (hasClassifiers(this.nearestMetric)) return this.nearestMetric;
+
+    const firstWithClassifiers = metricsAtCursor.find(
+      (m) => m.classifiers && Object.keys(m.classifiers).length > 0,
+    );
+    if (firstWithClassifiers) return firstWithClassifiers.name;
+
+    if (
+      this.activeMetric &&
+      metricsAtCursor.some((m) => m.name === this.activeMetric)
+    )
+      return this.activeMetric;
+    if (
+      this.nearestMetric &&
+      metricsAtCursor.some((m) => m.name === this.nearestMetric)
+    )
+      return this.nearestMetric;
+    return metricsAtCursor.length > 0 ? metricsAtCursor[0].name : null;
+  }
+
+  /**
+   * Set the canonical display order for metrics (matches the legend/toggle-button column).
+   * Tooltip rows are sorted to this order on every render.
+   */
+  setLegendOrder(order: string[]): void {
+    this.legendOrder = [...order];
   }
 
   /**
    * Add a metric to the chart.
+   * @param metricName - Internal metric key (e.g., "time_to_connect")
+   * @param color - Trace color
+   * @param label - Optional human-readable display label (FD-023). Falls back to metricName.
    */
-  addMetric(metricName: string, color: string): void {
+  addMetric(metricName: string, color: string, label?: string): void {
     if (this.metrics.has(metricName)) {
       return; // Already added
     }
@@ -120,9 +978,13 @@ export class ChartView {
       distributionGenerator,
       baseline: null,
       color,
+      label: label ?? metricName, // Use label if provided, else fall back to raw key (FD-023)
       normalizedYDomain: [Infinity, -Infinity], // Will be set to actual data range on first load
       bufferedRange: null,
     });
+
+    // Suppress y-axis ticks/labels in overlay mode (0-100 normalized values are meaningless)
+    this.core.setYAxisVisible(this.metrics.size <= 1);
 
     console.log(
       `Added metric: ${metricName}, total metrics: ${this.metrics.size}`,
@@ -145,9 +1007,7 @@ export class ChartView {
 
     // If we're back to single metric, may need to recreate distribution
     if (this.metrics.size === 1 && this.config.showDistribution) {
-      const [remainingMetric, remainingData] = Array.from(
-        this.metrics.entries(),
-      )[0];
+      const [, remainingData] = Array.from(this.metrics.entries())[0];
       if (!remainingData.distributionGenerator) {
         remainingData.distributionGenerator = new DistributionRibbonGenerator(
           this.core.getChartGroup(),
@@ -159,6 +1019,9 @@ export class ChartView {
         );
       }
     }
+
+    // Restore y-axis ticks/labels when back to single metric
+    this.core.setYAxisVisible(this.metrics.size <= 1);
 
     this.updateGlobalYDomain();
     this.render();
@@ -172,6 +1035,10 @@ export class ChartView {
    */
   hasMetric(metricName: string): boolean {
     return this.metrics.has(metricName);
+  }
+
+  _getMetricStateForTest(metricName: string): MetricData | undefined {
+    return this.metrics.get(metricName);
   }
 
   /**
@@ -211,6 +1078,7 @@ export class ChartView {
     }
 
     metricData.dataTarget.push(observations);
+    this.captureLatestClassifiers(metricName, observations);
 
     // Debug: Check for suspicious jumps in data
     if (observations.length > 1) {
@@ -290,14 +1158,11 @@ export class ChartView {
       }
     }
 
-    // Mark that we've loaded historical data
-    this.hasLoadedData = true;
-
     // Compute global Y domain across all visible metrics (normalized to 0-100)
     this.updateGlobalYDomain();
 
     // Ensure line generators have updated scales
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -317,39 +1182,12 @@ export class ChartView {
       new Error().stack?.split("\n")[2]?.trim(),
     );
 
-    // #region agent log
-    const currentRange = this.sharedRange.getRange();
-    const allMetricsData = Array.from(this.metrics.entries()).map(
-      ([name, data]) => ({
-        name,
-        bufferCount: data.dataTarget.getAll().length,
-        domain: data.normalizedYDomain,
-      }),
-    );
-    fetch("http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        location: "ChartView.ts:updateGlobalYDomain",
-        message: "Y-domain recalculation",
-        data: {
-          metricCount: this.metrics.size,
-          visibleRange: currentRange,
-          allMetricsData,
-        },
-        timestamp: Date.now(),
-        runId: "pan-rescale-debug",
-        hypothesisId: "H3",
-      }),
-    }).catch(() => {});
-    // #endregion
-
     if (this.metrics.size > 1) {
       // Multiple metrics: use normalized 0-100 range
       this.core.updateYDomain([0, 100]);
     } else if (this.metrics.size === 1) {
       // Single metric: use actual values from entire dataset
-      const [metricName, metricData] = Array.from(this.metrics.entries())[0];
+      const [, metricData] = Array.from(this.metrics.entries())[0];
 
       // Use the stored normalizedYDomain which contains min/max from all loaded data
       if (metricData.normalizedYDomain[0] !== Infinity) {
@@ -379,6 +1217,12 @@ export class ChartView {
     }
 
     metricData.dataTarget.push([observation]);
+    if (
+      observation.classifiers &&
+      Object.keys(observation.classifiers).length > 0
+    ) {
+      this.latestClassifiersByMetric.set(metricName, observation.classifiers);
+    }
 
     // Check if this new observation EXPANDS the Y-domain
     const oldDomain = metricData.normalizedYDomain;
@@ -410,7 +1254,7 @@ export class ChartView {
 
         // Prune old data for all metrics
         const pruneStart = newRange[0] - this.durationSeconds;
-        for (const [name, data] of this.metrics) {
+        for (const [, data] of this.metrics) {
           data.dataTarget.pruneOutsideRange(pruneStart, newRange[1]);
         }
       }
@@ -443,8 +1287,10 @@ export class ChartView {
     this.chartStartTime = end - durationSeconds;
 
     // Clear data for all metrics before changing range
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.dataTarget.clear();
+      metricData.normalizedYDomain = [Infinity, -Infinity];
+      metricData.bufferedRange = null;
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.hide();
       }
@@ -454,7 +1300,7 @@ export class ChartView {
 
     // Update scales and render to ensure chart is not blank
     this.updateGlobalYDomain();
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -708,13 +1554,19 @@ export class ChartView {
         const interpolated: Record<string, number> = {};
         for (const key of percentileKeys) {
           const a =
-            (currentDist.distribution as Record<string, number>)[key] ?? 0;
-          const b = (nextDist.distribution as Record<string, number>)[key] ?? 0;
+            (currentDist.distribution as unknown as Record<string, number>)[
+              key
+            ] ?? 0;
+          const b =
+            (nextDist.distribution as unknown as Record<string, number>)[key] ??
+            0;
           interpolated[key] = a + (b - a) * t;
         }
         // Preserve count from current hour
         interpolated["count"] =
-          (currentDist.distribution as Record<string, number>)["count"] ?? 0;
+          (currentDist.distribution as unknown as Record<string, number>)[
+            "count"
+          ] ?? 0;
 
         distributionPoints.push({
           timestamp,
@@ -740,7 +1592,7 @@ export class ChartView {
     const range = this.sharedRange.getRange();
 
     // Render each metric
-    for (const [metricName, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       // Get ALL buffered data (not just visible range) for pre-rendering
       const allObservations = metricData.dataTarget.getAll();
 
@@ -795,7 +1647,7 @@ export class ChartView {
     this.core.resize(width, height);
 
     // Update scales for all generators after core resize
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.setScales(
         this.core.getXScale(),
         this.core.getYScale(),
@@ -825,7 +1677,7 @@ export class ChartView {
   destroy(): void {
     this.core.destroy();
 
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       metricData.lineGenerator.destroy();
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.destroy();

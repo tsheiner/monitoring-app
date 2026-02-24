@@ -57,10 +57,6 @@ export class ChartCore {
     const chartHeight =
       config.height - config.margin.top - config.margin.bottom;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/9c3a7771-a4c8-495b-839c-58d702259981',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ChartCore.ts:constructor',message:'Chart initialized',data:{width:config.width,height:config.height,margin:config.margin,chartWidth,chartHeight},timestamp:Date.now(),runId:'422-debug',hypothesisId:'H2'})}).catch(()=>{});
-    // #endregion
-
     // Define clip-path to constrain all chart elements within axis boundaries
     this.svg
       .append("defs")
@@ -145,12 +141,15 @@ export class ChartCore {
    */
   updateYDomain(domain: [number, number]): void {
     const previousDomain = this.yScale.domain();
-    const domainChanged = domain[0] !== previousDomain[0] || domain[1] !== previousDomain[1];
-    
+    const domainChanged =
+      domain[0] !== previousDomain[0] || domain[1] !== previousDomain[1];
+
     if (domainChanged) {
-      console.log(`⚠️ Y-domain CHANGED: [${previousDomain[0].toFixed(2)}, ${previousDomain[1].toFixed(2)}] → [${domain[0].toFixed(2)}, ${domain[1].toFixed(2)}]`);
+      console.log(
+        `⚠️ Y-domain CHANGED: [${previousDomain[0].toFixed(2)}, ${previousDomain[1].toFixed(2)}] → [${domain[0].toFixed(2)}, ${domain[1].toFixed(2)}]`,
+      );
     }
-    
+
     // Add 25% padding to both ends for breathing room
     const padding = (domain[1] - domain[0]) * 0.25;
     this.yScale.domain([domain[0] - padding, domain[1] + padding]);
@@ -183,8 +182,27 @@ export class ChartCore {
    * Get unclipped chart group for elements that should extend beyond boundaries.
    * Use this for event markers, tooltips, etc.
    */
-  getUnclippedChartGroup(): d3.Selection<SVGGElement, unknown, null, undefined> {
+  getUnclippedChartGroup(): d3.Selection<
+    SVGGElement,
+    unknown,
+    null,
+    undefined
+  > {
     return this.chartGroup;
+  }
+
+  /**
+   * Get SVG element for attaching global event handlers.
+   */
+  getSVG(): d3.Selection<SVGSVGElement, unknown, null, undefined> {
+    return this.svg;
+  }
+
+  /**
+   * Get the zoom behavior for external event listeners.
+   */
+  getZoomBehavior(): d3.ZoomBehavior<SVGSVGElement, unknown> {
+    return this.zoom;
   }
 
   /**
@@ -195,7 +213,7 @@ export class ChartCore {
     const xAxisGenerator = d3
       .axisBottom(this.xScale)
       .ticks(6)
-      .tickFormat(d3.timeFormat("%H:%M"));
+      .tickFormat((d) => d3.timeFormat("%H:%M")(d as Date));
 
     this.xAxis
       .call(xAxisGenerator as any)
@@ -244,15 +262,6 @@ export class ChartCore {
 
     this.durationText.text(durationStr);
     this.rangeText.text(rangeStr);
-  }
-
-  /**
-   * Set callback for range changes from zoom/pan.
-   */
-  onRangeChange(
-    callback: (range: [number, number], userInitiated: boolean) => void,
-  ): void {
-    this.onRangeChangeCallback = callback;
   }
 
   /**
@@ -338,6 +347,14 @@ export class ChartCore {
     this.svg.call(this.zoom.transform, d3.zoomIdentity);
 
     this.isHandlingZoom = false;
+  }
+
+  /**
+   * Show or hide the Y-axis ticks and labels.
+   * Hide when multiple metrics are overlaid (0-100 normalized values are not meaningful).
+   */
+  setYAxisVisible(visible: boolean): void {
+    this.yAxis.style("display", visible ? "" : "none");
   }
 
   /**

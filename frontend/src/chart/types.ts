@@ -6,9 +6,15 @@
 // Data Types
 // ============================================================================
 
+export interface ClassifierValue {
+  value: number;
+  status: "green" | "yellow" | "red";
+}
+
 export interface Observation {
   timestamp: number;
   value: number;
+  classifiers?: Record<string, ClassifierValue>;
 }
 
 export interface Distribution {
@@ -139,6 +145,7 @@ export interface MetricMessage {
   timestamp: number;
   metric: string;
   value: number;
+  classifiers?: Record<string, ClassifierValue>;
 }
 
 export interface EventMessage {
