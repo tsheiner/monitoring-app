@@ -174,44 +174,119 @@
     "AP-Floor1-01": {
       "role": "emergency",
       "floor": 1,
-      "load_baseline": 0.40,
+      "load_baseline": 0.4,
       "rf_baseline": 0.92,
-      "description": "Emergency department - unpredictable surges"
+      "description": "Emergency department - unpredictable surges",
+      "model": "CW9166I",
+      "serial": "QDTU-V5W6-X7Y8",
+      "mac": "0c:8d:dc:23:db:0e",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor1-02": {
       "role": "lobby",
       "floor": 1,
       "load_baseline": 0.25,
       "rf_baseline": 0.94,
-      "description": "Main lobby and registration"
+      "description": "Main lobby and registration",
+      "model": "MR42-HW",
+      "serial": "QEZA-B9C0-D1E2",
+      "mac": "0c:8d:dc:34:ec:1f",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor2-01": {
       "role": "nursing_station",
       "floor": 2,
       "load_baseline": 0.35,
       "rf_baseline": 0.93,
-      "description": "Nursing station - steady medical device traffic"
+      "description": "Nursing station - steady medical device traffic",
+      "model": "CW9166I",
+      "serial": "QFFG-H3I4-J5K6",
+      "mac": "0c:8d:dc:45:fd:20",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor2-02": {
       "role": "patient_rooms",
       "floor": 2,
-      "load_baseline": 0.30,
+      "load_baseline": 0.3,
       "rf_baseline": 0.91,
-      "description": "Patient room corridor"
+      "description": "Patient room corridor",
+      "model": "MR42-HW",
+      "serial": "QGLM-N7O8-P9Q0",
+      "mac": "0c:8d:dc:56:0e:31",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor3-01": {
       "role": "operating_room",
       "floor": 3,
       "load_baseline": 0.35,
       "rf_baseline": 0.95,
-      "description": "Surgical suite - critical reliability requirements"
+      "description": "Surgical suite - critical reliability requirements",
+      "model": "CW9166I",
+      "serial": "QHRS-T1U2-V3W4",
+      "mac": "0c:8d:dc:67:1f:42",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor3-02": {
       "role": "admin",
       "floor": 3,
-      "load_baseline": 0.30,
-      "rf_baseline": 0.90,
-      "description": "Administrative offices"
+      "load_baseline": 0.3,
+      "rf_baseline": 0.9,
+      "description": "Administrative offices",
+      "model": "MR32",
+      "serial": "QIXY-Z5A6-B7C8",
+      "mac": "0c:8d:dc:78:20:53",
+      "bands": ["2.4", "5"]
     }
+  },
+
+  "servers": {
+    "dns": [
+      {
+        "ip": "8.8.8.8",
+        "name": "Google DNS Primary",
+        "base_success_rate": 0.97,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "8.8.4.4",
+        "name": "Google DNS Secondary",
+        "base_success_rate": 0.96,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "10.92.128.103",
+        "name": "Hospital Internal DNS",
+        "base_success_rate": 0.95,
+        "latency_ms_range": [2, 8]
+      }
+    ],
+    "dhcp": [
+      {
+        "ip": "192.168.1.1",
+        "name": "Primary DHCP",
+        "base_success_rate": 0.92,
+        "latency_ms_range": [8, 30]
+      },
+      {
+        "ip": "10.0.0.1",
+        "name": "Backup DHCP",
+        "base_success_rate": 0.9,
+        "latency_ms_range": [10, 40]
+      }
+    ],
+    "radius": [
+      {
+        "ip": "10.10.10.10",
+        "name": "RADIUS Primary",
+        "base_success_rate": 0.98,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "10.10.10.11",
+        "name": "RADIUS Secondary",
+        "base_success_rate": 0.98,
+        "latency_ms_range": [5, 20]
+      }
+    ]
   }
 }

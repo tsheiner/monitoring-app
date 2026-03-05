@@ -152,7 +152,7 @@
     "client_load": {
       "theta": 0.003,
       "sigma": 0.006,
-      "normal_level": 0.50,
+      "normal_level": 0.5,
       "description": "Student demand - more volatile than enterprise, class schedule peaks"
     },
     "rf_quality": {
@@ -176,42 +176,117 @@
       "floor": 1,
       "load_baseline": 0.55,
       "rf_baseline": 0.86,
-      "description": "Large lecture hall - very bursty with class changes"
+      "description": "Large lecture hall - very bursty with class changes",
+      "model": "CW9166I",
+      "serial": "Q7JK-L1M2-N3O4",
+      "mac": "0c:8d:db:cd:75:a8",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor1-02": {
       "role": "common_area",
       "floor": 1,
-      "load_baseline": 0.40,
+      "load_baseline": 0.4,
       "rf_baseline": 0.88,
-      "description": "Student union common area"
+      "description": "Student union common area",
+      "model": "MR42-HW",
+      "serial": "Q8PQ-R5S6-T7U8",
+      "mac": "0c:8d:db:de:86:b9",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor2-01": {
       "role": "lab",
       "floor": 2,
       "load_baseline": 0.45,
-      "rf_baseline": 0.90,
-      "description": "Computer lab - steady moderate load during hours"
+      "rf_baseline": 0.9,
+      "description": "Computer lab - steady moderate load during hours",
+      "model": "MR42-HW",
+      "serial": "Q9VW-X9Y0-Z1A2",
+      "mac": "0c:8d:db:ef:97:ca",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor2-02": {
       "role": "study_area",
       "floor": 2,
       "load_baseline": 0.35,
       "rf_baseline": 0.89,
-      "description": "Library study area"
+      "description": "Library study area",
+      "model": "MR18",
+      "serial": "QABC-D3E4-F5G6",
+      "mac": "0c:8d:dc:f0:a8:db",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor3-01": {
       "role": "dorm",
       "floor": 3,
-      "load_baseline": 0.50,
+      "load_baseline": 0.5,
       "rf_baseline": 0.84,
-      "description": "Dormitory floor - high evening/weekend usage"
+      "description": "Dormitory floor - high evening/weekend usage",
+      "model": "CW9166I",
+      "serial": "QBHI-J7K8-L9M0",
+      "mac": "0c:8d:dc:01:b9:ec",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor3-02": {
       "role": "outdoor",
       "floor": 3,
       "load_baseline": 0.25,
-      "rf_baseline": 0.80,
-      "description": "Outdoor courtyard - weak signal, weather-affected"
+      "rf_baseline": 0.8,
+      "description": "Outdoor courtyard - weak signal, weather-affected",
+      "model": "MR72",
+      "serial": "QCNO-P1Q2-R3S4",
+      "mac": "0c:8d:dc:12:ca:fd",
+      "bands": ["2.4", "5"]
     }
+  },
+
+  "servers": {
+    "dns": [
+      {
+        "ip": "8.8.8.8",
+        "name": "Google DNS Primary",
+        "base_success_rate": 0.96,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "1.1.1.1",
+        "name": "Cloudflare DNS",
+        "base_success_rate": 0.96,
+        "latency_ms_range": [5, 15]
+      },
+      {
+        "ip": "10.92.128.103",
+        "name": "Campus Internal DNS",
+        "base_success_rate": 0.9,
+        "latency_ms_range": [2, 12]
+      }
+    ],
+    "dhcp": [
+      {
+        "ip": "172.16.0.1",
+        "name": "Primary DHCP",
+        "base_success_rate": 0.88,
+        "latency_ms_range": [10, 45]
+      },
+      {
+        "ip": "172.16.0.2",
+        "name": "Backup DHCP",
+        "base_success_rate": 0.87,
+        "latency_ms_range": [15, 55]
+      }
+    ],
+    "radius": [
+      {
+        "ip": "10.10.10.10",
+        "name": "RADIUS Primary",
+        "base_success_rate": 0.97,
+        "latency_ms_range": [5, 25]
+      },
+      {
+        "ip": "10.10.10.11",
+        "name": "RADIUS Secondary",
+        "base_success_rate": 0.96,
+        "latency_ms_range": [5, 30]
+      }
+    ]
   }
 }

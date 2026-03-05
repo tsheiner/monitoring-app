@@ -174,6 +174,33 @@ CLASSIFIER_DEFINITIONS = {
         "initial_level": 0.90,
         "description": "Device temperature (inverse)"
     },
+
+    # RF sub-scores (Phase 4) — from infra-rf-health.ts production data
+    # ccaBusyScore range 32-98 in production → normalized ~0.32-0.98
+    "cca_busy": {
+        "theta": 0.0006,
+        "sigma": 0.0025,
+        "initial_level": 0.72,
+        "description": "Clear Channel Assessment busy fraction (inverse — lower CCA busy = healthier)"
+    },
+    # lowRssiClientsScore: step-function in production (0, 33, 50, 100)
+    # Low theta: population characteristic, changes slowly
+    "low_rssi_clients": {
+        "theta": 0.0001,
+        "sigma": 0.0008,
+        "initial_level": 0.85,
+        "description": "Low RSSI client fraction (inverse — fewer low-RSSI clients = healthier)"
+    },
+
+    # Client signal quality (Phase 5) — models aggregate client radio quality
+    # ~20.8% of coverage failures attributed to client-side signal weakness
+    # Very low theta: client population is stable within a day
+    "client_signal_quality": {
+        "theta": 0.00008,
+        "sigma": 0.0006,
+        "initial_level": 0.82,
+        "description": "Aggregate quality of connected clients' radio hardware and positioning"
+    },
 }
 
 
@@ -194,19 +221,26 @@ METRIC_CLASSIFIERS = {
         "dns": 0.15,
     },
     "capacity": {
-        "client_density": 0.50,
-        "cochannel_interference": 0.30,
-        "nonwifi_interference": 0.20,
+        # Phase 4: redistributed — added cca_busy (0.20)
+        "client_density": 0.40,
+        "cochannel_interference": 0.25,
+        "nonwifi_interference": 0.15,
+        "cca_busy": 0.20,
     },
     "throughput": {
-        "airtime_utilization": 0.45,
+        # Phase 4: redistributed — added cca_busy (0.15)
+        "airtime_utilization": 0.35,
         "channel_width": 0.25,
-        "retry_rate": 0.30,
+        "retry_rate": 0.25,
+        "cca_busy": 0.15,
     },
     "coverage": {
-        "signal_strength": 0.50,
-        "ap_density": 0.30,
-        "cell_overlap": 0.20,
+        # Phase 4 + 5: redistributed — added low_rssi_clients (0.15) and client_signal_quality (0.20)
+        "signal_strength": 0.35,
+        "ap_density": 0.20,
+        "cell_overlap": 0.10,
+        "low_rssi_clients": 0.15,
+        "client_signal_quality": 0.20,
     },
     "roaming": {
         "handoff_latency": 0.50,
@@ -323,7 +357,8 @@ class RealisticMetricsGenerator:
         self._load_classifier_thresholds()
 
     def generate_observation(
-        self, metric: str, timestamp: int = None, entity: str = None, include_classifiers: bool = False
+        self, metric: str, timestamp: int = None, entity: str = None,
+        include_classifiers: bool = False, include_device_identity: bool = False
     ) -> Dict:
         """
         Generate a single metric observation by deriving from classifier state.
@@ -363,10 +398,21 @@ class RealisticMetricsGenerator:
         }
         if entity is not None:
             result["entity"] = entity
-        
+
         # Include classifier breakdown if requested (FD-013)
         if include_classifiers:
             result["classifiers"] = self._get_classifier_breakdown(metric, ts)
+
+        # Include device identity if requested and entity is a known AP (Phase 2)
+        if include_device_identity and entity and entity in self._topology:
+            ap_info = self._topology[entity]
+            if "serial" in ap_info:
+                result["device"] = {
+                    "name": entity,
+                    "serial": ap_info.get("serial", ""),
+                    "mac": ap_info.get("mac", ""),
+                    "model": ap_info.get("model", ""),
+                }
 
         return result
 
@@ -468,12 +514,18 @@ class RealisticMetricsGenerator:
         thresholds = self._classifier_thresholds.get(classifier_name, {}).get(hour)
         
         if thresholds is None:
-            # Fallback: if no thresholds available, use simple heuristics
-            # This should only happen before first bootstrap or if baselines are missing
-            # Heuristics use p25/p10 sensitivity to match the bootstrap-derived policy
-            if value >= 0.95:
+            # Fallback: if no bootstrap thresholds are available, derive green/yellow
+            # relative to this classifier's normal level (initial_level).
+            # This avoids falsely marking healthy classifiers red simply because
+            # their designed normal range is below 0.95.
+            normal_level = CLASSIFIER_DEFINITIONS.get(classifier_name, {}).get(
+                "initial_level", 0.90
+            )
+            green_min = max(0.0, normal_level - 0.02)   # ≤ 2% below normal = green
+            yellow_min = max(0.0, normal_level - 0.08)  # 2–8% below normal = yellow
+            if value >= green_min:
                 return "green"
-            elif value >= 0.90:
+            elif value >= yellow_min:
                 return "yellow"
             else:
                 return "red"

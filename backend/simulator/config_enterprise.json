@@ -158,7 +158,7 @@
     "rf_quality": {
       "theta": 0.0005,
       "sigma": 0.001,
-      "normal_level": 0.90,
+      "normal_level": 0.9,
       "description": "Radio frequency environment quality. Mostly stable, degrades with interference."
     },
     "infra_health": {
@@ -174,44 +174,119 @@
     "AP-Floor1-01": {
       "role": "lobby",
       "floor": 1,
-      "load_baseline": 0.30,
+      "load_baseline": 0.3,
       "rf_baseline": 0.88,
-      "description": "Main entrance lobby - high transient traffic, moderate sustained load"
+      "description": "Main entrance lobby - high transient traffic, moderate sustained load",
+      "model": "CW9166I",
+      "serial": "Q2KD-T76L-HBY6",
+      "mac": "0c:8d:db:6d:19:42",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor1-02": {
       "role": "open_office",
       "floor": 1,
-      "load_baseline": 0.50,
-      "rf_baseline": 0.90,
-      "description": "First floor open office area"
+      "load_baseline": 0.5,
+      "rf_baseline": 0.9,
+      "description": "First floor open office area",
+      "model": "MR42-HW",
+      "serial": "Q2AB-C4E5-F1G2",
+      "mac": "0c:8d:db:7e:20:53",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor2-01": {
       "role": "conference",
       "floor": 2,
       "load_baseline": 0.35,
       "rf_baseline": 0.91,
-      "description": "Conference room cluster - bursty during meetings"
+      "description": "Conference room cluster - bursty during meetings",
+      "model": "CW9166I",
+      "serial": "Q3HK-M9N0-P2Q3",
+      "mac": "0c:8d:db:8f:31:64",
+      "bands": ["2.4", "5", "6"]
     },
     "AP-Floor2-02": {
       "role": "open_office",
       "floor": 2,
-      "load_baseline": 0.50,
+      "load_baseline": 0.5,
       "rf_baseline": 0.89,
-      "description": "Second floor open office area"
+      "description": "Second floor open office area",
+      "model": "MR42-HW",
+      "serial": "Q4RS-T5U6-V7W8",
+      "mac": "0c:8d:db:9a:42:75",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor3-01": {
       "role": "hallway",
       "floor": 3,
-      "load_baseline": 0.20,
+      "load_baseline": 0.2,
       "rf_baseline": 0.93,
-      "description": "Third floor common area and hallway"
+      "description": "Third floor common area and hallway",
+      "model": "MR72",
+      "serial": "Q5XY-Z1A2-B3C4",
+      "mac": "0c:8d:db:ab:53:86",
+      "bands": ["2.4", "5"]
     },
     "AP-Floor3-02": {
       "role": "dense_office",
       "floor": 3,
-      "load_baseline": 0.60,
+      "load_baseline": 0.6,
       "rf_baseline": 0.82,
-      "description": "Dense cubicle area - problematic AP with weak RF and high demand"
+      "description": "Dense cubicle area - problematic AP with weak RF and high demand",
+      "model": "CW9166I",
+      "serial": "Q6DE-F7G8-H9I0",
+      "mac": "0c:8d:db:bc:64:97",
+      "bands": ["2.4", "5", "6"]
     }
+  },
+
+  "servers": {
+    "dns": [
+      {
+        "ip": "8.8.8.8",
+        "name": "Google DNS Primary",
+        "base_success_rate": 0.96,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "8.8.4.4",
+        "name": "Google DNS Secondary",
+        "base_success_rate": 0.95,
+        "latency_ms_range": [5, 20]
+      },
+      {
+        "ip": "10.92.128.103",
+        "name": "Internal DNS",
+        "base_success_rate": 0.92,
+        "latency_ms_range": [2, 10]
+      }
+    ],
+    "dhcp": [
+      {
+        "ip": "192.168.1.1",
+        "name": "Primary DHCP",
+        "base_success_rate": 0.89,
+        "latency_ms_range": [10, 40]
+      },
+      {
+        "ip": "10.0.0.1",
+        "name": "Backup DHCP",
+        "base_success_rate": 0.88,
+        "latency_ms_range": [15, 55]
+      }
+    ],
+    "radius": [
+      {
+        "ip": "10.10.10.10",
+        "name": "RADIUS Primary",
+        "base_success_rate": 0.97,
+        "latency_ms_range": [5, 25]
+      },
+      {
+        "ip": "10.10.10.11",
+        "name": "RADIUS Secondary",
+        "base_success_rate": 0.97,
+        "latency_ms_range": [5, 25]
+      }
+    ]
   }
 }

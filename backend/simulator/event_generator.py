@@ -8,12 +8,41 @@ Events are causally linked to metrics: when an event occurs, a corresponding
 perturbation is created that affects the relevant metrics with realistic
 spike/recovery curves.
 """
+import json
 import time
 import random
 from typing import Dict, List, Optional, Callable
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from simulator.perturbations import create_perturbation_from_event
+
+
+# --- Failure Reason Code Constants (Phase 1) ---
+# Sourced from production assurance-mock-generators (successful-connects.ts)
+
+DHCP_FAILURE_REASONS = [
+    {"type": "Meraki reason", "code": 108, "reason": "Unresponsive"},
+    {"type": "Meraki reason", "code": 109, "reason": "Timeout"},
+    {"type": "Meraki reason", "code": 110, "reason": "Stuck"},
+    {"type": "Meraki reason", "code": 112, "reason": "Nack"},
+]
+
+AUTH_FAILURE_REASONS = [
+    {"type": "Meraki reason", "code": 102, "reason": "EAPoL handshake error"},
+    {"type": "Meraki reason", "code": 103, "reason": "Invalid PSK"},
+    {"type": "802.11 reason", "code": 15, "reason": "4-way handshake timeout"},
+]
+
+DNS_FAILURE_REASONS = [
+    {"type": "Meraki reason", "code": 114, "reason": "No DNS Response"},
+    {"type": "Meraki reason", "code": 115, "reason": "Timeout"},
+]
+
+ASSOC_FAILURE_REASONS = [
+    {"type": "802.11 status", "code": 0, "reason": "Reserved"},
+    {"type": "802.11 reason", "code": 1, "reason": "Unspecified failure"},
+]
 
 
 class EventGenerator:
@@ -53,11 +82,48 @@ class EventGenerator:
         "AP-Floor3-02",
     ]
 
-    def __init__(self):
+    def __init__(self, config_path=None):
         """Initialize event generator."""
         self.event_callbacks: List[Callable] = []
         self._event_task = None
         self._metrics_generator = None  # Set via set_metrics_generator()
+
+        # Load AP topology (device identity) and server info from config (Phases 2 & 3)
+        self._topology: Dict[str, Dict] = {}
+        self._servers: Dict[str, List] = {}
+        self._load_config(config_path)
+
+    def _load_config(self, config_path=None) -> None:
+        """
+        Load AP topology and server info from config file.
+
+        Handles missing file or missing sections gracefully so existing behavior
+        is fully preserved when the config lacks new fields.
+        """
+        try:
+            if config_path is None:
+                from simulator.realistic_generator import get_config_path
+                cp = get_config_path()
+            else:
+                cp = Path(config_path)
+            with open(cp) as f:
+                cfg = json.load(f)
+
+            # Extract AP identity fields from topology (Phase 2)
+            for ap_name, ap_data in cfg.get("ap_topology", {}).items():
+                if isinstance(ap_data, dict) and "serial" in ap_data:
+                    self._topology[ap_name] = {
+                        "model": ap_data.get("model", ""),
+                        "serial": ap_data.get("serial", ""),
+                        "mac": ap_data.get("mac", ""),
+                        "bands": ap_data.get("bands", []),
+                    }
+
+            # Extract server info (Phase 3)
+            self._servers = cfg.get("servers", {})
+
+        except (IOError, KeyError, json.JSONDecodeError, ImportError):
+            pass  # Graceful fallback — no identity/server enrichment
 
     def set_metrics_generator(self, generator) -> None:
         """
@@ -67,6 +133,20 @@ class EventGenerator:
         with the metrics generator so events cause visible metric changes.
         """
         self._metrics_generator = generator
+
+    def _get_device_identity(self, entity: str) -> Optional[Dict]:
+        """Return device identity dict for a known AP entity, or None (Phase 2)."""
+        if entity in self._topology:
+            return dict(self._topology[entity])
+        return None
+
+    def _get_server_reference(self, server_type: str) -> Optional[Dict]:
+        """Return a random server reference for dhcp/dns/radius events (Phase 3)."""
+        servers = self._servers.get(server_type, [])
+        if servers:
+            server = random.choice(servers)
+            return {"ip": server["ip"], "type": server_type}
+        return None
 
     def register_callback(self, callback: Callable[[Dict], None]) -> None:
         """Register a callback to be called when events are generated."""
@@ -105,6 +185,12 @@ class EventGenerator:
         severity = severity or self._default_severity(event_type)
         message = self._generate_message(event_type, entity)
         metadata = metadata or self._generate_metadata(event_type)
+
+        # Enrich metadata with device identity when entity is a known AP (Phase 2)
+        device_identity = self._get_device_identity(entity)
+        if device_identity:
+            metadata = dict(metadata)
+            metadata["device"] = device_identity
 
         event = {
             "timestamp": int(time.time()),
@@ -231,6 +317,47 @@ class EventGenerator:
                 "severity_dbm": round(random.uniform(-20, -5), 1),
                 "estimated_duration_minutes": random.randint(2, 15)
             }
+        elif event_type == "dhcp_server_overload":
+            # Phase 1: structured failure reason codes
+            num_reasons = random.randint(1, 3)
+            selected = random.sample(DHCP_FAILURE_REASONS, min(num_reasons, len(DHCP_FAILURE_REASONS)))
+            failure_reasons = [dict(r, count=random.randint(1, 50)) for r in selected]
+            metadata = {
+                "contributor": "dhcp",
+                "sub_contributor": "No DHCP response",
+                "failure_reasons": failure_reasons,
+            }
+            # Phase 3: server reference
+            server = self._get_server_reference("dhcp")
+            if server:
+                metadata["server"] = server
+            return metadata
+        elif event_type == "radius_timeout":
+            num_reasons = random.randint(1, 3)
+            selected = random.sample(AUTH_FAILURE_REASONS, min(num_reasons, len(AUTH_FAILURE_REASONS)))
+            failure_reasons = [dict(r, count=random.randint(1, 30)) for r in selected]
+            metadata = {
+                "contributor": "radius",
+                "sub_contributor": "Auth timeout",
+                "failure_reasons": failure_reasons,
+            }
+            server = self._get_server_reference("radius")
+            if server:
+                metadata["server"] = server
+            return metadata
+        elif event_type == "dns_resolution_failure":
+            num_reasons = random.randint(1, 2)
+            selected = random.sample(DNS_FAILURE_REASONS, min(num_reasons, len(DNS_FAILURE_REASONS)))
+            failure_reasons = [dict(r, count=random.randint(1, 40)) for r in selected]
+            metadata = {
+                "contributor": "dns",
+                "sub_contributor": "No DNS Response",
+                "failure_reasons": failure_reasons,
+            }
+            server = self._get_server_reference("dns")
+            if server:
+                metadata["server"] = server
+            return metadata
 
         return {}
 

@@ -205,6 +205,7 @@ PERTURBATION_TEMPLATES = {
     "interference_event": {
         "affected_classifiers": {
             "cochannel_interference": -0.30,  # Co-channel interference
+            "cca_busy": -0.25,                # CCA busy fraction increases (Phase 4)
             "retry_rate": -0.20,              # More retries needed
             "signal_strength": -0.15,         # RF degradation
         },
