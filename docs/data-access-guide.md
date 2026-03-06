@@ -50,9 +50,9 @@ value. Each classifier is a health score between 0.0 (degraded) and 1.0
 |--------|---------------------|
 | `successful_connects` | association (20%), authorization (25%), dhcp (40%), dns (15%) |
 | `time_to_connect` | association (20%), authorization (25%), dhcp (40%), dns (15%) |
-| `capacity` | client_density (50%), cochannel_interference (30%), nonwifi_interference (20%) |
-| `throughput` | airtime_utilization (45%), channel_width (25%), retry_rate (30%) |
-| `coverage` | signal_strength (50%), ap_density (30%), cell_overlap (20%) |
+| `capacity` | client_density (40%), cochannel_interference (25%), nonwifi_interference (15%), cca_busy (20%) |
+| `throughput` | airtime_utilization (35%), channel_width (25%), retry_rate (25%), cca_busy (15%) |
+| `coverage` | signal_strength (35%), ap_density (20%), cell_overlap (10%), low_rssi_clients (15%), client_signal_quality (20%) |
 | `roaming` | handoff_latency (50%), rssi_tuning (30%), 80211rk_support (20%) |
 | `ap_health` | cpu (30%), memory (25%), uptime (30%), temperature (15%) |
 
@@ -167,7 +167,7 @@ GET /api/metrics/{metric}?start={unix_seconds}&end={unix_seconds}&entity={entity
           "value": 0.852,
           "status": "green",
           "contribution": 0.001,
-          "weight": 0.45
+          "weight": 0.35
         },
         {
           "name": "channel_width",
@@ -181,7 +181,14 @@ GET /api/metrics/{metric}?start={unix_seconds}&end={unix_seconds}&entity={entity
           "value": 0.946,
           "status": "green",
           "contribution": -0.002,
-          "weight": 0.30
+          "weight": 0.25
+        },
+        {
+          "name": "cca_busy",
+          "value": 0.881,
+          "status": "green",
+          "contribution": 0.001,
+          "weight": 0.15
         }
       ]
     }
@@ -377,13 +384,39 @@ GET /api/events?start={unix_seconds}&end={unix_seconds}&event_type={type}&entity
 
 | Event type | Metadata fields |
 |-----------|-----------------|
-| `device_restart` | `previous_uptime`, `reason`, `initiated_by` |
-| `device_crash` | `crash_reason`, `uptime_at_crash`, `last_error` |
-| `firmware_update` | `from_version`, `to_version`, `update_method` |
-| `config_change` | `changed_by`, `change_type`, `old_value`, `new_value` |
-| `ai_action` | `action_type`, `reasoning`, `confidence`, `expected_impact` |
-| `interference_event` | `source`, `affected_channel`, `severity_dbm`, `estimated_duration_minutes` |
+| `device_restart` | `previous_uptime`, `reason`, `initiated_by`, `device` |
+| `device_crash` | `crash_reason`, `uptime_at_crash`, `last_error`, `device` |
+| `firmware_update` | `from_version`, `to_version`, `update_method`, `device` |
+| `config_change` | `changed_by`, `change_type`, `old_value`, `new_value`, `device` |
+| `ai_action` | `action_type`, `reasoning`, `confidence`, `expected_impact`, `device` |
+| `interference_event` | `source`, `affected_channel`, `severity_dbm`, `estimated_duration_minutes`, `device` |
+| `dhcp_server_overload` | `contributor`, `sub_contributor`, `failure_reasons`, `server`, `device` |
+| `radius_timeout` | `contributor`, `sub_contributor`, `failure_reasons`, `server`, `device` |
+| `dns_resolution_failure` | `contributor`, `sub_contributor`, `failure_reasons`, `server`, `device` |
 | Others | `{}` (empty) |
+
+**`device` field** (present on all events for known access points):
+```json
+{
+  "model": "CW9166I",
+  "serial": "Q2KD-T76L-HBY6",
+  "mac": "0c:8d:db:6d:19:42",
+  "bands": ["2.4", "5", "6"]
+}
+```
+
+**`failure_reasons` field** (present on dhcp/radius/dns events):
+```json
+[
+  { "type": "Meraki reason", "code": 109, "reason": "Timeout", "count": 29 },
+  { "type": "Meraki reason", "code": 112, "reason": "Nack", "count": 35 }
+]
+```
+
+**`server` field** (present on dhcp/radius/dns events):
+```json
+{ "ip": "10.0.0.1", "type": "dhcp" }
+```
 
 ---
 
@@ -457,7 +490,7 @@ GET /api/classifiers/{classifier}/baseline
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `classifier` | yes (path) | One of the 20 classifier names (see table above) |
+| `classifier` | yes (path) | One of the 23 classifier names (see table above) |
 
 **Response:**
 
@@ -526,7 +559,7 @@ tick). Values are aggregated across all APs.
       "value": 0.852,
       "status": "green",
       "contribution": 0.001,
-      "weight": 0.45
+      "weight": 0.35
     },
     {
       "name": "channel_width",
@@ -540,7 +573,14 @@ tick). Values are aggregated across all APs.
       "value": 0.946,
       "status": "green",
       "contribution": -0.002,
-      "weight": 0.30
+      "weight": 0.25
+    },
+    {
+      "name": "cca_busy",
+      "value": 0.881,
+      "status": "green",
+      "contribution": 0.001,
+      "weight": 0.15
     }
   ]
 }

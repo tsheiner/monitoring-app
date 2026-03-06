@@ -111,19 +111,19 @@ it would on a real network — without any special-case logic.
   ─────────────────────────────────────────────────────────────────────────
 ```
 
-There are **20 classifiers** in total, organized by the metric group they
+There are **23 classifiers** in total, organized by the metric group they
 primarily serve. The table below is the definitive classifier-metric mapping.
 Weights show each classifier's contribution to its parent metric.
 
-| Metric               | Classifiers and Weights                                                                       |
-|----------------------|-----------------------------------------------------------------------------------------------|
-| successful_connects  | association 20% · authorization 25% · dhcp 40% · dns 15%                                     |
-| time_to_connect      | association 20% · authorization 25% · dhcp 40% · dns 15%                                     |
-| capacity             | client_density 50% · cochannel_interference 30% · nonwifi_interference 20%                   |
-| throughput           | airtime_utilization 45% · channel_width 25% · retry_rate 30%                                 |
-| coverage             | signal_strength 50% · ap_density 30% · cell_overlap 20%                                      |
-| roaming              | handoff_latency 50% · rssi_tuning 30% · 80211rk_support 20%                                  |
-| ap_health            | cpu 30% · memory 25% · uptime 30% · temperature 15%                                          |
+| Metric               | Classifiers and Weights                                                                                              |
+|----------------------|----------------------------------------------------------------------------------------------------------------------|
+| successful_connects  | association 20% · authorization 25% · dhcp 40% · dns 15%                                                            |
+| time_to_connect      | association 20% · authorization 25% · dhcp 40% · dns 15%                                                            |
+| capacity             | client_density 40% · cochannel_interference 25% · nonwifi_interference 15% · cca_busy 20%                           |
+| throughput           | airtime_utilization 35% · channel_width 25% · retry_rate 25% · cca_busy 15%                                         |
+| coverage             | signal_strength 35% · ap_density 20% · cell_overlap 10% · low_rssi_clients 15% · client_signal_quality 20%          |
+| roaming              | handoff_latency 50% · rssi_tuning 30% · 80211rk_support 20%                                                         |
+| ap_health            | cpu 30% · memory 25% · uptime 30% · temperature 15%                                                                 |
 
 ```
   Decomposition example: ap_health
@@ -153,6 +153,9 @@ Weights show each classifier's contribution to its parent metric.
 - signal_strength — RF signal quality across the coverage area
 - ap_density — access point deployment density
 - cell_overlap — cell overlap and coverage redundancy
+- low_rssi_clients — proportion of clients with low RSSI (high proportion = lower score)
+- client_signal_quality — aggregate signal quality score across all associated clients
+- cca_busy — clear-channel assessment busy fraction; how much of airtime is unavailable due to detected activity (high = lower score)
 - handoff_latency — 802.11 client handoff latency (high latency = lower score)
 - rssi_tuning — RSSI threshold tuning quality for roaming decisions
 - 80211rk_support — 802.11r/k fast roaming protocol support
@@ -197,7 +200,7 @@ targets specific classifiers with a defined magnitude and decay behavior.
 | dhcp_server_overload    | dhcp                                                     | exponential          |
 | radius_timeout          | authorization                                            | exponential          |
 | dns_resolution_failure  | dns                                                      | exponential          |
-| interference_event      | cochannel_interference, retry_rate, signal_strength      | sudden_recovery      |
+| interference_event      | cochannel_interference, retry_rate, signal_strength, cca_busy | sudden_recovery  |
 | high_density_event      | client_density, airtime_utilization                      | linear               |
 | rogue_ap                | cell_overlap, retry_rate                                 | sudden_recovery      |
 | config_change           | channel_width                                            | exponential          |
