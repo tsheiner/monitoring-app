@@ -4,7 +4,7 @@ module.exports = {
       name: "monitoring-backend",
       cwd: "./backend",
       script: "main.py",
-      interpreter: "python",
+      interpreter: "./backend/.venv/bin/python",
       env: {
         SKIP_BOOTSTRAP: "true",
         NETWORK_PROFILE: "enterprise",

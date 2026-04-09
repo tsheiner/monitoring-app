@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 ENV/
 env/
 *.egg-info/
@@ -12,7 +13,7 @@ dist/
 build/
 *.log
 
-# Conda
+# Conda (legacy, migrated to uv)
 .conda/
 
 # Data storage
