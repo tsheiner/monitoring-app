@@ -1,10 +1,13 @@
+const path = require("path");
+const ROOT = path.resolve(__dirname);
+
 module.exports = {
   apps: [
     {
       name: "monitoring-backend",
-      cwd: "./backend",
+      cwd: path.join(ROOT, "backend"),
       script: "main.py",
-      interpreter: "./backend/.venv/bin/python",
+      interpreter: path.join(ROOT, "backend", ".venv", "bin", "python"),
       env: {
         SKIP_BOOTSTRAP: "true",
         NETWORK_PROFILE: "enterprise",
@@ -17,7 +20,7 @@ module.exports = {
     },
     {
       name: "monitoring-frontend",
-      cwd: "./frontend",
+      cwd: path.join(ROOT, "frontend"),
       script: "node_modules/.bin/vite",
       env: {
         VITE_PORT: "5032",
