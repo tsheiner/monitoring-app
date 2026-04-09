@@ -4,6 +4,7 @@ FastAPI HTTP API for historical data queries.
 Provides endpoints for querying metrics with distributions and events.
 """
 import json
+import time
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
@@ -24,7 +25,7 @@ from .models import (
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
-from simulator.metrics_generator import MetricsGenerator
+from simulator.realistic_generator import RealisticMetricsGenerator
 
 
 # Create FastAPI app
@@ -62,7 +63,7 @@ async def list_metrics():
     Returns:
         List of metric names
     """
-    metrics = MetricsGenerator.get_all_metrics()
+    metrics = RealisticMetricsGenerator.get_all_metrics()
     return MetricsListResponse(metrics=metrics)
 
 
@@ -86,7 +87,7 @@ async def query_metric(
         Observations and time-bucketed distribution statistics
     """
     # Validate metric name
-    if metric not in MetricsGenerator.get_all_metrics():
+    if metric not in RealisticMetricsGenerator.get_all_metrics():
         raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
     
     # Validate time range
@@ -212,7 +213,7 @@ async def query_baseline(
         24 hourly baseline distributions with fallback metadata
     """
     # Validate metric name
-    if metric not in MetricsGenerator.get_all_metrics():
+    if metric not in RealisticMetricsGenerator.get_all_metrics():
         raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
     
     # Validate lookback_days
@@ -315,7 +316,7 @@ async def get_current_classifiers(metric: str):
         Current observation with classifier breakdown
     """
     # Validate metric name
-    if metric not in MetricsGenerator.get_all_metrics():
+    if metric not in RealisticMetricsGenerator.get_all_metrics():
         raise HTTPException(status_code=404, detail=f"Metric '{metric}' not found")
     
     # Get latest observation from store
@@ -392,3 +393,39 @@ async def get_classifier_baseline(classifier: str):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/debug/memory")
+async def debug_memory():
+    """
+    Runtime memory diagnostics for monitoring long-running deployments.
+
+    Reports process RSS, database row counts, and file sizes.
+    """
+    import os
+    import psutil
+
+    proc = psutil.Process(os.getpid())
+    mem = proc.memory_info()
+
+    metrics_store = get_metrics_store()
+    events_store = get_events_store()
+
+    metrics_count = metrics_store.count_all()
+    events_count = events_store.count_events()
+
+    data_dir = Path("data")
+    file_sizes = {}
+    for name in ["metrics.db", "metrics.db-wal", "events.db", "baselines.json"]:
+        p = data_dir / name
+        if p.exists():
+            file_sizes[name] = round(p.stat().st_size / 1024 / 1024, 2)
+
+    return {
+        "rss_mb": round(mem.rss / 1024 / 1024, 1),
+        "vms_mb": round(mem.vms / 1024 / 1024, 1),
+        "metrics_rows": metrics_count,
+        "events_rows": events_count,
+        "data_files_mb": file_sizes,
+        "uptime_seconds": round(time.time() - proc.create_time()),
+    }

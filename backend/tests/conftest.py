@@ -92,7 +92,7 @@ def isolated_metrics_store(temp_data_dir):
     """
     from storage.metrics_store import MetricsStore
     
-    db_path = temp_data_dir / "metrics.csv"
+    db_path = temp_data_dir / "metrics.db"
     store = MetricsStore(str(db_path))
     return store
 

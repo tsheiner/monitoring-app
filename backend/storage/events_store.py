@@ -263,6 +263,10 @@ class EventsStore:
         
         return count
     
+    def vacuum(self) -> None:
+        """Reclaim disk space after deletes."""
+        self.conn.execute("VACUUM")
+
     def close(self) -> None:
         """Close database connection."""
         self.conn.close()
