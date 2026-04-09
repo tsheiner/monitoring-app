@@ -242,7 +242,14 @@ async def cleanup_old_data_loop():
             metrics_deleted = metrics_store.delete_older_than(cutoff)
             events_deleted = events_store.delete_older_than(cutoff)
             
-            print(f"Cleanup complete: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}\n")
+            print(f"Cleanup complete: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}")
+            
+            # Reclaim disk space after bulk deletes
+            if metrics_deleted > 0:
+                metrics_store.vacuum()
+            if events_deleted > 0:
+                events_store.vacuum()
+            print(f"VACUUM complete\n")
             
         except Exception as e:
             print(f"Error in cleanup loop: {e}")
@@ -281,8 +288,13 @@ async def run_backend():
     from pathlib import Path
     backend_dir = Path(__file__).parent
     db_files = [
-        backend_dir / "data" / "metrics.csv",
+        backend_dir / "data" / "metrics.db",
         backend_dir / "data" / "events.db"
+    ]
+    # Legacy files from TinyFlux era to clean up on fresh start
+    legacy_files = [
+        backend_dir / "data" / "metrics.csv",
+        backend_dir / "data" / "metrics.csv.classifiers.json",
     ]
     
     # Determine if this is first run (no data exists)
@@ -297,9 +309,9 @@ async def run_backend():
         print("Preserving historical data and resuming live generation")
         
         # Show age of existing data
-        metrics_csv = db_files[0]
-        if metrics_csv.exists():
-            age_seconds = time.time() - metrics_csv.stat().st_mtime
+        metrics_db = db_files[0]
+        if metrics_db.exists():
+            age_seconds = time.time() - metrics_db.stat().st_mtime
             age_hours = age_seconds / 3600
             print(f"Data file last modified: {age_hours:.1f} hours ago")
         print("="*60 + "\n")
@@ -317,6 +329,11 @@ async def run_backend():
             if db_file.exists():
                 print(f"  Deleting {db_file.name}...")
                 db_file.unlink()
+        # Clean up legacy TinyFlux files
+        for legacy_file in legacy_files:
+            if legacy_file.exists():
+                print(f"  Deleting legacy {legacy_file.name}...")
+                legacy_file.unlink()
         
         # Reset singleton instances to get fresh database connections
         from storage.metrics_store import reset_metrics_store

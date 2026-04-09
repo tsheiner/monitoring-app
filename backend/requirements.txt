@@ -1,9 +1,3 @@
-# Time series generation and forecasting
-darts>=0.27.0
-
-# Lightweight time-series database
-tinyflux>=0.3.0
-
 # Web framework
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
@@ -16,7 +10,6 @@ apscheduler>=3.10.4
 
 # Data manipulation
 numpy>=1.24.0
-pandas>=2.0.0
 
 # HTTP client (for testing)
 httpx>=0.26.0
