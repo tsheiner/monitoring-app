@@ -8,6 +8,8 @@ module.exports = {
       env: {
         SKIP_BOOTSTRAP: "true",
         NETWORK_PROFILE: "enterprise",
+        HTTP_PORT: "5030",
+        WS_PORT: "5031",
       },
       max_memory_restart: "500M",
       restart_delay: 5000,
@@ -18,7 +20,9 @@ module.exports = {
       cwd: "./frontend",
       script: "node_modules/.bin/vite",
       env: {
-        NODE_ENV: "production",
+        VITE_PORT: "5032",
+        VITE_HTTP_PORT: "5030",
+        VITE_WS_PORT: "5031",
       },
       max_memory_restart: "200M",
     },

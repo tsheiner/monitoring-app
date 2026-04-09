@@ -350,22 +350,26 @@ async def run_backend():
     from simulator.realistic_generator import reset_for_live_streaming
     reset_for_live_streaming()
     
+    # Ports are configurable via environment variables for VM deployment
+    http_port = int(os.environ.get("HTTP_PORT", "5030"))
+    ws_port = int(os.environ.get("WS_PORT", "5031"))
+
     # Start HTTP API server in background task (same process!)
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
-        port=5011,
+        port=http_port,
         log_level="info"
     )
     server = uvicorn.Server(config)
     
     print("\n" + "="*60)
-    print("FastAPI HTTP server starting on http://0.0.0.0:5011")
-    print("API docs available at http://localhost:5011/docs")
+    print(f"FastAPI HTTP server starting on http://0.0.0.0:{http_port}")
+    print(f"API docs available at http://localhost:{http_port}/docs")
     print("="*60 + "\n")
     
     # Start WebSocket server
-    ws_server = get_websocket_server(host="0.0.0.0", port=5010)
+    ws_server = get_websocket_server(host="0.0.0.0", port=ws_port)
     await ws_server.start()
     
     # Start all services in parallel

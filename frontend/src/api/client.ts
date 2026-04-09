@@ -11,8 +11,11 @@ import {
   EventMessage,
 } from "../chart/types";
 
-const HTTP_BASE_URL = "http://localhost:5011";
-const WS_URL = "ws://localhost:5010";
+const HTTP_PORT = import.meta.env.VITE_HTTP_PORT || "5030";
+const WS_PORT = import.meta.env.VITE_WS_PORT || "5031";
+const HOST = window.location.hostname;
+const HTTP_BASE_URL = `http://${HOST}:${HTTP_PORT}`;
+const WS_URL = `ws://${HOST}:${WS_PORT}`;
 
 export class APIClient {
   private ws: WebSocket | null = null;
