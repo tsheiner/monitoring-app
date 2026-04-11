@@ -861,7 +861,7 @@ class RealisticMetricsGenerator:
 
     def _maybe_inject_load_patterns(self, timestamp: int) -> None:
         """Randomly inject load pattern perturbations during business hours."""
-        if timestamp - self._last_load_check < 10:
+        if timestamp - self._last_load_check < 30:
             return
         self._last_load_check = timestamp
 
@@ -871,18 +871,18 @@ class RealisticMetricsGenerator:
             return
 
         # Meeting room surge: ~3 per 10-hour business day
-        if self._rng.random() < 0.3 / 360:
+        if self._rng.random() < 0.3 / 120:
             p = create_load_perturbation("meeting_room_surge", timestamp)
             if p:
                 self.perturbation_manager.add(p)
 
         # Large download: ~1 per business day
-        if self._rng.random() < 0.1 / 360:
+        if self._rng.random() < 0.1 / 120:
             p = create_load_perturbation("large_download", timestamp)
             if p:
                 self.perturbation_manager.add(p)
 
-    def tick(self, interval_seconds: int = 10) -> None:
+    def tick(self, interval_seconds: int = 30) -> None:
         """Advance time for the generator."""
         self.current_offset += interval_seconds
 

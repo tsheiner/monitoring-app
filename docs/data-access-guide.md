@@ -15,7 +15,7 @@ The backend exposes two interfaces:
 | Interface | Address | Purpose |
 |-----------|---------|---------|
 | **HTTP API** | `http://localhost:5011` | Historical queries, baselines, events, classifier breakdowns |
-| **WebSocket** | `ws://localhost:5010` | Live stream — new data every 10 seconds |
+| **WebSocket** | `ws://localhost:5010` | Live stream — new data every 30 seconds |
 
 Both serve JSON. The HTTP API is FastAPI (so you also get interactive docs
 at `/docs`). The WebSocket is broadcast-only — connect, receive, no
@@ -27,7 +27,7 @@ client-to-server messages needed.
 
 ### Metrics
 
-There are **7 metrics**, each updated every 10 seconds:
+There are **7 metrics**, each updated every 30 seconds:
 
 | Metric | What it measures | Value semantics |
 |--------|-----------------|-----------------|
@@ -238,7 +238,7 @@ on age. When you query a time range, you get whatever resolution is stored:
 
 | Data age | Resolution |
 |----------|-----------|
-| 0–2 hours | 10 seconds (raw) |
+| 0–2 hours | 30 seconds (raw) |
 | 2–3 hours | 1 minute |
 | 3–6 hours | 5 minutes |
 | 6–18 hours | 15 minutes |
@@ -543,7 +543,7 @@ Every message has a `"type"` field as discriminator.
 
 #### Metric update (`type: "metric"`)
 
-Broadcast every **10 seconds**, one message per metric (7 messages per
+Broadcast every **30 seconds**, one message per metric (7 messages per
 tick). Values are aggregated across all APs.
 
 ```json

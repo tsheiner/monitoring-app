@@ -22,7 +22,7 @@ interface.
 └──────────────────┘     └──────────────┘     └────────────────────────────┘
          │                      ↑
          │  streams every       │ queries historical data
-         │  10 seconds          │ (HTTP API, port 5011)
+         │  30 seconds          │ (HTTP API, port 5011)
          └──────────────────────┘
          also broadcasts live via WebSocket (port 5010)
 ```
@@ -32,7 +32,7 @@ interface.
 ## The Seven Metrics
 
 The simulator produces seven industry-standard WiFi health metrics for every
-access point in the network. Each metric is updated every 10 seconds and
+access point in the network. Each metric is updated every 30 seconds and
 reflects realistic units, ranges, and time-of-day behavior.
 
 | Metric               | What It Measures                                   | Units / Range        |
@@ -322,7 +322,7 @@ without changing the simulation architecture.
 ```
 
 The tiered storage system automatically selects the right resolution for any
-time range: full 10-second resolution for the last two hours, progressively
+time range: full 30-second resolution for the last two hours, progressively
 coarser buckets as data ages, with a 30-day rolling window maintained by
 automatic daily cleanup.
 
@@ -340,7 +340,7 @@ run main.py. The backend will:
 
 1. Run the bootstrap phase — generates 30 days of simulated history and
    computes statistical baselines (takes about 30 to 60 seconds)
-2. Begin streaming live observations every 10 seconds
+2. Begin streaming live observations every 30 seconds
 
 The HTTP API is available at port 5011. The WebSocket stream starts on
 port 5010. Both are ready after the bootstrap phase completes.
@@ -356,7 +356,7 @@ A time-series chart showing all seven metrics as stacked traces. Behind each
 metric trace, a soft distribution ribbon shows the expected percentile range
 for that time of day (derived from the bootstrap baselines). When events fire,
 vertical markers appear on the chart and the affected metrics visibly degrade
-and recover. All seven metric traces update live every 10 seconds.
+and recover. All seven metric traces update live every 30 seconds.
 
 **Ports at a glance:**
 
