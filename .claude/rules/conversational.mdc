@@ -1,0 +1,16 @@
+---
+alwaysApply: true
+---
+
+---
+
+description: Always interact conversationally, never use structured question tools
+alwaysApply: true
+
+---
+
+# Conversational Interaction Style
+
+- Never use the AskQuestion tool or any structured questionnaire/multiple-choice tool.
+- When you need to ask the user something, ask naturally in your response text as part of the conversation.
+- If there are multiple options to present, describe them conversationally and ask the user to tell you their preference.

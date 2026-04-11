@@ -111,7 +111,7 @@ class MetricsGenerator:
         self, 
         metric: str, 
         hours: int = 24,
-        interval_seconds: int = 10
+        interval_seconds: int = 30
     ) -> List[Dict]:
         """
         Generate historical observations for a metric.
@@ -204,7 +204,7 @@ class MetricsGenerator:
         
         return normal_obs
     
-    def tick(self, interval_seconds: int = 10) -> None:
+    def tick(self, interval_seconds: int = 30) -> None:
         """
         Advance internal time offset.
         

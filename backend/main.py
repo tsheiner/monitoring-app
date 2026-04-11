@@ -61,7 +61,7 @@ async def stream_metrics_loop():
     # Load AP list from config
     ap_list = _get_ap_list()
     
-    print(f"Starting metric streaming loop (10 sec interval) for {len(ap_list)} APs...")
+    print(f"Starting metric streaming loop (30 sec interval) for {len(ap_list)} APs...")
     
     while True:
         try:
@@ -106,8 +106,8 @@ async def stream_metrics_loop():
             # The generator's internal state (noise, correlations) is preserved
             # but timestamps come from real time
             
-            # Wait 10 seconds before next batch
-            await asyncio.sleep(10)
+            # Wait 30 seconds before next batch
+            await asyncio.sleep(30)
             
         except Exception as e:
             print(f"Error in metrics loop: {e}")

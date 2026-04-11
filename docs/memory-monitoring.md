@@ -1,6 +1,6 @@
 # Memory Monitoring Guide
 
-This app is designed to run continuously (24/7) as a simulated network data source. It generates metric observations every 10 seconds and stores 30 days of rolling history. This guide explains how to verify it is running within normal memory bounds and how to detect problems early.
+This app is designed to run continuously (24/7) as a simulated network data source. It generates metric observations every 30 seconds and stores 30 days of rolling history. This guide explains how to verify it is running within normal memory bounds and how to detect problems early.
 
 ## Architecture Summary (Memory-Relevant)
 
@@ -64,7 +64,7 @@ This is the single most important signal. Check `rss_mb` once a day for the firs
 
 ### 2. Row counts should cycle
 
-`metrics_rows` grows by ~362,000 rows per day (42 rows per 10-second tick). The daily 3 AM cleanup deletes everything older than 30 days. After the first cleanup cycle:
+`metrics_rows` grows by ~121,000 rows per day (42 rows per 30-second tick). The daily 3 AM cleanup deletes everything older than 30 days. After the first cleanup cycle:
 
 - **Normal:** Row count rises during the day, drops after 3 AM, and stabilizes around a steady ceiling.
 - **Problem:** Row count only increases and never drops. This means the cleanup loop is not running.

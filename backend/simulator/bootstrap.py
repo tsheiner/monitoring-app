@@ -1,7 +1,7 @@
 """
 Bootstrap historical data generation with high-resolution simulation.
 
-Generates 30 days of clean historical data at 10-second resolution,
+Generates 30 days of clean historical data at 30-second resolution,
 computes baseline distributions from that clean data, then aggregates
 to tiered storage and retroactively applies perturbation events.
 
@@ -12,13 +12,13 @@ This mirrors how a real monitoring system works:
 4. Anomalies (perturbation events) appear as deviations from baseline
 
 Aggregation tiers (from most recent to oldest):
-- Raw (10s):    Last 2 hours     -- full resolution
-- 1-min:        2h to 3h ago     -- 6:1 compression
-- 5-min:        3h to 6h ago     -- 30:1 compression
-- 15-min:       6h to 18h ago    -- 90:1 compression
-- 1-hour:       18h to 3.75d ago -- 360:1 compression
-- 6-hour:       3.75d to 9.75d   -- 2160:1 compression
-- 12-hour:      9.75d to 29.75d  -- 4320:1 compression
+- Raw (30s):    Last 2 hours     -- full resolution
+- 1-min:        2h to 3h ago     -- 2:1 compression
+- 5-min:        3h to 6h ago     -- 10:1 compression
+- 15-min:       6h to 18h ago    -- 30:1 compression
+- 1-hour:       18h to 3.75d ago -- 120:1 compression
+- 6-hour:       3.75d to 9.75d   -- 720:1 compression
+- 12-hour:      9.75d to 29.75d  -- 1440:1 compression
 """
 import time
 import random
@@ -51,7 +51,7 @@ from storage.events_store import get_events_store
 # Tier definitions: age boundaries from "now" and bucket interval
 # Listed newest-first for convenient age lookup
 TIERS = [
-    {"name": "raw",     "max_age": 7200,    "interval": 10},       # 0-2h
+    {"name": "raw",     "max_age": 7200,    "interval": 30},       # 0-2h
     {"name": "1-min",   "max_age": 10800,   "interval": 60},       # 2-3h
     {"name": "5-min",   "max_age": 21600,   "interval": 300},      # 3-6h
     {"name": "15-min",  "max_age": 64800,   "interval": 900},      # 6-18h
@@ -96,7 +96,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     """
     Generate and store tiered historical data with pre-computed baselines.
 
-    Phase 1: Generate 30 days of clean 10s data in memory (no perturbations)
+    Phase 1: Generate 30 days of clean 30s data in memory (no perturbations)
     Phase 2: Compute hourly baseline distributions from clean data
     Phase 3: Generate perturbation events and apply to bucket data
     Phase 4: Write aggregated data to database
@@ -113,7 +113,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     print(f"\nBootstrapping historical data (high-resolution simulation)...")
     print(f"  Historical range: {time.ctime(start_time)} to {time.ctime(now)}")
     print(f"  Total duration: {TOTAL_DURATION:,}s ({TOTAL_DURATION / 86400:.1f} days)")
-    print(f"  Generation resolution: 10 seconds")
+    print(f"  Generation resolution: 30 seconds")
 
     ap_list = _get_ap_list()
     print(f"  APs: {len(ap_list)} ({', '.join(ap_list)})")
@@ -121,7 +121,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     generator = get_generator(start_time=start_time)
     all_metrics = generator.get_all_metrics()
 
-    n_timestamps = TOTAL_DURATION // 10
+    n_timestamps = TOTAL_DURATION // 30
     print(f"  Timestamps: {n_timestamps:,} (x{len(ap_list)} APs x {len(all_metrics)} metrics)")
 
     # ================================================================
@@ -154,7 +154,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
         ap_start = time.time()
 
         for t_idx in range(n_timestamps):
-            ts = start_time + t_idx * 10
+            ts = start_time + t_idx * 30
             age = now - ts
 
             # Generate all metrics for this AP at this timestamp
@@ -205,7 +205,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
 
     # Pre-compute hour-of-day for each timestamp
     hours_of_day = np.array([
-        datetime.fromtimestamp(start_time + t * 10).hour
+        datetime.fromtimestamp(start_time + t * 30).hour
         for t in range(n_timestamps)
     ])
 
