@@ -22,6 +22,7 @@ import {
   DistributionPoint,
   Event,
   BaselineResponse,
+  STATUS_ZONE_COLORS,
 } from "./types";
 
 interface MetricData {
@@ -39,6 +40,7 @@ export class ChartView {
   private core: ChartCore;
   private sharedRange: SharedRange;
   private metrics: Map<string, MetricData> = new Map();
+  private classifierBaselines: Map<string, BaselineResponse> = new Map();
   private eventMarkers: EventMarkersGenerator | null = null;
   private config: ChartConfig;
   private onDataNeededCallback?: (range: [number, number]) => void;
@@ -674,6 +676,72 @@ export class ChartView {
   }
 
   /**
+   * Render an inline SVG gauge track showing classifier zones and current value.
+   * Returns SVG markup with 3 colored zones (red, yellow, green) and a white marker line.
+   */
+  private buildClassifierGauge(
+    classifierName: string,
+    value: number,
+    cursorTimeSec: number | undefined,
+  ): string {
+    // Gauge dimensions
+    const width = 90;
+    const height = 7;
+    const radius = 2;
+
+    // Get classifier baseline for the current hour
+    const baseline = this.classifierBaselines.get(classifierName);
+    if (!baseline || cursorTimeSec === undefined) {
+      // No baseline data — render a simple gray track with marker
+      const markerX = width / 2; // Center if no baseline
+      return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
+    }
+
+    const hour = new Date(cursorTimeSec * 1000).getHours();
+    const hourlyDist = baseline.hourly_distributions.find((d) => d.hour === hour);
+    if (!hourlyDist) {
+      // No hourly data — render gray track
+      const markerX = width / 2;
+      return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
+    }
+
+    const { p5, p10, p25, p95 } = hourlyDist.distribution;
+    const range = p95 - p5;
+
+    // Map value to pixel position (clamp to track bounds)
+    const valueNormalized = Math.max(0, Math.min(1, (value - p5) / range));
+    const markerX = valueNormalized * width;
+
+    // Calculate zone widths
+    const p10X = ((p10 - p5) / range) * width;
+    const p25X = ((p25 - p5) / range) * width;
+
+    // Zone 1: p5 to p10 (red/orange-red)
+    const zone1Width = p10X;
+    // Zone 2: p10 to p25 (yellow)
+    const zone2Width = p25X - p10X;
+    // Zone 3: p25 to p95 (green, fills remainder)
+    const zone3Width = width - p25X;
+
+    let svg = `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;">`;
+    // Render zones left to right
+    if (zone1Width > 0) {
+      svg += `<rect x="0" y="0" width="${zone1Width}" height="${height}" rx="${radius}" fill="${STATUS_ZONE_COLORS.orangeRed}" opacity="0.7"/>`;
+    }
+    if (zone2Width > 0) {
+      svg += `<rect x="${p10X}" y="0" width="${zone2Width}" height="${height}" fill="${STATUS_ZONE_COLORS.yellow}" opacity="0.7"/>`;
+    }
+    if (zone3Width > 0) {
+      svg += `<rect x="${p25X}" y="0" width="${zone3Width}" height="${height}" rx="${radius}" fill="${STATUS_ZONE_COLORS.green}" opacity="0.7"/>`;
+    }
+    // Value marker line (white, 1.5px wide)
+    svg += `<line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/>`;
+    svg += `</svg>`;
+
+    return svg;
+  }
+
+  /**
    * Build tooltip HTML content showing all metrics and expanded classifiers for active metric.
    */
   private buildTooltipContent(
@@ -753,25 +821,13 @@ export class ChartView {
           html +=
             '<div style="margin-left:20px;display:flex;flex-direction:column;gap:3px;padding-right:4px;">';
           for (const [name, data] of classifiers) {
-            const classifierStatus: "green" | "yellow" | "red" =
-              data.status === "red"
-                ? "red"
-                : data.status === "yellow"
-                  ? "yellow"
-                  : "green";
-
             const isPrimary = name === primaryClassifier;
             const primaryStyle = isPrimary ? "font-weight:600;" : "";
 
-            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="display:flex;justify-content:space-between;align-items:center;height:14px;${primaryStyle}">`;
-            html += `<span style="color:#1D69CC;font-size:10px;font-weight:600;flex:1;">${name}</span>`;
-            // Show as 0-100 score if value is a normalized 0-1 ratio, else raw
-            const displayVal =
-              data.value <= 1.0
-                ? `${Math.round(data.value * 100)}`
-                : `${Math.round(data.value)}`;
-            html += `<span style="font-size:10px;color:#F7F7F7;margin-right:2px;">${displayVal}</span>`;
-            html += ChartView.statusIcon(classifierStatus, 9);
+            html += `<div class="tooltip-classifier ${isPrimary ? "primary" : ""}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;${primaryStyle}">`;
+            html += `<span style="color:#1D69CC;font-size:10px;font-weight:600;flex-shrink:0;">${name}</span>`;
+            // Render gauge track with colored zones and value marker
+            html += this.buildClassifierGauge(name, data.value, cursorTimeSec);
             html += `</div>`;
           }
           html += "</div>";
@@ -1497,6 +1553,17 @@ export class ChartView {
     );
 
     this.render();
+  }
+
+  /**
+   * Set baseline distribution for a classifier.
+   * Stores the 24-hour baseline which will be used to render tooltip gauge zones.
+   */
+  setClassifierBaseline(classifierName: string, baseline: BaselineResponse): void {
+    this.classifierBaselines.set(classifierName, baseline);
+    console.log(
+      `Set baseline for classifier ${classifierName} with ${baseline.hourly_distributions.length} hourly distributions`,
+    );
   }
 
   /**

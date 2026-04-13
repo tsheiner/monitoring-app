@@ -5,7 +5,7 @@
  */
 
 import * as d3 from "d3";
-import { Generator, Distribution } from "../types";
+import { Generator, Distribution, STATUS_ZONE_COLORS } from "../types";
 
 interface DistributionPoint {
   timestamp: number;
@@ -46,15 +46,12 @@ export class DistributionRibbonGenerator implements Generator {
     // Clear existing paths
     this.group.selectAll("*").remove();
 
-    // Create 5-band gradient with decreasing opacity from center outward
-    // p1-p99 (outermost, lightest), p5-p95, p10-p90, p25-p75 (innermost, darkest)
-    // Plus p50 expectation line
-
+    // Create 3 status-colored bands showing health zones
+    // Rendered back-to-front so green center paints over yellow/red
     const bands = [
-      { lower: "p1", upper: "p99", opacity: 0.08, name: "band-1-99" },
-      { lower: "p5", upper: "p95", opacity: 0.12, name: "band-5-95" },
-      { lower: "p10", upper: "p90", opacity: 0.18, name: "band-10-90" },
-      { lower: "p25", upper: "p75", opacity: 0.25, name: "band-25-75" },
+      { lower: "p5", upper: "p95", opacity: 0.12, name: "band-5-95", color: STATUS_ZONE_COLORS.orangeRed },
+      { lower: "p10", upper: "p90", opacity: 0.18, name: "band-10-90", color: STATUS_ZONE_COLORS.yellow },
+      { lower: "p25", upper: "p75", opacity: 0.25, name: "band-25-75", color: STATUS_ZONE_COLORS.green },
     ];
 
     // Render bands from widest to narrowest (back to front)
@@ -79,7 +76,7 @@ export class DistributionRibbonGenerator implements Generator {
         .attr("class", `ribbon-${band.name}`)
         .datum(this.data)
         .attr("d", area)
-        .attr("fill", this.color)
+        .attr("fill", band.color)
         .attr("opacity", band.opacity)
         .attr("stroke", "none");
     });

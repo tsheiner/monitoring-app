@@ -90,31 +90,34 @@ class MonitoringApp {
   private initialLoadPromise: Promise<void> = Promise.resolve();
   private _loadGeneration: number = 0;
   private baselineLoadedForMetric: Set<string> = new Set();
+  private baselineLoadedForClassifier: Set<string> = new Set();
 
   // Metric configuration
+  // Colors chosen to contrast against dark background and green/yellow/orange-red ribbon bands
+  // Using blue/cyan/purple/magenta/lavender hues
   private metrics: MetricInfo[] = [
     {
       name: "time_to_connect",
       label: "Time to Connect",
-      color: "#E67E22",
+      color: "#5DADE2",  // Sky blue
       enabled: true,
     },
     {
       name: "throughput",
       label: "Throughput",
-      color: "#3498DB",
+      color: "#3498DB",  // Royal blue (unchanged, already good)
       enabled: false,
     },
-    { name: "coverage", label: "Coverage", color: "#2ECC71", enabled: false },
-    { name: "capacity", label: "Capacity", color: "#9B59B6", enabled: false },
-    { name: "roaming", label: "Roaming", color: "#E74C3C", enabled: false },
+    { name: "coverage", label: "Coverage", color: "#48C9B0", enabled: false },  // Turquoise/cyan
+    { name: "capacity", label: "Capacity", color: "#9B59B6", enabled: false },  // Purple (unchanged, already good)
+    { name: "roaming", label: "Roaming", color: "#AF7AC5", enabled: false },  // Light purple/lavender
     {
       name: "successful_connects",
       label: "Successful Connects",
-      color: "#1ABC9C",
+      color: "#EC7063",  // Coral pink
       enabled: false,
     },
-    { name: "ap_health", label: "AP Health", color: "#F39C12", enabled: false },
+    { name: "ap_health", label: "AP Health", color: "#BB8FCE", enabled: false },  // Soft purple
   ];
 
   // Event group configuration with icon mappings
@@ -331,6 +334,27 @@ class MonitoringApp {
         Promise.all(enabledMetrics.map((m) => this.ensureBaseline(m.name))),
         this.api.fetchEvents(start, end),
       ]);
+
+      // 5. Extract classifier names from observations and load their baselines
+      const classifierNames = new Set<string>();
+      for (const { data } of fetchedData) {
+        for (const obs of data.observations) {
+          if (obs.classifiers) {
+            const classifiers = Array.isArray(obs.classifiers)
+              ? obs.classifiers
+              : Object.keys(obs.classifiers);
+            for (const classifier of classifiers) {
+              const name = typeof classifier === 'string' ? classifier : classifier.name;
+              classifierNames.add(name);
+            }
+          }
+        }
+      }
+
+      // Load classifier baselines in parallel
+      await Promise.all(
+        Array.from(classifierNames).map((name) => this.ensureClassifierBaseline(name))
+      );
 
       // Track the actual range used for this data load
       this.loadedRange = [start, end];
@@ -674,6 +698,20 @@ class MonitoringApp {
       this.baselineLoadedForMetric.add(metricName);
     } catch (error) {
       console.warn(`Failed to fetch baseline for ${metricName}:`, error);
+    }
+  }
+
+  private async ensureClassifierBaseline(classifierName: string): Promise<void> {
+    if (this.baselineLoadedForClassifier.has(classifierName)) {
+      return;
+    }
+
+    try {
+      const baseline = await this.api.fetchClassifierBaseline(classifierName);
+      this.chart.setClassifierBaseline(classifierName, baseline);
+      this.baselineLoadedForClassifier.add(classifierName);
+    } catch (error) {
+      console.warn(`Failed to fetch baseline for classifier ${classifierName}:`, error);
     }
   }
 

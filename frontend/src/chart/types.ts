@@ -3,6 +3,16 @@
  */
 
 // ============================================================================
+// Status Zone Colors (shared by ribbon and tooltip gauges)
+// ============================================================================
+
+export const STATUS_ZONE_COLORS = {
+  green: "#27AE60",      // Inner band (p25-p75), healthy zone
+  yellow: "#F0C243",     // Middle band (p10-p90), warning zone
+  orangeRed: "#E74C3C",  // Outer band (p5-p95), critical zone
+} as const;
+
+// ============================================================================
 // Data Types
 // ============================================================================
 
