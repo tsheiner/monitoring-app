@@ -828,12 +828,22 @@ class RealisticMetricsGenerator:
           2. Classifier deviations (weighted contributions)
 
         Formula:
-        value = daily_profile(hour) + Σ(classifier_weight × classifier_deviation × metric_range)
-        
+        value = daily_profile(hour) ± Σ(classifier_weight × classifier_deviation × metric_range)
+
         where classifier_deviation = classifier_value - classifier_normal_level
+
+        Polarity:
+        - For "lower is better" metrics (latency, utilization): SUBTRACT contributions
+          so healthier classifiers → lower metric values
+        - For "higher is better" metrics (throughput, quality): ADD contributions
+          so healthier classifiers → higher metric values
         """
         cfg = self.config[metric]
         metric_range = cfg["max"] - cfg["min"]
+
+        # Metrics where lower values are better (inverted polarity)
+        LOWER_IS_BETTER = {"time_to_connect", "capacity", "roaming"}
+        polarity = -1 if metric in LOWER_IS_BETTER else 1
 
         # 1. Per-metric daily profile: deterministic baseline by hour
         ts = timestamp or (self.start_time + self.current_offset)
@@ -844,19 +854,20 @@ class RealisticMetricsGenerator:
         # 2. Classifier-based deviation
         classifier_contribution = 0.0
         metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
-        
+
         for classifier_name, weight in metric_classifiers.items():
             classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
             normal_level = classifier_cfg["initial_level"]
             current_value = self._classifier_state[classifier_name]
-            
+
             # Deviation from normal (can be positive or negative)
             deviation = current_value - normal_level
-            
+
             # Contribution to metric (scaled by weight and metric range)
             classifier_contribution += weight * deviation * metric_range
 
-        value = profile_value + classifier_contribution
+        # Apply polarity: inverted metrics subtract classifier improvements
+        value = profile_value + (polarity * classifier_contribution)
         return float(np.clip(value, cfg["min"], cfg["max"]))
 
     def _maybe_inject_load_patterns(self, timestamp: int) -> None:

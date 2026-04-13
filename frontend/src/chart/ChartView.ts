@@ -691,15 +691,23 @@ export class ChartView {
 
     // Get classifier baseline for the current hour
     const baseline = this.classifierBaselines.get(classifierName);
-    if (!baseline || cursorTimeSec === undefined) {
-      // No baseline data — render a simple gray track with marker
-      const markerX = width / 2; // Center if no baseline
+    if (!baseline) {
+      console.warn(`No baseline data for classifier: ${classifierName}`);
+      // No baseline data — render a simple gray track with marker at 50%
+      const markerX = width / 2;
+      return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
+    }
+
+    if (cursorTimeSec === undefined) {
+      console.warn(`No cursor time provided for classifier gauge: ${classifierName}`);
+      const markerX = width / 2;
       return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
     }
 
     const hour = new Date(cursorTimeSec * 1000).getHours();
     const hourlyDist = baseline.hourly_distributions.find((d) => d.hour === hour);
     if (!hourlyDist) {
+      console.warn(`No hourly distribution for classifier ${classifierName} at hour ${hour}`);
       // No hourly data — render gray track
       const markerX = width / 2;
       return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
@@ -707,6 +715,12 @@ export class ChartView {
 
     const { p5, p10, p25, p95 } = hourlyDist.distribution;
     const range = p95 - p5;
+
+    if (range <= 0) {
+      console.warn(`Invalid range for classifier ${classifierName}: p5=${p5}, p95=${p95}`);
+      const markerX = width / 2;
+      return `<svg width="${width}" height="${height}" style="display:block;flex-shrink:0;"><rect width="${width}" height="${height}" rx="${radius}" fill="#444" opacity="0.4"/><line x1="${markerX}" y1="0" x2="${markerX}" y2="${height}" stroke="white" stroke-width="1.5"/></svg>`;
+    }
 
     // Map value to pixel position (clamp to track bounds)
     const valueNormalized = Math.max(0, Math.min(1, (value - p5) / range));
@@ -916,16 +930,14 @@ export class ChartView {
 
     const prev = observations[idx - 1];
     const next = observations[idx];
-    const span = next.timestamp - prev.timestamp;
-    const t = span > 0 ? (cursorTime - prev.timestamp) / span : 0;
-    const clampedT = Math.max(0, Math.min(1, t));
-    const value = prev.value + (next.value - prev.value) * clampedT;
     const prevDiff = Math.abs(prev.timestamp - cursorTime);
     const nextDiff = Math.abs(next.timestamp - cursorTime);
     const closestObs = prevDiff <= nextDiff ? prev : next;
 
+    // Use actual value from closest observation (not interpolated)
+    // to ensure metric value and classifier values are from same real observation
     return {
-      value,
+      value: closestObs.value,
       closestObs,
       timeDiffSec: Math.min(prevDiff, nextDiff),
     };

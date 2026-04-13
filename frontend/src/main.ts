@@ -93,31 +93,32 @@ class MonitoringApp {
   private baselineLoadedForClassifier: Set<string> = new Set();
 
   // Metric configuration
-  // Colors chosen to contrast against dark background and green/yellow/orange-red ribbon bands
-  // Using blue/cyan/purple/magenta/lavender hues
+  // Colors chosen for maximum distinctness when overlaid
+  // Spanning blue, cyan, green, orange, yellow, red, magenta spectrum
+  // Each color is highly saturated for clear distinction against dark bg and ribbon
   private metrics: MetricInfo[] = [
     {
       name: "time_to_connect",
       label: "Time to Connect",
-      color: "#5DADE2",  // Sky blue
+      color: "#3498DB",  // Royal blue
       enabled: true,
     },
     {
       name: "throughput",
       label: "Throughput",
-      color: "#3498DB",  // Royal blue (unchanged, already good)
+      color: "#00D9FF",  // Bright cyan
       enabled: false,
     },
-    { name: "coverage", label: "Coverage", color: "#48C9B0", enabled: false },  // Turquoise/cyan
-    { name: "capacity", label: "Capacity", color: "#9B59B6", enabled: false },  // Purple (unchanged, already good)
-    { name: "roaming", label: "Roaming", color: "#AF7AC5", enabled: false },  // Light purple/lavender
+    { name: "coverage", label: "Coverage", color: "#00C896", enabled: false },  // Emerald green
+    { name: "capacity", label: "Capacity", color: "#FF6B35", enabled: false },  // Bright orange
+    { name: "roaming", label: "Roaming", color: "#FFD23F", enabled: false },  // Golden yellow
     {
       name: "successful_connects",
       label: "Successful Connects",
-      color: "#EC7063",  // Coral pink
+      color: "#FF1744",  // Bright red
       enabled: false,
     },
-    { name: "ap_health", label: "AP Health", color: "#BB8FCE", enabled: false },  // Soft purple
+    { name: "ap_health", label: "AP Health", color: "#E040FB", enabled: false },  // Bright magenta
   ];
 
   // Event group configuration with icon mappings
