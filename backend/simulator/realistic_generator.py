@@ -266,6 +266,66 @@ CLIENT_LOAD_CONFIG = {
 }
 
 
+def get_classifier_target(classifier_name: str, client_load: float) -> float:
+    """
+    Get time-varying target for a classifier based on external forces.
+
+    Causal Architecture: Classifiers respond to client_load (primary driver).
+    Load-sensitive classifiers degrade under high load, others remain stable.
+
+    Args:
+        classifier_name: Name of the classifier
+        client_load: Current client load (0.0-1.0)
+
+    Returns:
+        Target value for the classifier (0.0-1.0)
+    """
+    base_target = CLASSIFIER_DEFINITIONS[classifier_name]["initial_level"]
+
+    # Load-sensitive classifiers (respond to client_load)
+    # Threshold: only respond when load exceeds 0.3 (light baseline activity)
+
+    if classifier_name == "dhcp":
+        # DHCP server queue pressure under load
+        return base_target - 0.15 * max(0, client_load - 0.3)
+
+    elif classifier_name == "authorization":
+        # RADIUS authentication slower when busy
+        return base_target - 0.20 * max(0, client_load - 0.3)
+
+    elif classifier_name == "client_density":
+        # Direct measure of clients/cell (inverted: more clients = lower score)
+        return base_target - 0.50 * client_load
+
+    elif classifier_name == "airtime_utilization":
+        # More contention with more traffic
+        return base_target - 0.30 * max(0, client_load - 0.2)
+
+    elif classifier_name == "cpu":
+        # APs work harder processing more clients
+        return base_target - 0.20 * max(0, client_load - 0.3)
+
+    elif classifier_name == "memory":
+        # Larger connection tables
+        return base_target - 0.15 * max(0, client_load - 0.3)
+
+    elif classifier_name == "retry_rate":
+        # More retries due to contention
+        return base_target - 0.15 * max(0, client_load - 0.2)
+
+    elif classifier_name == "cca_busy":
+        # Clear-channel assessment busy time increases with traffic
+        return base_target - 0.25 * max(0, client_load - 0.2)
+
+    elif classifier_name == "low_rssi_clients":
+        # More clients at cell edges under high load
+        return base_target - 0.10 * max(0, client_load - 0.3)
+
+    # Load-insensitive classifiers: return fixed target
+    # These respond to events, RF environment, or are physics-based
+    return base_target
+
+
 # Available network profiles
 NETWORK_PROFILES = {
     "enterprise": "config_enterprise.json",
@@ -558,12 +618,17 @@ class RealisticMetricsGenerator:
         """
         Update shared classifier state and client_load using OU processes.
 
+        Causal Architecture:
+        - Classifiers mean-revert to time-varying targets based on client_load
+        - Load-sensitive classifiers respond to current load
+        - Load-insensitive classifiers maintain fixed targets
+
         The OU process produces smooth, mean-reverting curves:
-        x(t+dt) = μ + (x(t) - μ) * exp(-θ*dt) + noise
+        x(t+dt) = μ(t) + (x(t) - μ(t)) * exp(-θ*dt) + noise
 
         Classifiers are shared across all entities (one pool).
         client_load is per-entity (environmental condition).
-        
+
         After OU update, perturbations are applied to classifiers.
         """
         last_t = self._last_update_time.get(entity_key, timestamp)
@@ -571,34 +636,37 @@ class RealisticMetricsGenerator:
         entity = entity_key if entity_key != "_global" else None
 
         if dt > 0:
+            # Get current client load for computing time-varying targets
+            current_load = self._client_load_state[entity_key]
+
             # OU process update for each classifier (shared pool)
             for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items():
                 theta = cfg["theta"]
                 sigma = cfg["sigma"]
-                
-                # Classifiers revert to their initial_level (normal state)
-                mu = cfg["initial_level"]
-                
+
+                # Classifiers revert to time-varying target based on client_load
+                mu = get_classifier_target(classifier_name, current_load)
+
                 # Current state
                 x = self._classifier_state[classifier_name]
-                
+
                 # Exact OU update
                 decay = math.exp(-theta * dt)
-                
+
                 if theta > 0:
                     noise_var = (sigma ** 2) / (2 * theta) * (1 - math.exp(-2 * theta * dt))
                     noise_std = math.sqrt(max(0, noise_var))
                 else:
                     noise_std = 0
-                
+
                 x_new = mu + (x - mu) * decay + noise_std * self._rng.normal()
-                
+
                 # Apply perturbations (additive effects from events)
                 perturbation_effect = self.perturbation_manager.total_effect(
                     classifier_name, timestamp, entity
                 )
                 x_new += perturbation_effect
-                
+
                 self._classifier_state[classifier_name] = float(np.clip(x_new, 0.0, 1.0))
             
             # OU process update for client_load (per-entity environmental condition) 
@@ -680,194 +748,44 @@ class RealisticMetricsGenerator:
         else:
             return 0.08
 
-    def _metric_daily_profile(self, metric: str, hour: float) -> float:
-        """
-        Return the deterministic daily profile value for a metric at given hour.
-
-        Each metric has its own realistic daily shape. These are the primary
-        shapers of the 24-hour pattern — OU noise and shared drivers modulate
-        around these curves.
-
-        Returns the value in metric units (not normalized).
-        """
-        cfg = self.config[metric]
-        baseline = cfg["baseline"]
-
-        if metric == "coverage":
-            # RSSI is physics: flat all day. Tiny diurnal RF interference.
-            # Slightly worse during business hours (more 2.4GHz interference)
-            if 9 <= hour <= 17:
-                return baseline - 0.3  # -0.3 dBm from co-channel interference
-            return baseline
-
-        elif metric == "throughput":
-            # Higher throughput overnight (less contention), dip at peak hours
-            # Shape: inverse of load — more users = more contention
-            if hour < 6:
-                return baseline + 18  # ~498 Mbps overnight
-            elif hour < 9:
-                t = (hour - 6) / 3.0
-                return baseline + 18 - 22 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 12:
-                # Morning work: moderate contention
-                return baseline - 4 + 3 * math.sin(math.pi * (hour - 9) / 3.0)
-            elif hour < 13:
-                # Lunch: slight relief
-                return baseline - 2
-            elif hour < 16:
-                # Afternoon peak: heaviest contention
-                t = (hour - 13) / 3.0
-                return baseline - 4 - 6 * math.sin(math.pi * t)
-            elif hour < 19:
-                # Evening decline
-                t = (hour - 16) / 3.0
-                return baseline - 4 + 14 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 23:
-                t = (hour - 19) / 4.0
-                return baseline + 10 + 8 * t
-            else:
-                return baseline + 18
-
-        elif metric == "capacity":
-            # % utilization: tracks demand. Low overnight, peaks afternoon.
-            if hour < 6:
-                return baseline - 10  # ~32% overnight
-            elif hour < 9:
-                t = (hour - 6) / 3.0
-                return baseline - 10 + 12 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 12:
-                return baseline + 2 + 2 * math.sin(math.pi * (hour - 9) / 3.0)
-            elif hour < 13:
-                return baseline + 2 - 1 * math.sin(math.pi * (hour - 12))
-            elif hour < 16:
-                t = (hour - 13) / 3.0
-                return baseline + 2 + 5 * math.sin(math.pi * t)
-            elif hour < 19:
-                t = (hour - 16) / 3.0
-                return baseline + 2 - 10 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 23:
-                t = (hour - 19) / 4.0
-                return baseline - 8 - 2 * t
-            else:
-                return baseline - 10
-
-        elif metric == "time_to_connect":
-            # Faster overnight (no contention), slower at peak (auth queues)
-            if hour < 6:
-                return baseline - 5  # ~30ms overnight
-            elif hour < 9:
-                t = (hour - 6) / 3.0
-                return baseline - 5 + 7 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 12:
-                return baseline + 2 + 1.5 * math.sin(math.pi * (hour - 9) / 3.0)
-            elif hour < 13:
-                return baseline + 1.5
-            elif hour < 16:
-                t = (hour - 13) / 3.0
-                return baseline + 2 + 3 * math.sin(math.pi * t)
-            elif hour < 19:
-                t = (hour - 16) / 3.0
-                return baseline + 2 - 6 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 23:
-                t = (hour - 19) / 4.0
-                return baseline - 4 - 1 * t
-            else:
-                return baseline - 5
-
-        elif metric == "roaming":
-            # Handoff time: lower overnight (nobody moving), peaks daytime.
-            # Different shape from capacity — peaks mid-morning (class changes)
-            if hour < 6:
-                return baseline - 4  # ~51ms overnight
-            elif hour < 9:
-                t = (hour - 6) / 3.0
-                return baseline - 4 + 7 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 11:
-                # Mid-morning peak (people moving between meetings)
-                t = (hour - 9) / 2.0
-                return baseline + 3 + 2 * math.sin(math.pi * t)
-            elif hour < 13:
-                return baseline + 3 - 1.5 * math.sin(math.pi * (hour - 11) / 2.0)
-            elif hour < 15:
-                return baseline + 1.5
-            elif hour < 19:
-                t = (hour - 15) / 4.0
-                return baseline + 1.5 - 5 * (0.5 - 0.5 * math.cos(math.pi * t))
-            elif hour < 23:
-                t = (hour - 19) / 4.0
-                return baseline - 3.5 - 0.5 * t
-            else:
-                return baseline - 4
-
-        elif metric == "successful_connects":
-            # Very stable. Tiny morning dip from auth surge, otherwise flat.
-            if 8 <= hour <= 10:
-                t = (hour - 8) / 2.0
-                return baseline - 0.15 * math.sin(math.pi * t)
-            return baseline
-
-        elif metric == "ap_health":
-            # Mostly stable. Slight dip 4-6am (maintenance windows, memory
-            # pressure after long uptime), recovers by morning.
-            if 3 <= hour <= 7:
-                t = (hour - 3) / 4.0
-                return baseline - 0.6 * math.sin(math.pi * t)
-            # Minor load-related heat/memory during peak afternoon
-            if 13 <= hour <= 17:
-                t = (hour - 13) / 4.0
-                return baseline - 0.25 * math.sin(math.pi * t)
-            return baseline
-
-        return baseline
-
     def _derive_metric(self, metric: str, entity_key: str = "_global",
                        timestamp: int = None) -> float:
         """
-        Derive a metric value from:
-          1. Per-metric daily profile (deterministic shape)
-          2. Classifier deviations (weighted contributions)
+        Derive a metric value purely from weighted classifier health.
+
+        Causal Architecture (see docs/causal-architecture.md):
+        - Metrics emerge from classifier state (no independent daily profile)
+        - Time-of-day patterns come from classifiers responding to client_load
+        - Alignment guaranteed: classifier p50 → metric p50
 
         Formula:
-        value = daily_profile(hour) ± Σ(classifier_weight × classifier_deviation × metric_range)
+        weighted_health = Σ(weight × classifier_value)
 
-        where classifier_deviation = classifier_value - classifier_normal_level
-
-        Polarity:
-        - For "lower is better" metrics (latency, utilization): SUBTRACT contributions
-          so healthier classifiers → lower metric values
-        - For "higher is better" metrics (throughput, quality): ADD contributions
-          so healthier classifiers → higher metric values
+        For "lower is better" metrics:
+            metric = min + (1 - weighted_health) × (max - min)
+        For "higher is better" metrics:
+            metric = min + weighted_health × (max - min)
         """
         cfg = self.config[metric]
-        metric_range = cfg["max"] - cfg["min"]
-
-        # Metrics where lower values are better (inverted polarity)
-        LOWER_IS_BETTER = {"time_to_connect", "capacity", "roaming"}
-        polarity = -1 if metric in LOWER_IS_BETTER else 1
-
-        # 1. Per-metric daily profile: deterministic baseline by hour
-        ts = timestamp or (self.start_time + self.current_offset)
-        dt = datetime.fromtimestamp(ts)
-        hour = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
-        profile_value = self._metric_daily_profile(metric, hour)
-
-        # 2. Classifier-based deviation
-        classifier_contribution = 0.0
         metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
 
+        # Compute weighted health score (0.0 to 1.0)
+        weighted_health = 0.0
         for classifier_name, weight in metric_classifiers.items():
-            classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
-            normal_level = classifier_cfg["initial_level"]
             current_value = self._classifier_state[classifier_name]
+            weighted_health += weight * current_value
 
-            # Deviation from normal (can be positive or negative)
-            deviation = current_value - normal_level
+        # Map health to metric range based on polarity
+        LOWER_IS_BETTER = {"time_to_connect", "capacity", "roaming"}
+        metric_range = cfg["max"] - cfg["min"]
 
-            # Contribution to metric (scaled by weight and metric range)
-            classifier_contribution += weight * deviation * metric_range
+        if metric in LOWER_IS_BETTER:
+            # Healthier classifiers → lower metric value
+            value = cfg["min"] + (1.0 - weighted_health) * metric_range
+        else:
+            # Healthier classifiers → higher metric value
+            value = cfg["min"] + weighted_health * metric_range
 
-        # Apply polarity: inverted metrics subtract classifier improvements
-        value = profile_value + (polarity * classifier_contribution)
         return float(np.clip(value, cfg["min"], cfg["max"]))
 
     def _maybe_inject_load_patterns(self, timestamp: int) -> None:
