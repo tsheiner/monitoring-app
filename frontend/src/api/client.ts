@@ -118,6 +118,14 @@ export class APIClient {
     return this.fetchJson<BaselineResponse>(url, 8000);
   }
 
+  /**
+   * Fetch baseline distribution for a classifier.
+   */
+  async fetchClassifierBaseline(classifier: string): Promise<BaselineResponse> {
+    const url = `${HTTP_BASE_URL}/api/classifiers/${classifier}/baseline`;
+    return this.fetchJson<BaselineResponse>(url, 8000);
+  }
+
   /**   * Connect to WebSocket stream.
    */
   connectWebSocket(): void {
