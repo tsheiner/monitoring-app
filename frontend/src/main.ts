@@ -8,6 +8,21 @@ import { APIClient } from "./api/client";
 import { ChartConfig, Event, Observation } from "./chart/types";
 
 /**
+ * Static mapping of metrics to their classifier components.
+ * Synced with backend METRIC_CLASSIFIERS in realistic_generator.py.
+ * Each metric is derived from 2-5 classifiers with weights that sum to 1.0.
+ */
+const METRIC_CLASSIFIERS: Record<string, string[]> = {
+  successful_connects: ["association", "authorization", "dhcp", "dns"],
+  time_to_connect: ["association", "authorization", "dhcp", "dns"],
+  capacity: ["client_density", "cochannel_interference", "nonwifi_interference", "cca_busy"],
+  throughput: ["airtime_utilization", "channel_width", "retry_rate", "cca_busy"],
+  coverage: ["signal_strength", "ap_density", "cell_overlap", "low_rssi_clients", "client_signal_quality"],
+  roaming: ["handoff_latency", "rssi_tuning", "80211rk_support"],
+  ap_health: ["cpu", "memory", "uptime", "temperature"],
+};
+
+/**
  * Normalize raw observations from the HTTP API.
  * The backend returns `classifiers` as an array; the chart expects a Record.
  * This converts array form [{name, value, status, ...}, ...] → {name: {value, status}, ...}.
@@ -336,18 +351,13 @@ class MonitoringApp {
         this.api.fetchEvents(start, end),
       ]);
 
-      // 5. Extract classifier names from observations and load their baselines
+      // 5. Extract classifier names from enabled metrics using static mapping
       const classifierNames = new Set<string>();
-      for (const { data } of fetchedData) {
-        for (const obs of data.observations) {
-          if (obs.classifiers) {
-            const classifiers = Array.isArray(obs.classifiers)
-              ? obs.classifiers
-              : Object.keys(obs.classifiers);
-            for (const classifier of classifiers) {
-              const name = typeof classifier === 'string' ? classifier : classifier.name;
-              classifierNames.add(name);
-            }
+      for (const metric of enabledMetrics) {
+        const classifiers = METRIC_CLASSIFIERS[metric.name];
+        if (classifiers) {
+          for (const classifierName of classifiers) {
+            classifierNames.add(classifierName);
           }
         }
       }
@@ -626,6 +636,14 @@ class MonitoringApp {
             ? Promise.resolve(null)
             : this.api.fetchBaseline(metricName, null, 30).catch(() => null),
         ]);
+
+        // Load classifier baselines for this metric
+        const classifiers = METRIC_CLASSIFIERS[metricName];
+        if (classifiers) {
+          await Promise.all(
+            classifiers.map((name) => this.ensureClassifierBaseline(name))
+          );
+        }
 
         if (this._loadGeneration !== generationAtToggleStart) {
           return;
