@@ -9,7 +9,6 @@ module.exports = {
       script: "main.py",
       interpreter: path.join(ROOT, "backend", ".venv", "bin", "python"),
       env: {
-        SKIP_BOOTSTRAP: "true",
         NETWORK_PROFILE: "enterprise",
         HTTP_PORT: "5030",
         WS_PORT: "5031",

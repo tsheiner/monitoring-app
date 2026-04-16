@@ -358,6 +358,25 @@ for that time of day (derived from the bootstrap baselines). When events fire,
 vertical markers appear on the chart and the affected metrics visibly degrade
 and recover. All seven metric traces update live every 30 seconds.
 
+**Skipping bootstrap (advanced)**
+
+By default, the backend regenerates baselines on every start. To preserve
+existing data across restarts (for continuous operation), set:
+
+```bash
+SKIP_BOOTSTRAP=true python main.py
+```
+
+This is useful for long-running deployments where you want to maintain
+historical continuity. However, if the simulation architecture changes
+(e.g., how metrics are computed from classifiers), you MUST clear the old
+baselines and regenerate them:
+
+```bash
+rm data/baselines.json data/metrics.db* data/events.db
+python main.py  # will regenerate with current architecture
+```
+
 **Ports at a glance:**
 
 | Service               | Address                   |
