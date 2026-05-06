@@ -264,7 +264,10 @@ class EventsStore:
         return count
     
     def vacuum(self) -> None:
-        """Reclaim disk space after deletes."""
+        """Reclaim disk space after deletes and checkpoint WAL."""
+        # First checkpoint the WAL to merge it into the main database
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        # Then vacuum to reclaim space
         self.conn.execute("VACUUM")
 
     def close(self) -> None:

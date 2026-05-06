@@ -204,53 +204,70 @@ async def stream_events_loop():
 async def cleanup_old_data_loop():
     """
     Delete data older than 30 days to maintain rolling window.
-    
+
     Runs once per day at 3:00 AM to minimize impact on performance.
     For continuous operation, this keeps storage bounded while avoiding
     frequent expensive delete operations on CSV storage.
     """
     from datetime import datetime, timedelta
-    
+
     metrics_store = get_metrics_store()
     events_store = get_events_store()
-    
+
     # Retention period: 30 days
     retention_seconds = 30 * 24 * 3600
-    
+
     print(f"Data cleanup task started (runs daily at 3:00 AM, keeps {retention_seconds/86400:.0f} days)")
-    
+
     while True:
         try:
             # Calculate next 3 AM
             now = datetime.now()
             next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
-            
+
             # If it's already past 3 AM today, schedule for tomorrow
             if next_run <= now:
                 next_run += timedelta(days=1)
-            
+
             # Wait until scheduled time
             wait_seconds = (next_run - now).total_seconds()
-            print(f"Next cleanup scheduled for: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-            
+
+            # Safety check: if wait_seconds is negative or unreasonably large, something is wrong
+            if wait_seconds < 0:
+                print(f"WARNING: Calculated wait time is negative ({wait_seconds:.1f}s)!")
+                print(f"  Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"  Next run calculated as: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"  Rescheduling for tomorrow at 3 AM...")
+                next_run = (now + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
+                wait_seconds = (next_run - now).total_seconds()
+
+            if wait_seconds > 90000:  # More than 25 hours
+                print(f"WARNING: Wait time unusually large ({wait_seconds/3600:.1f} hours)")
+                print(f"  Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"  Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            print(f"Next cleanup scheduled for: {next_run.strftime('%Y-%m-%d %H:%M:%S')} (in {wait_seconds/3600:.1f} hours)")
+
             await asyncio.sleep(wait_seconds)
-            
+
             # Perform cleanup
             print(f"\nRunning daily cleanup at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
             cutoff = int(time.time()) - retention_seconds
-            
+
             metrics_deleted = metrics_store.delete_older_than(cutoff)
             events_deleted = events_store.delete_older_than(cutoff)
-            
+
             print(f"Cleanup complete: deleted {metrics_deleted} metrics and {events_deleted} events older than {time.ctime(cutoff)}")
-            
+
             # Reclaim disk space after bulk deletes
             if metrics_deleted > 0:
+                print("Running VACUUM on metrics database...")
                 metrics_store.vacuum()
             if events_deleted > 0:
+                print("Running VACUUM on events database...")
                 events_store.vacuum()
             print(f"VACUUM complete\n")
-            
+
         except Exception as e:
             print(f"Error in cleanup loop: {e}")
             import traceback
