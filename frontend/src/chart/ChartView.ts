@@ -19,11 +19,13 @@ import { TerrainCanvasLayer } from "./terrain/TerrainCanvasLayer";
 import {
   DEFAULT_TERRAIN_SETTINGS,
   normalizeTerrainSettings,
+  resolveTerrainConfig,
 } from "./terrain/defaults";
 import {
   baselineToGaussianDescriptors,
   medianReferenceSigma,
 } from "./terrain/baselineAdapter";
+import { buildTerrainContactSamples } from "./terrain/terrainTraceContact";
 import * as d3 from "d3";
 import {
   ChartConfig,
@@ -1785,6 +1787,7 @@ export class ChartView {
           value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
         }));
         metricData.lineGenerator.update(normalizedObs, range);
+        metricData.lineGenerator.setTerrainContact(null, range);
 
         // Hide distribution for multi-metric view
         if (metricData.distributionGenerator) {
@@ -1800,6 +1803,7 @@ export class ChartView {
             metricData.distributionGenerator
           ) {
             this.terrainLayer.hide();
+            metricData.lineGenerator.setTerrainContact(null, range);
             metricData.distributionGenerator.show();
             // Generate distribution points from 24-hour baseline
             const distributionPoints = this.generateBaselineDistribution(
@@ -1817,6 +1821,15 @@ export class ChartView {
               ySpan,
             );
             if (descriptors.length > 0) {
+              const terrainConfig = resolveTerrainConfig(this.terrainSettings);
+              metricData.lineGenerator.setTerrainContact(
+                buildTerrainContactSamples(
+                  allObservations,
+                  descriptors,
+                  terrainConfig.supportDensityRatio,
+                ),
+                range,
+              );
               this.terrainLayer.update({
                 descriptors,
                 referenceSigma: medianReferenceSigma(descriptors),
@@ -1826,10 +1839,13 @@ export class ChartView {
               });
               this.terrainLayer.show();
               terrainRendered = true;
+            } else {
+              metricData.lineGenerator.setTerrainContact(null, range);
             }
           }
         } else {
           metricData.distributionGenerator?.hide();
+          metricData.lineGenerator.setTerrainContact(null, range);
         }
       }
     }

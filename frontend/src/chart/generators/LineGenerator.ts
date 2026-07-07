@@ -8,6 +8,7 @@
 import * as d3 from "d3";
 import { Generator } from "../types";
 import { Observation } from "../types";
+import { TerrainContactSample } from "../terrain/terrainTraceContact";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -89,11 +90,13 @@ function lttbDownsample(
 
 export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private contactGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private path: d3.Selection<SVGPathElement, unknown, null, undefined>;
   private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
   private data: Observation[] = [];
+  private contactSamples: TerrainContactSample[] = [];
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -115,6 +118,11 @@ export class LineGenerator implements Generator {
 
     this.group = parent.append("g").attr("class", "line-generator");
 
+    this.contactGroup = this.group
+      .append("g")
+      .attr("class", "terrain-trace-contact")
+      .style("display", "none");
+
     this.path = this.group
       .append("path")
       .attr("class", "line")
@@ -133,6 +141,19 @@ export class LineGenerator implements Generator {
   update(data: Observation[], range: [number, number]): void {
     this.data = data;
     this.redraw(range);
+  }
+
+  setTerrainContact(
+    samples: TerrainContactSample[] | null,
+    range: [number, number],
+  ): void {
+    this.contactSamples = samples ?? [];
+    if (this.contactSamples.length > 1) {
+      this.contactGroup.style("display", null);
+    } else {
+      this.contactGroup.style("display", "none");
+    }
+    this.redrawContact(range);
   }
 
   redraw(range: [number, number]): void {
@@ -159,6 +180,7 @@ export class LineGenerator implements Generator {
 
     // Update path with downsampled data
     this.path.datum(lineData).attr("d", line);
+    this.redrawContact(range);
 
     // Update markers — only show when density is low enough to be useful
     const visibleData = allData.filter(
@@ -184,6 +206,49 @@ export class LineGenerator implements Generator {
         .attr("cx", (d) => this.xScale(new Date(d.timestamp * 1000)))
         .attr("cy", (d) => this.yScale(d.value));
     }
+  }
+
+  private redrawContact(range: [number, number]): void {
+    if (!this.xScale || !this.yScale || this.contactSamples.length < 2) {
+      this.contactGroup.selectAll("line").remove();
+      return;
+    }
+
+    const segments = this.contactSamples
+      .slice(1)
+      .map((sample, index) => ({
+        start: this.contactSamples[index],
+        end: sample,
+        strength: (this.contactSamples[index].strength + sample.strength) / 2,
+      }))
+      .filter(
+        (segment) =>
+          segment.strength > 0.01 &&
+          segment.end.timestamp >= range[0] &&
+          segment.start.timestamp <= range[1],
+      );
+
+    const contactLines = this.contactGroup
+      .selectAll<SVGLineElement, (typeof segments)[number]>("line")
+      .data(segments, (segment) => segment.start.timestamp.toString());
+
+    contactLines.exit().remove();
+    contactLines
+      .enter()
+      .append("line")
+      .attr("stroke", "#171522")
+      .attr("stroke-linecap", "round")
+      .merge(contactLines)
+      .attr("x1", (segment) =>
+        this.xScale(new Date(segment.start.timestamp * 1000)),
+      )
+      .attr("y1", (segment) => this.yScale(segment.start.value))
+      .attr("x2", (segment) =>
+        this.xScale(new Date(segment.end.timestamp * 1000)),
+      )
+      .attr("y2", (segment) => this.yScale(segment.end.value))
+      .attr("stroke-width", this.strokeWidth + 4)
+      .attr("opacity", (segment) => 0.16 + 0.5 * segment.strength);
   }
 
   show(): void {

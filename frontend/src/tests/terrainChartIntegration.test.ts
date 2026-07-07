@@ -77,6 +77,22 @@ describe("Terrain chart integration", () => {
     expect(after).toEqual(before);
   });
 
+  it("adds density-responsive contact beneath the unchanged measured path", () => {
+    const corePath = container.querySelector<SVGPathElement>("path.line");
+    const pathBefore = corePath?.getAttribute("d");
+    chart.setDistributionStyle("terrain");
+    const contacts = container.querySelectorAll(
+      ".terrain-trace-contact line",
+    );
+    expect(contacts.length).toBeGreaterThan(0);
+    expect(corePath?.getAttribute("d")).toBe(pathBefore);
+
+    chart.setDistributionStyle("bands");
+    expect(
+      container.querySelectorAll(".terrain-trace-contact line"),
+    ).toHaveLength(0);
+  });
+
   it("hides terrain for multiple metrics and restores it afterward", () => {
     chart.setDistributionStyle("terrain");
     expect(chart._getTerrainStateForTest().visible).toBe(true);
