@@ -6,6 +6,8 @@ Implement the behavior defined in [Distribution Terrain Layer Specification](./d
 
 Every step has a verification gate. Do not begin the next step until the current gate passes. Commit boundaries should follow these steps so each increment can be reviewed or reverted independently.
 
+Steps 0–5 produced the initial working implementation. Step 6 exposed visual-comprehension shortcomings that keep the feature from meeting its intended outcome. The post-implementation findings and corrective Steps 7–12 below extend the plan. The feature is complete only after the revised final verification gate in Step 12 passes.
+
 ## Estimated impact
 
 The implementation is expected to affect approximately 14–20 files in total:
@@ -26,6 +28,8 @@ Likely existing files touched during implementation:
 - `frontend/src/tests/setup.ts`, if Canvas DOM methods require test mocks
 
 The exact test-file grouping may change to follow the repository's existing conventions. Production responsibilities and step gates must remain as described below.
+
+The corrective sequence in Steps 7–12 is expected to affect an additional 8–12 files, primarily within `frontend/src/chart/terrain/`, chart integration, terrain controls, tests, and visual-acceptance documentation. Each corrective step lists its own narrower impact estimate.
 
 ## Step 0 — Establish a clean baseline
 
@@ -330,9 +334,9 @@ No changes are required if all acceptance and performance checks pass. Potential
 - If slider redraw p95 exceeds 50 ms, add reduced-resolution previews during active dragging and a full-resolution redraw on release, then repeat the measurement.
 - Do not introduce ring-buffer rendering during this step.
 
-### Final verification gate
+### Initial implementation verification gate
 
-Complete the feature only when:
+Complete the initial implementation only when:
 
 - All acceptance criteria in the specification pass in the browser.
 - The complete frontend test suite passes.
@@ -341,8 +345,365 @@ Complete the feature only when:
 - Copied settings match the committed source defaults selected during tuning.
 - `git diff --check` reports no whitespace errors.
 
+## Post-implementation findings — 7 July 2026
+
+### Status of the initial implementation
+
+- Steps 0–5 passed their functional and automated verification gates.
+- The renderer, selector, live controls, copy-settings workflow, Canvas/SVG layering, and interaction behavior are working.
+- The initial renderer passed deterministic raster tests, chart integration tests, the complete frontend suite, and the production build.
+- Step 6 did not pass the visual-comprehension gate. Terrain is functional, yet it does not materially outperform Bands for understanding the relationship between the measured value and its expected distribution.
+
+### Subjective review method
+
+The review compared three captures at the same general viewing scale:
+
+1. The app's existing Bands view.
+2. The app's initial Terrain view.
+3. A conventional topographic map using contour lines, hillshading, and hypsometric color.
+
+The app views were judged against the original questions without introducing statistical terminology:
+
+- Is the measured value typical?
+- Where does it become unusual?
+- Which periods are more predictable?
+
+### Findings
+
+1. **Terrain has insufficient visual range.** The default terrain presence of `0.45` resolves to approximately `0.315` layer opacity. Both palette endpoints are desaturated slate colors, and the default palette-strength mapping cannot create meaningful hue or saturation separation. Terrain consequently reads as faint gray texture.
+2. **The current controls cannot reach the desired result.** Ridge definition, lighting bias, contour detail, relief, and presence affect structure, lighting, or opacity. None directly controls color contrast, saturation, or the practical edge of the distribution.
+3. **The terrain has no decisive footprint.** The Gaussian field fades gradually into the chart background. There is no clearly visible transition between a low-probability slope and the region where probability is effectively zero. Bands communicates this boundary more clearly.
+4. **The ridge is not sufficiently distinct from its slopes.** Hillshading and contour lines are present, but the peak-density region lacks a strong color or luminance cue. The viewer must search for the expected-value ridge.
+5. **The measured trace appears to float above the terrain.** The trace is a uniform bright SVG line composited above a separate Canvas. Its treatment does not respond to the density beneath it, so typical and unusual segments have the same visual relationship to the surface.
+6. **Bands currently has greater visual presence.** Its saturated zones and explicit outer extent make the distribution easier to locate, even though the green/yellow/red palette risks implying health or severity.
+7. **Color remains appropriate when it encodes density rather than health.** The initial prohibition on meaningful color variation was too restrictive. A perceptually ordered, non-traffic-light palette can distinguish empty space, low-density slopes, and the high-density ridge without claiming that typical values are healthy.
+8. **The topographic metaphor has a useful limit.** Time and measured value define the map position; probability density defines elevation. A measured trace should cross contours when its typicality changes. The goal is to make its contact with the terrain legible, rather than creating a literal perspective path through three-dimensional mountains.
+
+## Expected improved outcome
+
+The corrected Terrain view should produce the following visible progression:
+
+| Question | Initial terrain | Expected corrected terrain |
+| --- | --- | --- |
+| Where does the distribution exist? | The field fades ambiguously into the chart background. | A visible outer boundary separates practical distribution support from empty chart space. |
+| Where is the usual value? | The ridge must be inferred from subtle gray shading. | A distinct high-density color/luminance treatment makes the ridge immediately visible. |
+| Is the measured value typical? | The trace has the same floating treatment everywhere. | Typical segments appear visually grounded in the terrain; segments leaving the distribution lose that contact treatment. |
+| Does this period normally vary a lot? | Width is technically present but visually weak. | Narrow ridges and broad hills differ clearly in width, contour spacing, and surface shape. |
+| Does color imply health? | Terrain is neutral but weak; Bands uses traffic-light colors. | Terrain uses a saturated sequential density palette that avoids green/yellow/red status semantics. |
+
+The intended result is a meaningful improvement in comprehension rather than greater resemblance to a decorative map. A viewer should be able to locate the distribution footprint, identify its ridge, and see the measured trace enter or leave it before consulting a tooltip or legend.
+
+## Corrective implementation sequence
+
+The following steps continue the same checkpoint discipline as Steps 0–6. Each passing step receives its own commit before the next step begins.
+
+## Step 7 — Extend the visual-encoding and settings contract
+
+### Outcome
+
+Create explicit renderer controls for density color and distribution extent while keeping the current appearance available until the new rendering behavior is introduced in later steps.
+
+### Expected file impact: 5–8 files
+
+Likely existing changes:
+
+- `frontend/src/chart/terrain/types.ts`
+- `frontend/src/chart/terrain/defaults.ts`
+- `frontend/src/chart/types.ts`
+- `frontend/src/chart/terrain/TerrainControls.ts`
+- `frontend/src/tests/terrainData.test.ts`
+- `frontend/src/tests/terrainControls.test.ts`
+- `docs/distribution-terrain-layer-spec.md`
+
+### Work
+
+- Add `colorContrast` and `distributionExtent` to `TerrainSettings`.
+- Retain `presence` as overall layer opacity rather than using it as a substitute for color contrast.
+- Treat the existing `relief` setting as surface contrast in user-facing copy; preserve the source key unless a migration is simpler and fully tested.
+- Extend the terrain palette from low/high endpoints to at least low, middle, and ridge stops.
+- Define a non-traffic-light sequential density palette. Empty space remains the chart background; low density, slope, and ridge colors increase perceptually in saturation and luminance.
+- Map `distributionExtent` to a finite relative-density cutoff with conservative defaults that approximate a broad outer probability envelope.
+- Update Copy settings and source defaults to include the complete settings shape.
+- Amend the specification's palette requirement: color may encode density/elevation; it must not encode health, severity, success, or failure.
+
+### Required tests
+
+- New settings clamp to `0–1` and map deterministically to renderer values.
+- Presence changes only overall opacity.
+- Color contrast changes only palette separation.
+- Distribution extent changes only the support cutoff.
+- The palette contains no traffic-light red/yellow/green progression.
+- Copy settings emits the revised exact settings shape.
+- Existing saved in-memory settings receive deterministic defaults for new keys.
+
+### Verification gate
+
+Advance only when:
+
+- Targeted settings and control tests pass.
+- The complete frontend test suite and production build pass.
+- Bands remains visually unchanged.
+- Terrain still renders with the previous structure; Step 7 introduces no accidental geometric change.
+- `git diff --check` passes.
+
+## Step 8 — Give the terrain a finite footprint and visible outer boundary
+
+### Outcome
+
+Make the region of meaningful historical probability immediately distinguishable from empty chart background.
+
+### Expected file impact: 3–6 files
+
+Likely existing changes:
+
+- `frontend/src/chart/terrain/TerrainRasterizer.ts`
+- `frontend/src/chart/terrain/types.ts`
+- `frontend/src/chart/terrain/defaults.ts`
+- `frontend/src/tests/terrainRasterizer.test.ts`
+
+Possible addition:
+
+- `frontend/src/chart/terrain/supportBoundary.ts`
+
+### Work
+
+- Apply the configured relative-density cutoff before alpha composition.
+- Produce fully transparent pixels outside the practical support envelope.
+- Draw an antialiased outer contour at the cutoff so the terrain has a readable edge.
+- Preserve fixed metric-level density reference behavior so narrow and broad periods remain comparable.
+- Keep the cutoff stable during live updates, resize, and range changes.
+- Ensure `distributionExtent` expands and contracts the envelope without moving the ridge or changing the underlying density.
+
+### Required tests
+
+- Pixels beyond the configured support cutoff are fully transparent.
+- The boundary remains continuous for a constant Gaussian field.
+- Increasing distribution extent expands the visible footprint monotonically.
+- Changing extent does not change `mu`, `sigma`, density values, or ridge position.
+- Narrow and broad distributions retain different widths under the same extent.
+- Presence zero still produces a fully transparent buffer.
+
+### Verification gate
+
+Advance only when:
+
+- A browser capture shows a clear terrain-to-background transition over 1-hour, 6-hour, and 24-hour ranges.
+- The outer boundary has no seams at hourly interpolation points.
+- No clipping or stale pixels appear during zoom, pan, live updates, or resize.
+- Targeted tests, the complete frontend suite, and the production build pass.
+- `git diff --check` passes.
+
+## Step 9 — Add perceptually ordered color, stronger contours, and a distinct ridge
+
+### Outcome
+
+Make low-density slopes, the main terrain body, and the high-density ridge readable as different elevations at a glance.
+
+### Expected file impact: 4–7 files
+
+Likely existing changes:
+
+- `frontend/src/chart/terrain/TerrainRasterizer.ts`
+- `frontend/src/chart/terrain/defaults.ts`
+- `frontend/src/chart/terrain/types.ts`
+- `frontend/src/chart/terrain/TerrainControls.ts`
+- `frontend/src/tests/terrainRasterizer.test.ts`
+- `frontend/src/tests/terrainControls.test.ts`
+
+Possible addition:
+
+- `frontend/src/chart/terrain/color.ts`
+
+### Work
+
+- Replace the two-stop slate interpolation with a multi-stop sequential density ramp.
+- Use both saturation and luminance to separate low-density slopes from the ridge.
+- Increase the useful range of surface contrast and contour-line strength.
+- Add a restrained ridge-crest treatment through the high-density palette stop or a narrow peak highlight.
+- Keep colors independent from metric health and classifier status.
+- Add a Color contrast slider that can move from subdued to strongly separated without changing terrain geometry.
+- Relabel Relief as Surface contrast in the UI and widen its useful visual range.
+
+### Required tests
+
+- Representative outside, low-density, mid-slope, and ridge samples follow the intended alpha and perceptual ordering.
+- Color contrast changes pixel color while leaving alpha, contours, density, and geometry unchanged.
+- Surface contrast changes hillshade range while leaving support and palette stops unchanged.
+- Contour detail retains fixed intervals across time.
+- Deterministic raster snapshots or byte-level fixtures cover subdued, default, and high-contrast settings.
+- Bands output remains unchanged.
+
+### Verification gate
+
+Advance only when:
+
+- The ridge and outer boundary can each be located in an unlabelled screenshot without adjusting sliders.
+- Narrow and broad periods are visibly distinguishable at the committed defaults.
+- The terrain is clearly separate from the chart background while the measured trace remains readable.
+- A review of the palette finds no plausible traffic-light health ordering.
+- Targeted tests, the complete frontend suite, and the production build pass.
+- `git diff --check` passes.
+
+## Step 10 — Add terrain-responsive trace contact
+
+### Outcome
+
+Make the measured trace appear grounded when it passes through meaningful distribution density and visibly detached when it leaves the distribution.
+
+### Expected file impact: 5–8 files
+
+Likely addition:
+
+- `frontend/src/chart/generators/TerrainTraceContactGenerator.ts`
+- `frontend/src/tests/terrainTraceContact.test.ts`
+
+Likely existing changes:
+
+- `frontend/src/chart/generators/LineGenerator.ts`
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/chart/terrain/baselineAdapter.ts`
+- `frontend/src/chart/terrain/types.ts`
+- `frontend/src/tests/terrainChartIntegration.test.ts`
+
+### Work
+
+- Keep the measured line's core color, position, and stroke width unchanged.
+- Evaluate historical density at each measured observation using the same interpolated parameters and support cutoff as the terrain.
+- Draw a subtle under-stroke or contact shadow beneath the core line only where density is meaningful.
+- Increase contact strength toward the ridge and fade it smoothly toward the outer boundary.
+- Remove the contact treatment outside the terrain footprint.
+- Keep the treatment below the measured core line and above the terrain Canvas.
+- Preserve event, crosshair, tooltip, marker, and multi-metric layering.
+- Hide the contact treatment in Bands mode and whenever Terrain itself is unavailable.
+
+### Required tests
+
+- The measured core path is byte-for-byte or attribute-for-attribute unchanged by Terrain mode.
+- Contact strength is monotonic with density.
+- Contact opacity is zero outside the support cutoff.
+- Contact segments align with the measured path through zoom, resize, range changes, and live append.
+- Bands and multi-metric modes contain no terrain-contact layer.
+- Crosshair dots and tooltips remain above all trace treatments.
+
+### Verification gate
+
+Advance only when:
+
+- A trace segment near the ridge appears visually connected to the surface.
+- The same trace visibly loses contact as it crosses the outer terrain boundary.
+- The contact treatment does not obscure small measured variations or suggest a second measured series.
+- The trace remains the dominant foreground element.
+- Targeted tests, the complete frontend suite, and the production build pass.
+- `git diff --check` passes.
+
+## Step 11 — Complete revised controls and source defaults
+
+### Outcome
+
+Expose the new visual variables for real-time tuning, select committed defaults from actual simulator data, and keep the configuration easy to transfer into source control.
+
+### Expected file impact: 4–7 files
+
+Likely existing changes:
+
+- `frontend/src/chart/terrain/TerrainControls.ts`
+- `frontend/src/chart/terrain/defaults.ts`
+- `frontend/src/main.ts`
+- `frontend/src/style.css`
+- `frontend/src/tests/terrainControls.test.ts`
+- `docs/distribution-terrain-layer-spec.md`
+
+### Work
+
+- Add Color contrast and Distribution extent controls.
+- Present Relief as Surface contrast.
+- Keep all controls live against the actual chart.
+- Preserve session-only behavior and source-controlled defaults.
+- Keep Copy settings synchronized with the revised settings object.
+- Tune defaults using at least three metrics and 1-hour, 6-hour, and 24-hour ranges.
+- Verify defaults against both stable and changing baseline shapes rather than tuning for one screenshot.
+
+### Required tests
+
+- Every visible control updates exactly one setting.
+- All displayed values match the settings passed to ChartView.
+- Session retention, style switching, metric switching, and reload behavior remain correct.
+- Copy settings round-trips into `DEFAULT_TERRAIN_SETTINGS` without structural edits.
+- Rapid input remains coalesced and ends with a full-resolution render.
+
+### Verification gate
+
+Advance only when:
+
+- Each control causes an immediate and understandable visual change.
+- The committed defaults satisfy the Step 9 and Step 10 visual gates without slider adjustment.
+- Slider extremes remain usable and never make the measured trace unreadable.
+- Performance remains within the existing 50 ms p95 rule or the preview-mode fallback is active.
+- Targeted tests, the complete frontend suite, and the production build pass.
+- Copied settings exactly match the committed defaults.
+- `git diff --check` passes.
+
+## Step 12 — Comparative comprehension acceptance
+
+### Outcome
+
+Demonstrate that corrected Terrain provides a meaningful comprehension advantage over the initial Terrain implementation and a useful complement to Bands.
+
+### Expected file impact: 1–5 files
+
+Likely additions or changes:
+
+- `docs/design-review/distribution-terrain-visual-acceptance.md`
+- Before/after browser captures in `docs/design-review/`
+- Terrain defaults, renderer constants, or tests only if a gate fails
+
+### Work
+
+- Capture Bands, initial Terrain, and corrected Terrain at matching metric, time range, Y domain, and viewport settings.
+- Repeat the comparison for at least three metrics and the 1-hour, 6-hour, and 24-hour ranges.
+- Include examples of a trace near the ridge, crossing a slope, and outside the support boundary.
+- Record direct answers to the three comprehension questions for each example.
+- Ask reviewers to interpret the captures before showing statistical labels or implementation details.
+- Record whether the palette is perceived as density/elevation, health/severity, or an ambiguous decoration.
+- Re-run interaction and performance checks from Step 6.
+
+### Subjective acceptance gate
+
+Advance only when reviewers can consistently:
+
+- Locate the terrain footprint and ridge at first inspection.
+- Identify whether a selected trace segment is near the ridge, on a slope, or outside the distribution.
+- Identify which of two periods has the narrower expected distribution.
+- Point to where the trace becomes unusual without relying on a tooltip or statistical explanation.
+- Describe the color progression as amount, density, or elevation rather than health or severity.
+- Distinguish the measured trace from its contact treatment.
+
+Record disagreements and failed examples as findings. A failed comprehension item requires another focused rendering/defaults checkpoint before final completion.
+
+### Automated and performance gate
+
+- All 1-hour, 6-hour, and 24-hour captures are free of seams, clipping, stale pixels, or Canvas/SVG misalignment.
+- Bands remains visually unchanged from the Step 0 baseline.
+- Crosshair, tooltip, events, zoom, pan, resize, live append, metric switching, and style switching remain usable.
+- A 1000 by 500 CSS-pixel plot at device-pixel ratio 2 satisfies the 50 ms p95 redraw rule or uses the verified preview fallback.
+- The complete frontend test suite passes.
+- The production build passes.
+- `git diff --check` passes.
+
+### Revised final verification gate
+
+Complete the feature only when:
+
+- Steps 7–11 have separate passing checkpoint commits.
+- The comparative evidence and findings are recorded in the repository.
+- The subjective acceptance gate passes on representative simulator data.
+- The automated, interaction, build, and performance gates pass.
+- Copied settings exactly match the committed source defaults.
+- The corrected Terrain view materially improves the ability to answer the three original comprehension questions.
+
 ## Delivery boundaries
 
 - No backend or API changes are required.
 - No health encoding, prediction, additional density models, persisted settings, user-facing explanatory UI, synthetic scenario UI, or ring buffer is included.
+- Saturated color is permitted only as a density/elevation channel. Metric health and severity remain outside this terrain layer.
 - Existing unrelated workspace changes must remain untouched.
