@@ -30,6 +30,14 @@ function render(
   });
 }
 
+function visiblePixelCount(pixels: Uint8ClampedArray): number {
+  let count = 0;
+  for (let index = 3; index < pixels.length; index += 4) {
+    if (pixels[index] > 0) count += 1;
+  }
+  return count;
+}
+
 describe("TerrainRasterizer", () => {
   it("is byte deterministic and emits visible and transparent pixels", () => {
     const first = render();
@@ -101,5 +109,44 @@ describe("TerrainRasterizer", () => {
         3 * 8 ** DEFAULT_TERRAIN_SETTINGS.contourDetail,
       ),
     );
+  });
+
+  it("makes pixels beyond the practical support envelope transparent", () => {
+    const { pixels, width, height } = render();
+    const topAlpha = pixels[3];
+    const bottomAlpha = pixels[((height - 1) * width) * 4 + 3];
+    const ridgeAlpha = pixels[(Math.floor(height / 2) * width) * 4 + 3];
+    expect(topAlpha).toBe(0);
+    expect(bottomAlpha).toBe(0);
+    expect(ridgeAlpha).toBeGreaterThan(0);
+  });
+
+  it("expands support monotonically without changing the ridge", () => {
+    const compact = render(1, {
+      ...DEFAULT_TERRAIN_SETTINGS,
+      distributionExtent: 0.15,
+    });
+    const extended = render(1, {
+      ...DEFAULT_TERRAIN_SETTINGS,
+      distributionExtent: 0.95,
+    });
+    expect(visiblePixelCount(extended.pixels)).toBeGreaterThan(
+      visiblePixelCount(compact.pixels),
+    );
+
+    const ridgeOffset = (Math.floor(compact.height / 2) * compact.width) * 4;
+    expect(
+      Array.from(compact.pixels.slice(ridgeOffset, ridgeOffset + 3)),
+    ).toEqual(Array.from(extended.pixels.slice(ridgeOffset, ridgeOffset + 3)));
+  });
+
+  it("keeps the support boundary continuous across a stationary field", () => {
+    const { pixels, width, height } = render();
+    for (let y = 0; y < height; y += 1) {
+      const firstAlpha = pixels[(y * width) * 4 + 3];
+      for (let x = 1; x < width; x += 1) {
+        expect(pixels[(y * width + x) * 4 + 3]).toBe(firstAlpha);
+      }
+    }
   });
 });

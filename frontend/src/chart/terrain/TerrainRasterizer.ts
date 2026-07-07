@@ -159,9 +159,15 @@ export function rasterizeTerrain<Params = GaussianParams>(
       currentDensity[y] = Number.isFinite(density) && density > 0 ? density : 0;
     }
 
+    let columnPeak = 0;
+    for (let y = 0; y < height; y += 1) {
+      columnPeak = Math.max(columnPeak, currentDensity[y]);
+    }
+    const supportCutoff = columnPeak * config.supportDensityRatio;
+
     for (let y = 0; y < height; y += 1) {
       const density = currentDensity[y];
-      if (density <= 0) continue;
+      if (density < supportCutoff || density <= 0) continue;
 
       const valueMix = height > 1 ? y / (height - 1) : 0.5;
       const value = domainMax - valueSpan * valueMix;
@@ -227,12 +233,31 @@ export function rasterizeTerrain<Params = GaussianParams>(
       green = mix(green, config.palette.contour[1], contourMix);
       blue = mix(blue, config.palette.contour[2], contourMix);
 
-      const densityPresence = smoothstep(0, contourInterval, density);
+      const supportDistance = density - supportCutoff;
+      const boundaryWidth = Math.max(
+        supportCutoff * 0.12,
+        pixelDensityChange * 1.5,
+      );
+      const boundaryAmount =
+        1 - smoothstep(0, Math.max(boundaryWidth, 1e-12), supportDistance);
+      const boundaryMix = boundaryAmount * 0.72;
+      red = mix(red, config.palette.contour[0], boundaryMix);
+      green = mix(green, config.palette.contour[1], boundaryMix);
+      blue = mix(blue, config.palette.contour[2], boundaryMix);
+
+      const supportPresence = Math.max(
+        smoothstep(
+          supportCutoff,
+          supportCutoff + Math.max(contourInterval * 0.35, boundaryWidth),
+          density,
+        ),
+        boundaryAmount * 0.8,
+      );
       const relativeDensity = clamp(density / referencePeak);
       const alpha =
         255 *
         config.layerOpacity *
-        densityPresence *
+        supportPresence *
         (0.35 + 0.65 * relativeDensity);
       const offset = (y * width + x) * 4;
       pixels[offset] = red;
