@@ -738,6 +738,9 @@ class MonitoringApp {
         }
       } else {
         this.chart.removeMetric(metricName);
+        // Removing a metric also removes its ChartView baseline. Allow a
+        // future re-enable to fetch and attach that baseline again.
+        this.baselineLoadedForMetric.delete(metricName);
 
         // If exactly one metric remains, refresh its baseline (non-blocking).
         const remaining = this.metrics.filter((m) => m.enabled);

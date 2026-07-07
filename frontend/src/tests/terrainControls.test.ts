@@ -89,6 +89,13 @@ describe("Distribution style controls", () => {
     expect(terrain?.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("invalidates a removed metric baseline so terrain can restore on re-enable", async () => {
+    const loaded = (app as any).baselineLoadedForMetric as Set<string>;
+    loaded.add("time_to_connect");
+    await (app as any).toggleMetric("time_to_connect");
+    expect(loaded.has("time_to_connect")).toBe(false);
+  });
+
   it("updates live terrain settings and numeric output", () => {
     document
       .querySelector<HTMLButtonElement>('[data-distribution-style="terrain"]')
