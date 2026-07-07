@@ -252,11 +252,20 @@ main {
   overflow: hidden;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 #chart svg {
   display: block;
   max-width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.terrain-canvas {
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* Chart Styles (D3) */

@@ -15,6 +15,15 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
+import { TerrainCanvasLayer } from "./terrain/TerrainCanvasLayer";
+import {
+  DEFAULT_TERRAIN_SETTINGS,
+  normalizeTerrainSettings,
+} from "./terrain/defaults";
+import {
+  baselineToGaussianDescriptors,
+  medianReferenceSigma,
+} from "./terrain/baselineAdapter";
 import * as d3 from "d3";
 import {
   ChartConfig,
@@ -23,6 +32,8 @@ import {
   Event,
   BaselineResponse,
   STATUS_ZONE_COLORS,
+  DistributionStyle,
+  TerrainSettings,
 } from "./types";
 
 interface MetricData {
@@ -42,6 +53,9 @@ export class ChartView {
   private metrics: Map<string, MetricData> = new Map();
   private classifierBaselines: Map<string, BaselineResponse> = new Map();
   private eventMarkers: EventMarkersGenerator | null = null;
+  private terrainLayer: TerrainCanvasLayer;
+  private distributionStyle: DistributionStyle;
+  private terrainSettings: TerrainSettings;
   private config: ChartConfig;
   private onDataNeededCallback?: (range: [number, number]) => void;
 
@@ -118,6 +132,16 @@ export class ChartView {
 
     // Initialize core with the FULL time range immediately
     this.core = new ChartCore(container, config);
+    this.distributionStyle = config.distributionStyle ?? "bands";
+    this.terrainSettings = normalizeTerrainSettings(
+      config.terrainSettings ?? DEFAULT_TERRAIN_SETTINGS,
+    );
+    this.terrainLayer = new TerrainCanvasLayer(
+      container,
+      config.margin,
+      config.width,
+      config.height,
+    );
 
     // Initialize shared range with FULL window [past, now]
     this.sharedRange = new SharedRange(config.timeRange);
@@ -1361,6 +1385,7 @@ export class ChartView {
         metricData.distributionGenerator.hide();
       }
     }
+    this.terrainLayer.hide();
 
     this.sharedRange.setRange([this.chartStartTime, end]);
 
@@ -1422,7 +1447,7 @@ export class ChartView {
   setShowDistribution(enabled: boolean): void {
     this.config.showDistribution = enabled;
 
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       if (metricData.distributionGenerator) {
         if (enabled) {
           metricData.distributionGenerator.show();
@@ -1432,9 +1457,55 @@ export class ChartView {
       }
     }
 
+    if (!enabled) {
+      this.terrainLayer.hide();
+    }
+
     if (enabled) {
       this.render();
     }
+  }
+
+  /** Select the active single-metric distribution renderer. */
+  setDistributionStyle(style: DistributionStyle): void {
+    this.distributionStyle = style;
+    this.config.distributionStyle = style;
+    this.render();
+  }
+
+  getDistributionStyle(): DistributionStyle {
+    return this.distributionStyle;
+  }
+
+  /** Apply session-scoped terrain settings. */
+  setTerrainSettings(settings: TerrainSettings): void {
+    this.terrainSettings = normalizeTerrainSettings(settings);
+    this.config.terrainSettings = { ...this.terrainSettings };
+    this.render();
+  }
+
+  getTerrainSettings(): TerrainSettings {
+    return { ...this.terrainSettings };
+  }
+
+  getTerrainRenderDurationMs(): number {
+    return this.terrainLayer.getLastRenderDurationMs();
+  }
+
+  _getTerrainStateForTest(): {
+    canvas: HTMLCanvasElement;
+    visible: boolean;
+    settings: TerrainSettings;
+    style: DistributionStyle;
+    flush: () => void;
+  } {
+    return {
+      canvas: this.terrainLayer.getCanvas(),
+      visible: this.terrainLayer.isVisible(),
+      settings: this.getTerrainSettings(),
+      style: this.distributionStyle,
+      flush: () => this.terrainLayer.renderNow(),
+    };
   }
 
   /**
@@ -1667,6 +1738,7 @@ export class ChartView {
    */
   private render(): void {
     const range = this.sharedRange.getRange();
+    let terrainRendered = false;
 
     // Render each metric
     for (const [, metricData] of this.metrics) {
@@ -1689,25 +1761,49 @@ export class ChartView {
         // Single metric: use actual values for ALL buffered data
         metricData.lineGenerator.update(allObservations, range);
 
-        // FIX C: Explicitly show distribution when in single-metric mode.
-        // It may have been hidden during a prior multi-metric render.
-        // Render distribution for single metric
-        if (metricData.distributionGenerator && this.config.showDistribution) {
-          metricData.distributionGenerator.show();
-
-          if (metricData.baseline) {
+        if (this.config.showDistribution && metricData.baseline) {
+          if (
+            this.distributionStyle === "bands" &&
+            metricData.distributionGenerator
+          ) {
+            this.terrainLayer.hide();
+            metricData.distributionGenerator.show();
             // Generate distribution points from 24-hour baseline
             const distributionPoints = this.generateBaselineDistribution(
               metricData.baseline,
               range,
             );
             metricData.distributionGenerator.update(distributionPoints, range);
-          } else {
-            metricData.distributionGenerator.hide();
+          } else if (this.distributionStyle === "terrain") {
+            metricData.distributionGenerator?.hide();
+            const yDomain = this.core.getYScale().domain() as [number, number];
+            const ySpan = Math.abs(yDomain[1] - yDomain[0]);
+            const descriptors = baselineToGaussianDescriptors(
+              metricData.baseline,
+              range,
+              ySpan,
+            );
+            if (descriptors.length > 0) {
+              this.terrainLayer.update({
+                descriptors,
+                referenceSigma: medianReferenceSigma(descriptors),
+                timeRange: range,
+                yDomain,
+                settings: this.terrainSettings,
+              });
+              this.terrainLayer.show();
+              terrainRendered = true;
+            }
           }
+        } else {
+          metricData.distributionGenerator?.hide();
         }
       }
     }
+    if (!terrainRendered) {
+      this.terrainLayer.hide();
+    }
+
     // Redraw event markers if present
     if (this.eventMarkers && this.config.showEvents) {
       this.eventMarkers.redraw(range);
@@ -1722,6 +1818,7 @@ export class ChartView {
     this.config.height = height;
 
     this.core.resize(width, height);
+    this.terrainLayer.resize(width, height, this.config.margin);
 
     // Update scales for all generators after core resize
     for (const [, metricData] of this.metrics) {
@@ -1752,6 +1849,7 @@ export class ChartView {
    * Cleanup and destroy.
    */
   destroy(): void {
+    this.terrainLayer.destroy();
     this.core.destroy();
 
     for (const [, metricData] of this.metrics) {

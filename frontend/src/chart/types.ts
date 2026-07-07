@@ -2,10 +2,11 @@
  * Type definitions for the chart system.
  */
 
-export type {
+import type {
   DistributionStyle,
   TerrainSettings,
 } from "./terrain/types";
+export type { DistributionStyle, TerrainSettings } from "./terrain/types";
 
 // ============================================================================
 // Status Zone Colors (shared by ribbon and tooltip gauges)
@@ -92,6 +93,8 @@ export interface ChartConfig {
   showDistribution: boolean;
   showEvents: boolean;
   liveMode: boolean;
+  distributionStyle?: DistributionStyle;
+  terrainSettings?: TerrainSettings;
 
   // Visual configuration
   colors: {

@@ -47,6 +47,32 @@ globalThis.setMockedTime = setMockedTime;
 globalThis.advanceTime = advanceTime;
 globalThis.resetMockedTime = resetMockedTime;
 
+const canvasContexts = new WeakMap<HTMLCanvasElement, CanvasRenderingContext2D>();
+
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = function (
+    this: HTMLCanvasElement,
+    contextId: string,
+  ): CanvasRenderingContext2D | null {
+    if (contextId !== "2d") return null;
+    const existing = canvasContexts.get(this);
+    if (existing) return existing;
+    const context = {
+      createImageData(width: number, height: number) {
+        return {
+          data: new Uint8ClampedArray(width * height * 4),
+          width,
+          height,
+          colorSpace: "srgb",
+        } as ImageData;
+      },
+      putImageData() {},
+    } as unknown as CanvasRenderingContext2D;
+    canvasContexts.set(this, context);
+    return context;
+  } as typeof HTMLCanvasElement.prototype.getContext;
+}
+
 // Mock SVG methods not supported by happy-dom
 // This allows D3's pointer() function to work in tests
 if (typeof SVGElement !== "undefined") {
