@@ -532,16 +532,43 @@ export class ChartView {
     const tooltipHtml = this.buildTooltipContent(metricsAtCursor, cursorTime);
     this.tooltipElement.innerHTML = tooltipHtml;
 
-    // Position tooltip
-    const svgRect = (
-      this.core.getSVG().node() as SVGSVGElement
-    ).getBoundingClientRect();
-    const tooltipX = svgRect.left + this.config.margin.left + x + 40;
-    const tooltipY = svgRect.top + this.config.margin.top + y + 15;
+    this.tooltipElement.style.display = "flex";
+
+    // The tooltip is absolutely positioned inside the chart container, so its
+    // coordinates must be local to that container. Keep it beside the cursor
+    // and flip it across the cursor near the right or bottom edge.
+    const cursorX = this.config.margin.left + x;
+    const cursorY = this.config.margin.top + y;
+    const gap = 16;
+    const container = this.tooltipElement.parentElement;
+    const containerWidth = container?.clientWidth || this.config.width;
+    const containerHeight = container?.clientHeight || this.config.height;
+    const tooltipWidth =
+      this.tooltipElement.getBoundingClientRect().width ||
+      Number.parseFloat(this.tooltipElement.style.width);
+    const tooltipHeight = this.tooltipElement.getBoundingClientRect().height;
+
+    let tooltipX = cursorX + gap;
+    if (tooltipX + tooltipWidth > containerWidth) {
+      tooltipX = cursorX - tooltipWidth - gap;
+    }
+
+    let tooltipY = cursorY + gap;
+    if (tooltipHeight > 0 && tooltipY + tooltipHeight > containerHeight) {
+      tooltipY = cursorY - tooltipHeight - gap;
+    }
+
+    tooltipX = Math.max(
+      0,
+      Math.min(tooltipX, Math.max(0, containerWidth - tooltipWidth)),
+    );
+    tooltipY = Math.max(
+      0,
+      Math.min(tooltipY, Math.max(0, containerHeight - tooltipHeight)),
+    );
 
     this.tooltipElement.style.left = `${tooltipX}px`;
     this.tooltipElement.style.top = `${tooltipY}px`;
-    this.tooltipElement.style.display = "flex";
   }
 
   private captureLatestClassifiers(

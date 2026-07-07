@@ -161,6 +161,39 @@ describe("Tooltip Rendering", () => {
         firstPosition.top !== secondPosition.top,
     ).toBe(true);
   });
+
+  it("positions the tooltip beside the cursor in chart-local coordinates", () => {
+    const chart = new ChartView(container, config);
+    chart.addMetric("throughput", "#4CAF50");
+    chart.loadHistoricalData("throughput", [{ timestamp: 1800000, value: 50 }]);
+
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    vi.spyOn(svg, "getBoundingClientRect").mockReturnValue({
+      left: 250,
+      top: 100,
+      right: 1050,
+      bottom: 700,
+      width: 800,
+      height: 600,
+      x: 250,
+      y: 100,
+      toJSON: () => ({}),
+    });
+
+    const plotX = 100;
+    const plotY = 100;
+    simulateMouseMove(
+      svg,
+      250 + config.margin.left + plotX,
+      100 + config.margin.top + plotY,
+    );
+
+    const tooltip = container.querySelector(".chart-tooltip") as HTMLElement;
+    expect(tooltip.style.left).toBe(
+      `${config.margin.left + plotX + 16}px`,
+    );
+    expect(tooltip.style.top).toBe(`${config.margin.top + plotY + 16}px`);
+  });
 });
 
 describe("Active Metric and Classifier Details", () => {
