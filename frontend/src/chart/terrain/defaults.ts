@@ -11,20 +11,20 @@ import {
  * be pasted here directly.
  */
 export const DEFAULT_TERRAIN_SETTINGS: TerrainSettings = {
-  ridgeDefinition: 0.65,
+  ridgeDefinition: 0.72,
   timeVsShapeBias: 0.3,
-  contourDetail: 0.5,
-  relief: 0.5,
-  presence: 0.45,
-  colorContrast: 0.45,
-  distributionExtent: 0.72,
+  contourDetail: 0.55,
+  relief: 0.68,
+  presence: 0.72,
+  colorContrast: 0.78,
+  distributionExtent: 0.68,
 };
 
 export const DEFAULT_TERRAIN_PALETTE: TerrainPalette = {
-  low: [58, 68, 78],
-  middle: [105, 118, 129],
-  ridge: [151, 167, 179],
-  contour: [31, 37, 43],
+  low: [38, 48, 76],
+  middle: [91, 76, 143],
+  ridge: [224, 174, 142],
+  contour: [25, 24, 42],
 };
 
 export function clampUnit(value: number): number {
@@ -78,11 +78,11 @@ export function resolveTerrainConfig(
     shapeGain: 0.5 + 3.5 * settings.ridgeDefinition,
     temporalGain: 0.4 + 1.6 * bias,
     contourBandCount: 3 * 8 ** settings.contourDetail,
-    contourLineStrength: 0.18 - 0.08 * settings.contourDetail,
-    ambient: 0.9 - 0.65 * settings.relief,
-    shadeContrast: 0.75 + 1.25 * settings.relief,
-    layerOpacity: 0.7 * settings.presence,
-    paletteStrength: 0.25 + 0.75 * settings.colorContrast,
+    contourLineStrength: 0.32 - 0.1 * settings.contourDetail,
+    ambient: 0.82 - 0.68 * settings.relief,
+    shadeContrast: 0.85 + 2.15 * settings.relief,
+    layerOpacity: 0.92 * settings.presence,
+    paletteStrength: 0.1 + 0.9 * settings.colorContrast,
     supportDensityRatio: 0.18 * 10 ** (-2 * settings.distributionExtent),
     lightDirection: normalizeVector(
       -(0.2 + 0.7 * bias),

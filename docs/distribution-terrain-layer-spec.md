@@ -136,13 +136,13 @@ Initial source-controlled defaults:
 
 ```ts
 {
-  ridgeDefinition: 0.65,
+  ridgeDefinition: 0.72,
   timeVsShapeBias: 0.30,
-  contourDetail: 0.50,
-  relief: 0.50,
-  presence: 0.45,
-  colorContrast: 0.45,
-  distributionExtent: 0.72
+  contourDetail: 0.55,
+  relief: 0.68,
+  presence: 0.72,
+  colorContrast: 0.78,
+  distributionExtent: 0.68
 }
 ```
 

@@ -38,6 +38,21 @@ function visiblePixelCount(pixels: Uint8ClampedArray): number {
   return count;
 }
 
+function pixelAt(
+  pixels: Uint8ClampedArray,
+  width: number,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const offset = (y * width + x) * 4;
+  return [
+    pixels[offset],
+    pixels[offset + 1],
+    pixels[offset + 2],
+    pixels[offset + 3],
+  ];
+}
+
 describe("TerrainRasterizer", () => {
   it("is byte deterministic and emits visible and transparent pixels", () => {
     const first = render();
@@ -148,5 +163,48 @@ describe("TerrainRasterizer", () => {
         expect(pixels[(y * width + x) * 4 + 3]).toBe(firstAlpha);
       }
     }
+  });
+
+  it("orders outside, slope, and ridge samples by presence", () => {
+    const { pixels, width, height } = render();
+    const outside = pixelAt(pixels, width, 4, 0);
+    const slope = pixelAt(pixels, width, 4, Math.floor(height * 0.33));
+    const ridge = pixelAt(pixels, width, 4, Math.floor(height * 0.5));
+    expect(outside[3]).toBe(0);
+    expect(slope[3]).toBeGreaterThan(0);
+    expect(ridge[3]).toBeGreaterThan(slope[3]);
+    expect(ridge.slice(0, 3)).not.toEqual(slope.slice(0, 3));
+  });
+
+  it("changes color contrast without changing alpha or support", () => {
+    const subdued = render(1, {
+      ...DEFAULT_TERRAIN_SETTINGS,
+      colorContrast: 0,
+    });
+    const vivid = render(1, {
+      ...DEFAULT_TERRAIN_SETTINGS,
+      colorContrast: 1,
+    });
+    const subduedAlphas = Array.from(subdued.pixels).filter(
+      (_, index) => index % 4 === 3,
+    );
+    const vividAlphas = Array.from(vivid.pixels).filter(
+      (_, index) => index % 4 === 3,
+    );
+    expect(vividAlphas).toEqual(subduedAlphas);
+    expect(vivid.pixels).not.toEqual(subdued.pixels);
+  });
+
+  it("changes surface contrast without changing alpha or support", () => {
+    const flat = render(1, { ...DEFAULT_TERRAIN_SETTINGS, relief: 0 });
+    const sculpted = render(1, { ...DEFAULT_TERRAIN_SETTINGS, relief: 1 });
+    const flatAlphas = Array.from(flat.pixels).filter(
+      (_, index) => index % 4 === 3,
+    );
+    const sculptedAlphas = Array.from(sculpted.pixels).filter(
+      (_, index) => index % 4 === 3,
+    );
+    expect(sculptedAlphas).toEqual(flatAlphas);
+    expect(sculpted.pixels).not.toEqual(flat.pixels);
   });
 });
