@@ -5,6 +5,7 @@
 import "./style.css";
 import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
+import { TerrainControls } from "./chart/terrain/TerrainControls";
 import {
   ChartConfig,
   DistributionStyle,
@@ -113,6 +114,7 @@ class MonitoringApp {
   private baselineLoadedForMetric: Set<string> = new Set();
   private baselineLoadedForClassifier: Set<string> = new Set();
   private distributionStyle: DistributionStyle = "bands";
+  private terrainControls: TerrainControls | null = null;
 
   // Metric configuration
   // Colors chosen for maximum distinctness when overlaid
@@ -616,6 +618,7 @@ class MonitoringApp {
   }
 
   private setupDistributionControls(metricsList: HTMLElement): void {
+    this.terrainControls?.destroy();
     document.getElementById("distribution-controls")?.remove();
 
     const section = document.createElement("section");
@@ -642,6 +645,11 @@ class MonitoringApp {
     }
 
     section.appendChild(selector);
+    this.terrainControls = new TerrainControls(
+      section,
+      this.chart.getTerrainSettings(),
+      (settings) => this.chart.setTerrainSettings(settings),
+    );
     metricsList.insertAdjacentElement("afterend", section);
     this.updateDistributionControls();
   }
@@ -658,6 +666,9 @@ class MonitoringApp {
 
     const singleMetric = this.metrics.filter((metric) => metric.enabled).length === 1;
     section.hidden = !singleMetric;
+    this.terrainControls?.setVisible(
+      singleMetric && this.distributionStyle === "terrain",
+    );
     for (const button of section.querySelectorAll<HTMLButtonElement>(
       "button[data-distribution-style]",
     )) {

@@ -88,4 +88,115 @@ describe("Distribution style controls", () => {
     expect(document.getElementById("distribution-controls")?.hidden).toBe(false);
     expect(terrain?.getAttribute("aria-pressed")).toBe("true");
   });
+
+  it("updates live terrain settings and numeric output", () => {
+    document
+      .querySelector<HTMLButtonElement>('[data-distribution-style="terrain"]')
+      ?.click();
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-terrain-setting="ridgeDefinition"]',
+    );
+    expect(input?.closest<HTMLElement>(".terrain-settings")?.hidden).toBe(false);
+    if (!input) throw new Error("Ridge definition input missing");
+    input.value = "0.82";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect((app as any).chart.getTerrainSettings().ridgeDefinition).toBe(0.82);
+    expect(
+      document.querySelector('[data-terrain-value="ridgeDefinition"]')
+        ?.textContent,
+    ).toBe("0.82");
+  });
+
+  it("retains session settings through style changes", () => {
+    const terrain = document.querySelector<HTMLButtonElement>(
+      '[data-distribution-style="terrain"]',
+    );
+    const bands = document.querySelector<HTMLButtonElement>(
+      '[data-distribution-style="bands"]',
+    );
+    terrain?.click();
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-terrain-setting="presence"]',
+    );
+    if (!input) throw new Error("Presence input missing");
+    input.value = "0.71";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    bands?.click();
+    terrain?.click();
+    expect(input.value).toBe("0.71");
+    expect((app as any).chart.getTerrainSettings().presence).toBe(0.71);
+  });
+
+  it("copies source-compatible settings JSON", async () => {
+    const writeText = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    document
+      .querySelector<HTMLButtonElement>('[data-distribution-style="terrain"]')
+      ?.click();
+    document.querySelector<HTMLButtonElement>(".terrain-copy-settings")?.click();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+
+    const copied = JSON.parse(writeText.mock.calls[0][0] ?? "{}");
+    expect(Object.keys(copied)).toEqual([
+      "ridgeDefinition",
+      "timeVsShapeBias",
+      "contourDetail",
+      "relief",
+      "presence",
+    ]);
+    await vi.waitFor(() =>
+      expect(document.querySelector(".terrain-copy-feedback")?.textContent).toBe(
+        "Copied",
+      ),
+    );
+  });
+
+  it("offers selected JSON when clipboard access is unavailable", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async (_text: string) => {
+          throw new Error("denied");
+        }),
+      },
+    });
+    const before = (app as any).chart.getTerrainSettings();
+    document.querySelector<HTMLButtonElement>(".terrain-copy-settings")?.click();
+    await vi.waitFor(() =>
+      expect(document.querySelector(".terrain-copy-feedback")?.textContent).toBe(
+        "Press Ctrl/Cmd+C",
+      ),
+    );
+    const manual = document.querySelector<HTMLTextAreaElement>(
+      ".terrain-manual-copy",
+    );
+    expect(manual?.hidden).toBe(false);
+    expect(JSON.parse(manual?.value ?? "{}")).toEqual(before);
+    expect((app as any).chart.getTerrainSettings()).toEqual(before);
+  });
+
+  it("falls back to selection copy when clipboard permission is denied", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async (_text: string) => {
+          throw new Error("denied");
+        }),
+      },
+    });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    document.querySelector<HTMLButtonElement>(".terrain-copy-settings")?.click();
+    await vi.waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
+    expect(document.querySelector(".terrain-copy-feedback")?.textContent).toBe(
+      "Copied",
+    );
+  });
 });
