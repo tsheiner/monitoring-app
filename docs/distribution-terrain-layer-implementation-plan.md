@@ -358,9 +358,17 @@ Complete the initial implementation only when:
 
 The review compared three captures at the same general viewing scale:
 
-1. The app's existing Bands view.
-2. The app's initial Terrain view.
-3. A conventional topographic map using contour lines, hillshading, and hypsometric color.
+1. The app's existing Bands view. [Open full-size image](./media/distribution-bands-initial.png)
+
+   ![Initial Bands distribution view](./media/distribution-bands-initial.png)
+
+2. The app's initial Terrain view. [Open full-size image](./media/distribution-terrain-initial.png)
+
+   ![Initial Terrain distribution view](./media/distribution-terrain-initial.png)
+
+3. A conventional topographic map using contour lines, hillshading, and hypsometric color. [Open full-size image](./media/topographic-map-reference.png)
+
+   ![Reference topographic map](./media/topographic-map-reference.png)
 
 The app views were judged against the original questions without introducing statistical terminology:
 
