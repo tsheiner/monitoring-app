@@ -2,6 +2,11 @@
  * Type definitions for the chart system.
  */
 
+export type {
+  DistributionStyle,
+  TerrainSettings,
+} from "./terrain/types";
+
 // ============================================================================
 // Status Zone Colors (shared by ribbon and tooltip gauges)
 // ============================================================================
