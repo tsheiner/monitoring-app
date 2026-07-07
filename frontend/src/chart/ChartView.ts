@@ -285,7 +285,7 @@ export class ChartView {
 
   /**
    * Update highlighted dots at each metric trace's y-position for cursor x (FD-022).
-   * Dots are filled circles with radius 4 in the metric's trace color.
+   * Dots are filled circles with radius 5.5 and a knockout border.
    */
   private updateCrosshairDots(x: number): void {
     const xScale = this.core.getXScale();

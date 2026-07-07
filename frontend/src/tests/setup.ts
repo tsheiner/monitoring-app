@@ -38,9 +38,9 @@ Date.now = () => mockedTime;
 
 // Add global test helpers
 declare global {
-  var setMockedTime: typeof setMockedTime;
-  var advanceTime: typeof advanceTime;
-  var resetMockedTime: typeof resetMockedTime;
+  var setMockedTime: (time: number) => void;
+  var advanceTime: (ms: number) => void;
+  var resetMockedTime: () => void;
 }
 
 globalThis.setMockedTime = setMockedTime;
@@ -50,8 +50,13 @@ globalThis.resetMockedTime = resetMockedTime;
 // Mock SVG methods not supported by happy-dom
 // This allows D3's pointer() function to work in tests
 if (typeof SVGElement !== "undefined") {
-  if (!SVGElement.prototype.getScreenCTM) {
-    SVGElement.prototype.getScreenCTM = function () {
+  const svgPrototype = SVGElement.prototype as SVGElement & {
+    getScreenCTM?: () => unknown;
+    createSVGPoint?: () => unknown;
+  };
+
+  if (!svgPrototype.getScreenCTM) {
+    svgPrototype.getScreenCTM = function () {
       return {
         a: 1,
         b: 0,
@@ -84,8 +89,8 @@ if (typeof SVGElement !== "undefined") {
     };
   }
 
-  if (!SVGElement.prototype.createSVGPoint) {
-    SVGElement.prototype.createSVGPoint = function () {
+  if (!svgPrototype.createSVGPoint) {
+    svgPrototype.createSVGPoint = function () {
       return {
         x: 0,
         y: 0,

@@ -133,7 +133,7 @@ describe("Interaction State Handling", () => {
   });
 
   describe("Live Edge Behavior", () => {
-    it("should suppress tooltip near live streaming edge (within 5% of time range)", () => {
+    it("should keep hover details available near the live streaming edge", () => {
       const svg = container.querySelector("svg") as SVGSVGElement;
 
       // Calculate position near the right edge (within last 5% of time range)
@@ -145,19 +145,12 @@ describe("Interaction State Handling", () => {
       // Hover near the right edge
       simulateMouseMove(svg, rightEdgeX, chartCenterY);
 
-      // Tooltip should be suppressed or frozen near live edge
+      // The latest observations remain inspectable at the live edge.
       const tooltip = container.querySelector(
         ".chart-tooltip",
       ) as HTMLDivElement;
-      // Implementation choice: either display="none" or tooltip doesn't update
-      // For this test, we check it's either hidden or the position hasn't changed
-      const isHidden = tooltip?.style.display === "none";
-      const hasNoActiveMetric = !container.querySelector(
-        ".tooltip-metric.active",
-      );
-
-      // At live edge, tooltip should be suppressed (one of these should be true)
-      expect(isHidden || hasNoActiveMetric).toBe(true);
+      expect(tooltip?.style.display).not.toBe("none");
+      expect(container.querySelector(".crosshair-group")).toBeTruthy();
     });
   });
 });
