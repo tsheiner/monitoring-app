@@ -10,8 +10,10 @@ const CONTROL_DEFINITIONS: Array<{
   { key: "ridgeDefinition", label: "Ridge definition" },
   { key: "timeVsShapeBias", label: "Time vs. shape" },
   { key: "contourDetail", label: "Contour detail" },
-  { key: "relief", label: "Relief" },
+  { key: "relief", label: "Surface contrast" },
   { key: "presence", label: "Presence" },
+  { key: "colorContrast", label: "Color contrast" },
+  { key: "distributionExtent", label: "Distribution extent" },
 ];
 
 export class TerrainControls {

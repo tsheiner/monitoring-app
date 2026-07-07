@@ -115,6 +115,8 @@ describe("Terrain setting mapping", () => {
         contourDetail: Number.NaN,
         relief: 0.25,
         presence: 0.75,
+        colorContrast: 1.5,
+        distributionExtent: -0.5,
       }),
     ).toEqual({
       ridgeDefinition: 0,
@@ -122,7 +124,25 @@ describe("Terrain setting mapping", () => {
       contourDetail: 0,
       relief: 0.25,
       presence: 0.75,
+      colorContrast: 1,
+      distributionExtent: 0,
     });
+  });
+
+  it("supplies deterministic defaults for settings added after initial release", () => {
+    const normalized = normalizeTerrainSettings({
+      ridgeDefinition: 0.2,
+      timeVsShapeBias: 0.3,
+      contourDetail: 0.4,
+      relief: 0.5,
+      presence: 0.6,
+    });
+    expect(normalized.colorContrast).toBe(
+      DEFAULT_TERRAIN_SETTINGS.colorContrast,
+    );
+    expect(normalized.distributionExtent).toBe(
+      DEFAULT_TERRAIN_SETTINGS.distributionExtent,
+    );
   });
 
   it("maps defaults deterministically and presence zero to zero opacity", () => {
@@ -133,5 +153,43 @@ describe("Terrain setting mapping", () => {
       resolveTerrainConfig({ ...DEFAULT_TERRAIN_SETTINGS, presence: 0 })
         .layerOpacity,
     ).toBe(0);
+  });
+
+  it("maps presence, color contrast, and extent independently", () => {
+    const base = resolveTerrainConfig(DEFAULT_TERRAIN_SETTINGS);
+    const presence = resolveTerrainConfig({
+      ...DEFAULT_TERRAIN_SETTINGS,
+      presence: 0.9,
+    });
+    const color = resolveTerrainConfig({
+      ...DEFAULT_TERRAIN_SETTINGS,
+      colorContrast: 0.9,
+    });
+    const extent = resolveTerrainConfig({
+      ...DEFAULT_TERRAIN_SETTINGS,
+      distributionExtent: 0.9,
+    });
+
+    expect(presence.layerOpacity).not.toBe(base.layerOpacity);
+    expect(presence.paletteStrength).toBe(base.paletteStrength);
+    expect(presence.supportDensityRatio).toBe(base.supportDensityRatio);
+    expect(color.layerOpacity).toBe(base.layerOpacity);
+    expect(color.paletteStrength).not.toBe(base.paletteStrength);
+    expect(color.supportDensityRatio).toBe(base.supportDensityRatio);
+    expect(extent.layerOpacity).toBe(base.layerOpacity);
+    expect(extent.paletteStrength).toBe(base.paletteStrength);
+    expect(extent.supportDensityRatio).not.toBe(base.supportDensityRatio);
+  });
+
+  it("uses a non-traffic-light ordered palette", () => {
+    const { palette } = resolveTerrainConfig(DEFAULT_TERRAIN_SETTINGS);
+    expect(palette).toHaveProperty("low");
+    expect(palette).toHaveProperty("middle");
+    expect(palette).toHaveProperty("ridge");
+    expect(palette).not.toEqual(
+      expect.objectContaining({
+        low: expect.arrayContaining([255, 0, 0]),
+      }),
+    );
   });
 });

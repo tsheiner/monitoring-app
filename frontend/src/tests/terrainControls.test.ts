@@ -151,6 +151,8 @@ describe("Distribution style controls", () => {
       "contourDetail",
       "relief",
       "presence",
+      "colorContrast",
+      "distributionExtent",
     ]);
     await vi.waitFor(() =>
       expect(document.querySelector(".terrain-copy-feedback")?.textContent).toBe(

@@ -191,11 +191,14 @@ export function rasterizeTerrain<Params = GaussianParams>(
 
       const bandIndex = Math.floor(density / contourInterval);
       const bandAmount = clamp(bandIndex / bandDivisor);
-      const baseColor = mixColor(
-        config.palette.low,
-        config.palette.high,
-        bandAmount,
-      );
+      const baseColor =
+        bandAmount < 0.5
+          ? mixColor(config.palette.low, config.palette.middle, bandAmount * 2)
+          : mixColor(
+              config.palette.middle,
+              config.palette.ridge,
+              (bandAmount - 0.5) * 2,
+            );
       const grayscale =
         baseColor[0] * 0.2126 +
         baseColor[1] * 0.7152 +

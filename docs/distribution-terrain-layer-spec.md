@@ -27,7 +27,7 @@ The visualization has three priorities, in this order:
 2. **Normal variability** — narrow and broad historical distributions must feel visibly different.
 3. **Change in expectation** — movement of the expected ridge over time should remain visible as a secondary characteristic of the terrain.
 
-The terrain communicates typicality only. It must not imply health, severity, success, or failure. Use a neutral palette without green, yellow, red, or other status colors. Any future health decoration will be a separate visual channel.
+The terrain communicates typicality only. It must not imply health, severity, success, or failure. Color may encode increasing density or elevation through a perceptually ordered sequential palette. Avoid traffic-light green/yellow/red progression and other status semantics. Any future health decoration will be a separate visual channel.
 
 ## Display modes
 
@@ -97,8 +97,8 @@ Render the terrain into a Canvas `ImageData` buffer positioned behind the existi
 ### Contour bands and lines
 
 - Use a fixed contour interval within the selected metric and current settings.
-- Map contour indices to a muted, neutral slate ramp.
-- Let higher-density regions become somewhat more present while preserving foreground-line contrast.
+- Map contour indices to a non-status sequential density ramp with distinct low, middle, and ridge stops.
+- Let higher-density regions increase in saturation and luminance while preserving foreground-line contrast.
 - Draw subtle antialiased contour lines using a pixel-aware threshold.
 - Never adapt the contour interval independently for each time column.
 
@@ -118,7 +118,7 @@ The observed series must remain clearly readable at every default setting. Setti
 
 ## Terrain settings
 
-Expose five live settings, each represented as a number from 0 to 1:
+Expose seven live settings, each represented as a number from 0 to 1:
 
 ```ts
 interface TerrainSettings {
@@ -127,6 +127,8 @@ interface TerrainSettings {
   contourDetail: number;
   relief: number;
   presence: number;
+  colorContrast: number;
+  distributionExtent: number;
 }
 ```
 
@@ -138,7 +140,9 @@ Initial source-controlled defaults:
   timeVsShapeBias: 0.30,
   contourDetail: 0.50,
   relief: 0.50,
-  presence: 0.45
+  presence: 0.45,
+  colorContrast: 0.45,
+  distributionExtent: 0.72
 }
 ```
 
@@ -147,8 +151,10 @@ Settings have the following meanings:
 1. **Ridge definition** — increases the value-axis gradient gain so ridge shape and slopes become easier to perceive.
 2. **Time vs. shape bias** — rotates lighting emphasis from distribution shape at `0` toward change over time at `1`.
 3. **Contour detail** — selects a fixed contour interval on a logarithmic scale, ranging from approximately 3 to 24 bands at the reference peak.
-4. **Relief** — adjusts ambient light and shading contrast, ranging from a flat printed-map appearance to stronger three-dimensional relief.
-5. **Presence** — adjusts terrain opacity and palette strength without changing terrain structure.
+4. **Surface contrast** (`relief`) — adjusts ambient light and shading contrast, ranging from a flat printed-map appearance to stronger three-dimensional relief.
+5. **Presence** — adjusts overall terrain opacity without changing terrain structure or color separation.
+6. **Color contrast** — adjusts perceptual separation between low-density slopes and the high-density ridge without changing geometry or opacity.
+7. **Distribution extent** — adjusts the practical low-density cutoff and visible outer envelope without moving the ridge or changing the underlying density.
 
 Keep these defaults in a dedicated, easy-to-find terrain configuration file, separate from unrelated chart configuration.
 
@@ -157,7 +163,7 @@ Keep these defaults in a dedicated, easy-to-find terrain configuration file, sep
 Add a Distribution section beneath the metric controls in the left rail.
 
 - Provide a `Bands / Terrain` style selector.
-- Show the five sliders when Terrain is selected and exactly one metric is active.
+- Show the seven sliders when Terrain is selected and exactly one metric is active.
 - Update the actual chart in real time as sliders move.
 - Display the current numeric value beside each slider.
 - Provide a **Copy settings** action that copies JSON matching `TerrainSettings`.
@@ -192,9 +198,9 @@ A streaming ring buffer is a future optimization for higher-frequency updates. I
 4. The same absolute deviation appears more consequential against a narrow distribution than against a broad distribution.
 5. Narrow periods render as sharper and more densely contoured than broad periods without a per-column configuration change.
 6. Expected-ridge movement remains visible while the ridge's shape and the measured line remain the dominant reading.
-7. Terrain uses a neutral palette and contains no health or severity encoding.
+7. Terrain uses a sequential density palette and contains no health or severity encoding.
 8. The terrain sits behind all measured-series and interaction elements and does not impede their use.
-9. All five sliders update the actual chart during interaction and display their current values.
+9. All seven sliders update the actual chart during interaction and display their current values.
 10. Copy settings produces valid JSON that can replace the source-controlled `TerrainSettings` defaults.
 11. Multi-metric mode hides distribution rendering and restores the selected style when one metric remains.
 12. Existing chart behavior is unchanged when Terrain is inactive or its presence is zero.

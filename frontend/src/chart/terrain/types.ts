@@ -6,6 +6,8 @@ export interface TerrainSettings {
   contourDetail: number;
   relief: number;
   presence: number;
+  colorContrast: number;
+  distributionExtent: number;
 }
 
 export interface GaussianParams {
@@ -27,7 +29,8 @@ export type RGB = readonly [number, number, number];
 
 export interface TerrainPalette {
   low: RGB;
-  high: RGB;
+  middle: RGB;
+  ridge: RGB;
   contour: RGB;
 }
 
@@ -40,6 +43,7 @@ export interface ResolvedTerrainConfig {
   shadeContrast: number;
   layerOpacity: number;
   paletteStrength: number;
+  supportDensityRatio: number;
   lightDirection: readonly [number, number, number];
   palette: TerrainPalette;
 }

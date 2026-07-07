@@ -16,11 +16,14 @@ export const DEFAULT_TERRAIN_SETTINGS: TerrainSettings = {
   contourDetail: 0.5,
   relief: 0.5,
   presence: 0.45,
+  colorContrast: 0.45,
+  distributionExtent: 0.72,
 };
 
 export const DEFAULT_TERRAIN_PALETTE: TerrainPalette = {
   low: [58, 68, 78],
-  high: [151, 167, 179],
+  middle: [105, 118, 129],
+  ridge: [151, 167, 179],
   contour: [31, 37, 43],
 };
 
@@ -30,14 +33,29 @@ export function clampUnit(value: number): number {
 }
 
 export function normalizeTerrainSettings(
-  settings: TerrainSettings,
+  settings: Partial<TerrainSettings>,
 ): TerrainSettings {
   return {
-    ridgeDefinition: clampUnit(settings.ridgeDefinition),
-    timeVsShapeBias: clampUnit(settings.timeVsShapeBias),
-    contourDetail: clampUnit(settings.contourDetail),
-    relief: clampUnit(settings.relief),
-    presence: clampUnit(settings.presence),
+    ridgeDefinition: clampUnit(
+      settings.ridgeDefinition ?? DEFAULT_TERRAIN_SETTINGS.ridgeDefinition,
+    ),
+    timeVsShapeBias: clampUnit(
+      settings.timeVsShapeBias ?? DEFAULT_TERRAIN_SETTINGS.timeVsShapeBias,
+    ),
+    contourDetail: clampUnit(
+      settings.contourDetail ?? DEFAULT_TERRAIN_SETTINGS.contourDetail,
+    ),
+    relief: clampUnit(settings.relief ?? DEFAULT_TERRAIN_SETTINGS.relief),
+    presence: clampUnit(
+      settings.presence ?? DEFAULT_TERRAIN_SETTINGS.presence,
+    ),
+    colorContrast: clampUnit(
+      settings.colorContrast ?? DEFAULT_TERRAIN_SETTINGS.colorContrast,
+    ),
+    distributionExtent: clampUnit(
+      settings.distributionExtent ??
+        DEFAULT_TERRAIN_SETTINGS.distributionExtent,
+    ),
   };
 }
 
@@ -64,7 +82,8 @@ export function resolveTerrainConfig(
     ambient: 0.9 - 0.65 * settings.relief,
     shadeContrast: 0.75 + 1.25 * settings.relief,
     layerOpacity: 0.7 * settings.presence,
-    paletteStrength: 0.25 + 0.75 * settings.presence,
+    paletteStrength: 0.25 + 0.75 * settings.colorContrast,
+    supportDensityRatio: 0.18 * 10 ** (-2 * settings.distributionExtent),
     lightDirection: normalizeVector(
       -(0.2 + 0.7 * bias),
       -(0.9 - 0.7 * bias),
