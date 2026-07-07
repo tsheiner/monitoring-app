@@ -112,6 +112,43 @@ describe("Distribution style controls", () => {
     expect(previewSpy).toHaveBeenLastCalledWith(false);
   });
 
+  it("exposes seven controls and each changes exactly one setting", () => {
+    document
+      .querySelector<HTMLButtonElement>('[data-distribution-style="terrain"]')
+      ?.click();
+    const expectedKeys = [
+      "ridgeDefinition",
+      "timeVsShapeBias",
+      "contourDetail",
+      "relief",
+      "presence",
+      "colorContrast",
+      "distributionExtent",
+    ];
+    const inputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>("[data-terrain-setting]"),
+    );
+    expect(inputs.map((input) => input.dataset.terrainSetting)).toEqual(
+      expectedKeys,
+    );
+
+    for (const input of inputs) {
+      const key = input.dataset.terrainSetting;
+      if (!key) throw new Error("Terrain setting key missing");
+      const before = (app as any).chart.getTerrainSettings();
+      input.value = before[key] === 0.37 ? "0.63" : "0.37";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      const after = (app as any).chart.getTerrainSettings();
+      const changed = expectedKeys.filter(
+        (candidate) => before[candidate] !== after[candidate],
+      );
+      expect(changed).toEqual([key]);
+      expect(
+        document.querySelector(`[data-terrain-value="${key}"]`)?.textContent,
+      ).toBe(Number(input.value).toFixed(2));
+    }
+  });
+
   it("retains session settings through style changes", () => {
     const terrain = document.querySelector<HTMLButtonElement>(
       '[data-distribution-style="terrain"]',
