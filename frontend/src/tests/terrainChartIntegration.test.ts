@@ -73,6 +73,7 @@ describe("Terrain chart integration", () => {
       ?.dataTarget.getAll();
     expect(state.visible).toBe(true);
     expect(state.canvas.style.display).toBe("block");
+    expect(Number(state.canvas.dataset.renderDurationMs)).toBeGreaterThanOrEqual(0);
     expect(after).toEqual(before);
   });
 
@@ -97,6 +98,35 @@ describe("Terrain chart integration", () => {
     expect(canvas.style.top).toBe("20px");
     expect(canvas.style.width).toBe("920px");
     expect(canvas.style.height).toBe("540px");
+  });
+
+  it("uses a reduced backing buffer during interaction and restores DPR2", () => {
+    const originalRatio = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", {
+      configurable: true,
+      value: 2,
+    });
+    try {
+      chart.setDistributionStyle("terrain");
+      chart.resize(1000, 600);
+      const canvas = chart._getTerrainStateForTest().canvas;
+      expect(canvas.style.width).toBe("920px");
+      expect(canvas.width).toBe(1840);
+
+      chart.setTerrainPreviewMode(true);
+      expect(chart._getTerrainStateForTest().preview).toBe(true);
+      expect(canvas.style.width).toBe("920px");
+      expect(canvas.width).toBe(460);
+
+      chart.setTerrainPreviewMode(false);
+      expect(chart._getTerrainStateForTest().preview).toBe(false);
+      expect(canvas.width).toBe(1840);
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", {
+        configurable: true,
+        value: originalRatio,
+      });
+    }
   });
 
   it("removes the canvas during chart destruction", () => {

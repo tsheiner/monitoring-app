@@ -1484,6 +1484,10 @@ export class ChartView {
     this.render();
   }
 
+  setTerrainPreviewMode(enabled: boolean): void {
+    this.terrainLayer.setPreviewMode(enabled);
+  }
+
   getTerrainSettings(): TerrainSettings {
     return { ...this.terrainSettings };
   }
@@ -1497,6 +1501,7 @@ export class ChartView {
     visible: boolean;
     settings: TerrainSettings;
     style: DistributionStyle;
+    preview: boolean;
     flush: () => void;
   } {
     return {
@@ -1504,6 +1509,7 @@ export class ChartView {
       visible: this.terrainLayer.isVisible(),
       settings: this.getTerrainSettings(),
       style: this.distributionStyle,
+      preview: this.terrainLayer.isPreviewMode(),
       flush: () => this.terrainLayer.renderNow(),
     };
   }

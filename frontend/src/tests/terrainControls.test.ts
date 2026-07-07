@@ -98,6 +98,7 @@ describe("Distribution style controls", () => {
     );
     expect(input?.closest<HTMLElement>(".terrain-settings")?.hidden).toBe(false);
     if (!input) throw new Error("Ridge definition input missing");
+    const previewSpy = vi.spyOn((app as any).chart, "setTerrainPreviewMode");
     input.value = "0.82";
     input.dispatchEvent(new Event("input", { bubbles: true }));
 
@@ -106,6 +107,9 @@ describe("Distribution style controls", () => {
       document.querySelector('[data-terrain-value="ridgeDefinition"]')
         ?.textContent,
     ).toBe("0.82");
+    expect(previewSpy).toHaveBeenCalledWith(true);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(previewSpy).toHaveBeenLastCalledWith(false);
   });
 
   it("retains session settings through style changes", () => {

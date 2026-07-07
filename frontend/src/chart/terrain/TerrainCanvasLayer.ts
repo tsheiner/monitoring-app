@@ -16,6 +16,10 @@ export class TerrainCanvasLayer {
   private frameRequest: number | null = null;
   private visible = false;
   private lastRenderDurationMs = 0;
+  private plotWidth = 0;
+  private plotHeight = 0;
+  private fullPixelRatio = 1;
+  private previewMode = false;
 
   constructor(
     container: HTMLElement,
@@ -40,16 +44,32 @@ export class TerrainCanvasLayer {
     height: number,
     margin: { top: number; right: number; bottom: number; left: number },
   ): void {
-    const plotWidth = Math.max(0, width - margin.left - margin.right);
-    const plotHeight = Math.max(0, height - margin.top - margin.bottom);
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    this.plotWidth = Math.max(0, width - margin.left - margin.right);
+    this.plotHeight = Math.max(0, height - margin.top - margin.bottom);
+    this.fullPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.style.left = `${margin.left}px`;
     this.canvas.style.top = `${margin.top}px`;
-    this.canvas.style.width = `${plotWidth}px`;
-    this.canvas.style.height = `${plotHeight}px`;
-    this.canvas.width = Math.max(1, Math.round(plotWidth * pixelRatio));
-    this.canvas.height = Math.max(1, Math.round(plotHeight * pixelRatio));
+    this.canvas.style.width = `${this.plotWidth}px`;
+    this.canvas.style.height = `${this.plotHeight}px`;
+    this.updateBackingSize();
     this.requestRender();
+  }
+
+  setPreviewMode(enabled: boolean): void {
+    if (this.previewMode === enabled) return;
+    this.previewMode = enabled;
+    this.updateBackingSize();
+    this.requestRender();
+  }
+
+  isPreviewMode(): boolean {
+    return this.previewMode;
+  }
+
+  private updateBackingSize(): void {
+    const ratio = this.previewMode ? 0.5 : this.fullPixelRatio;
+    this.canvas.width = Math.max(1, Math.round(this.plotWidth * ratio));
+    this.canvas.height = Math.max(1, Math.round(this.plotHeight * ratio));
   }
 
   update(input: TerrainCanvasInput): void {
@@ -113,6 +133,7 @@ export class TerrainCanvasLayer {
     imageData.data.set(result.pixels);
     this.context.putImageData(imageData, 0, 0);
     this.lastRenderDurationMs = performance.now() - start;
+    this.canvas.dataset.renderDurationMs = this.lastRenderDurationMs.toFixed(2);
   }
 
   destroy(): void {

@@ -23,6 +23,7 @@ export class TerrainControls {
     parent: HTMLElement,
     initialSettings: TerrainSettings,
     onChange: (settings: TerrainSettings) => void,
+    onInteractionChange: (active: boolean) => void = () => undefined,
   ) {
     this.settings = normalizeTerrainSettings(initialSettings);
     this.root = document.createElement("div");
@@ -54,11 +55,16 @@ export class TerrainControls {
       input.value = this.settings[definition.key].toString();
       input.dataset.terrainSetting = definition.key;
       input.addEventListener("input", () => {
+        onInteractionChange(true);
         this.settings = normalizeTerrainSettings({
           ...this.settings,
           [definition.key]: Number(input.value),
         });
         value.textContent = this.settings[definition.key].toFixed(2);
+        onChange({ ...this.settings });
+      });
+      input.addEventListener("change", () => {
+        onInteractionChange(false);
         onChange({ ...this.settings });
       });
 

@@ -649,6 +649,7 @@ class MonitoringApp {
       section,
       this.chart.getTerrainSettings(),
       (settings) => this.chart.setTerrainSettings(settings),
+      (active) => this.chart.setTerrainPreviewMode(active),
     );
     metricsList.insertAdjacentElement("afterend", section);
     this.updateDistributionControls();
