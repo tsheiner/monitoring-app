@@ -137,6 +137,24 @@ describe("DistributionRibbonGenerator", () => {
     }
   });
 
+  it("sets strongest density at expectation and fades to the fence contours", () => {
+    const traceColor = "#3498DB";
+    const center = getRibbonBandStyle(traceColor, 0.5);
+    const p5 = getRibbonBandStyle(traceColor, (5 - 1) / 98);
+    const p10 = getRibbonBandStyle(traceColor, (10 - 1) / 98);
+    const p75 = getRibbonBandStyle(traceColor, (75 - 1) / 98);
+    const p95 = getRibbonBandStyle(traceColor, (95 - 1) / 98);
+    const p99 = getRibbonBandStyle(traceColor, 1);
+
+    expect(center.opacity).toBeCloseTo(0.8);
+    expect(p10.opacity).toBeGreaterThan(p5.opacity);
+    expect(p75.opacity).toBeGreaterThan(p10.opacity);
+    expect(p75.opacity).toBeLessThan(center.opacity);
+    expect(p5.opacity).toBe(0);
+    expect(p95.opacity).toBe(0);
+    expect(p99.opacity).toBe(0);
+  });
+
   it("does not render traffic-light status colors", () => {
     const { bands } = renderRibbon("#3498DB");
     const statusColors = new Set(

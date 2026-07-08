@@ -105,29 +105,27 @@ export function getRibbonBandStyle(
   const sourceLightness = Number.isFinite(trace.l) ? trace.l : 0.54;
 
   const clampedPosition = clamp(position, 0, 1);
-  const distanceFromCenter = Math.abs(clampedPosition - 0.5) / 0.5;
-  const centerWeight = 1 - Math.pow(distanceFromCenter, 0.82);
+  const percentile = percentileForPosition(clampedPosition);
+  const distanceFromExpectation = Math.abs(percentile - 50);
+  const fenceWeight = clamp(1 - distanceFromExpectation / 45, 0, 1);
+  const densityWeight = Math.pow(fenceWeight, 1.45);
 
   const centerSaturation = clamp(sourceSaturation * 0.78, 0.32, 0.68);
-  const tailSaturation = clamp(centerSaturation * 0.45, 0.16, 0.36);
+  const tailSaturation = clamp(centerSaturation * 0.68, 0.22, 0.46);
   const saturation =
-    tailSaturation + (centerSaturation - tailSaturation) * centerWeight;
+    tailSaturation +
+    (centerSaturation - tailSaturation) * densityWeight;
 
   const centerLightness = clamp(
     sourceLightness + (sourceLightness < 0.5 ? 0.12 : 0.03),
     0.48,
     0.66,
   );
-  const tailLightness = clamp(centerLightness + 0.08, 0.54, 0.74);
+  const tailLightness = clamp(centerLightness + 0.06, 0.54, 0.72);
   const lightness =
-    centerLightness + (tailLightness - centerLightness) * (1 - centerWeight);
+    centerLightness + (tailLightness - centerLightness) * (1 - densityWeight);
 
-  const maxOpacity =
-    sourceLightness > 0.62 ? 0.24 : sourceLightness < 0.46 ? 0.34 : 0.3;
-  const opacity =
-    position <= 0 || position >= 1
-      ? 0
-      : maxOpacity * Math.pow(centerWeight, 0.9);
+  const opacity = 0.8 * densityWeight;
 
   return {
     fill: d3.hsl(hue, saturation, lightness).formatRgb(),

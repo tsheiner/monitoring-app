@@ -161,6 +161,46 @@ describe("Tooltip Rendering", () => {
         firstPosition.top !== secondPosition.top,
     ).toBe(true);
   });
+
+  it("shows a concise bucket duration in aggregated tooltip rows", () => {
+    const rangeStart = 1800000;
+    const rangeEnd = rangeStart + 12 * 3600;
+    const bucketedConfig: ChartConfig = {
+      ...config,
+      metric: "time_to_connect",
+      timeRange: [rangeStart, rangeEnd],
+      showDistribution: false,
+      liveMode: false,
+      colors: {
+        ...config.colors,
+        line: "#3498DB",
+        distribution: "#3498DB33",
+      },
+    };
+    const chart = new ChartView(container, bucketedConfig);
+    chart.addMetric("time_to_connect", "#3498DB", "Time to Connect");
+
+    chart.loadHistoricalData("time_to_connect", [
+      { timestamp: rangeStart + 900, value: 20 },
+      { timestamp: rangeStart + 1020, value: 22 },
+      { timestamp: rangeStart + 1080, value: 21 },
+    ]);
+
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    const plotWidth =
+      bucketedConfig.width -
+      bucketedConfig.margin.left -
+      bucketedConfig.margin.right;
+    const bucketMidpoint = rangeStart + 1050;
+    const x =
+      bucketedConfig.margin.left +
+      ((bucketMidpoint - rangeStart) / (rangeEnd - rangeStart)) * plotWidth;
+    simulateMouseMove(svg, x, bucketedConfig.margin.top + 180);
+
+    const tooltip = container.querySelector(".chart-tooltip");
+    expect(tooltip?.textContent).toContain("5m");
+    expect(tooltip?.textContent).not.toContain("median");
+  });
 });
 
 describe("Active Metric and Classifier Details", () => {
