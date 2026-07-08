@@ -768,7 +768,9 @@ The visual contract is:
 | Does color imply health? | Yes, plausibly. | No; hue identifies the selected metric and intensity identifies concentration. |
 | Does normal variability change over time? | Band width communicates it. | Contour spacing and gradient width preserve and strengthen that reading. |
 
-## Corrective Bands implementation sequence
+## Next steps
+
+This document now serves as the project's working decision record and forward implementation plan. Its filename reflects the experiment that started the work; keeping the conclusions and next steps together is intentional for this single-maintainer project.
 
 Each step uses the same checkpoint rule as the Terrain work: complete its tests and verification gate, then create a commit before beginning the next step.
 
@@ -823,7 +825,92 @@ Advance only when:
 - Backend tests pass and a fresh bootstrap-to-live transition is continuous.
 - `git diff --check` passes.
 
-## Step 14 — Replace health-colored regions with a metric-hue gradient
+## Step 14 — Add range-aware trend presentation
+
+### Outcome
+
+Make long-range traces readable as operational trends while preserving access to raw short-range behavior and keeping genuinely meaningful excursions visible.
+
+### Why this is required
+
+The current line renderer uses LTTB downsampling. LTTB is designed to preserve local extremes and spikes, so it retains much of the visual noise that makes a long-range trace difficult to interpret. Changing y-axis tick spacing or quantizing y values would alter the apparent scale without distinguishing inconsequential noise from operationally meaningful change.
+
+The chart should instead change temporal display resolution with the visible range. Short ranges should expose raw values. Longer ranges should summarize observations into uniform time buckets, using a robust center such as the median, while retaining separate markers for raw observations outside the calibrated p1/p99 envelope.
+
+### Proposed initial display cadence
+
+These values are starting defaults to validate against actual chart width and simulator behavior:
+
+| Visible range | Initial trend presentation |
+| --- | --- |
+| Up to 1 hour | Raw 30-second observations |
+| More than 1 through 3 hours | 1-minute bucket median |
+| More than 3 through 6 hours | 2-minute bucket median |
+| More than 6 through 12 hours | 5-minute bucket median |
+| More than 12 through 24 hours | 10-minute bucket median |
+| Multiple days | 30–60-minute bucket median |
+
+The final bucket width should also consider plot width, targeting approximately one trend point every 3–5 horizontal pixels. This prevents a wide and narrow chart from receiving the same arbitrary point count.
+
+### Expected file impact: 5–10 files
+
+Likely addition:
+
+- `frontend/src/chart/trend/aggregateTrend.ts`
+- `frontend/src/tests/trendAggregation.test.ts`
+
+Likely existing changes:
+
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/chart/generators/LineGenerator.ts`
+- `frontend/src/chart/DataTarget.ts`
+- `frontend/src/chart/types.ts`
+- Crosshair, tooltip, resize, range, and interaction tests
+- The ribbon specification or this plan if cadence defaults change during validation
+
+### Work
+
+- Keep the complete raw observation buffer as the source of truth.
+- Derive a separate display series from the current visible range and plot width.
+- Use raw observations at short ranges and uniform time-bucket medians at longer ranges.
+- Aggregate the entire visible range to one cadence before rendering so storage-tier boundaries do not create changes in apparent smoothness.
+- Apply LTTB only after semantic aggregation if an additional pixel-count limit is still necessary.
+- Do not quantize y values or change the y-axis domain merely to suppress noise.
+- Do not use a conventional moving average as the default; it can lag turning points, smear excursions across time, and create intermediate values that were never representative of a bucket.
+- Compare median with a trimmed mean during implementation. Prefer median unless testing shows it hides sustained directional changes.
+- Identify raw observations outside the time-matched p1/p99 baseline and preserve them as discrete excursion markers above the trend layer.
+- Group temporally adjacent outside observations into one visual episode when individual markers would form an unreadable cluster.
+- Keep expected p1/p99 variation separate from explicit simulator perturbation metadata so a viewer can distinguish statistical tails from injected events when that context is available.
+- Recompute display aggregation when range, zoom, plot width, metric, or live data changes.
+- Make zoom progressive: decreasing the visible range reduces bucket width until the raw series is restored without a separate mode switch.
+- Define crosshair and tooltip semantics for aggregated buckets so a displayed median is never presented as though it were one raw observation. Keep raw observations available for short-range inspection.
+
+### Required tests
+
+- Bucket boundaries and medians are deterministic for fixed observations, range, and width.
+- Empty buckets do not create zero values or connect unrelated data across gaps.
+- Changing plot width selects the expected cadence without changing the underlying raw buffer.
+- Zooming in monotonically decreases bucket duration and eventually restores the raw series.
+- Aggregation occurs consistently across raw, 1-minute, 5-minute, 15-minute, and older storage tiers.
+- Sustained changes remain visible while high-frequency zero-impact variation is reduced.
+- Raw p1/p99 excursions produce markers even when the bucket median remains within the expected range.
+- In-range raw noise does not produce excursion markers.
+- Metric switching, live append, resize, crosshair, tooltip, event markers, and time-range changes remain correct.
+- Existing raw observations are unchanged by display aggregation.
+
+### Verification gate
+
+Advance only when:
+
+- A reviewer can identify the dominant direction and turning points in 6-hour, 12-hour, 24-hour, and multi-day traces without needing to mentally average the line.
+- The 1-hour view retains the useful raw behavior currently available.
+- Zooming produces a natural increase in detail rather than an abrupt visual mode change.
+- Meaningful p1/p99 excursions remain discoverable and are not smeared into the trend.
+- The line no longer changes apparent noise density at historical storage-tier boundaries.
+- The y-axis remains truthful and consistently scaled.
+- Targeted tests, the complete frontend suite, the production build, and `git diff --check` pass.
+
+## Step 15 — Replace health-colored regions with a metric-hue gradient
 
 ### Outcome
 
@@ -870,7 +957,7 @@ Advance only when:
 - Blue, cyan, green, orange, yellow, and red metric examples have comparable perceived weight.
 - Targeted tests, the complete frontend suite, the production build, and `git diff --check` pass.
 
-## Step 15 — Add five percentile contour lines
+## Step 16 — Add five percentile contour lines
 
 ### Outcome
 
@@ -913,7 +1000,7 @@ Advance only when:
 - The measured trace remains visually dominant at crossings.
 - Targeted tests, the complete frontend suite, the production build, and `git diff --check` pass.
 
-## Step 16 — Comparative acceptance and Terrain retirement
+## Step 17 — Comparative acceptance and Terrain retirement
 
 ### Outcome
 
