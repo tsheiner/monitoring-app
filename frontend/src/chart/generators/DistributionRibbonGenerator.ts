@@ -5,11 +5,118 @@
  */
 
 import * as d3 from "d3";
-import { Generator, Distribution, STATUS_ZONE_COLORS } from "../types";
+import { Generator, Distribution } from "../types";
 
 interface DistributionPoint {
   timestamp: number;
   distribution: Distribution;
+}
+
+type DistributionPercentileKey =
+  | "p1"
+  | "p5"
+  | "p25"
+  | "p50"
+  | "p75"
+  | "p95"
+  | "p99";
+
+interface PercentileAnchor {
+  percentile: number;
+  key: DistributionPercentileKey;
+}
+
+export interface RibbonBandStyle {
+  fill: string;
+  opacity: number;
+  hue: number;
+  saturation: number;
+  lightness: number;
+}
+
+export const DISTRIBUTION_RIBBON_ANCHORS: PercentileAnchor[] = [
+  { percentile: 1, key: "p1" },
+  { percentile: 5, key: "p5" },
+  { percentile: 25, key: "p25" },
+  { percentile: 50, key: "p50" },
+  { percentile: 75, key: "p75" },
+  { percentile: 95, key: "p95" },
+  { percentile: 99, key: "p99" },
+];
+
+const RIBBON_BAND_COUNT = 64;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function percentileForPosition(position: number): number {
+  return 1 + clamp(position, 0, 1) * 98;
+}
+
+export function getDistributionValueAtPercentile(
+  distribution: Distribution,
+  percentile: number,
+): number {
+  const clampedPercentile = clamp(percentile, 1, 99);
+
+  for (let i = 1; i < DISTRIBUTION_RIBBON_ANCHORS.length; i++) {
+    const lower = DISTRIBUTION_RIBBON_ANCHORS[i - 1];
+    const upper = DISTRIBUTION_RIBBON_ANCHORS[i];
+    if (clampedPercentile <= upper.percentile) {
+      const span = upper.percentile - lower.percentile;
+      const ratio =
+        span === 0 ? 0 : (clampedPercentile - lower.percentile) / span;
+      const lowerValue = distribution[lower.key];
+      const upperValue = distribution[upper.key];
+      return lowerValue + (upperValue - lowerValue) * ratio;
+    }
+  }
+
+  return distribution.p99;
+}
+
+export function getRibbonBandStyle(
+  traceColor: string,
+  position: number,
+): RibbonBandStyle {
+  const trace = d3.hsl(traceColor);
+  const hue = Number.isFinite(trace.h) ? trace.h : 205;
+  const sourceSaturation = Number.isFinite(trace.s) ? trace.s : 0.68;
+  const sourceLightness = Number.isFinite(trace.l) ? trace.l : 0.54;
+
+  const clampedPosition = clamp(position, 0, 1);
+  const distanceFromCenter = Math.abs(clampedPosition - 0.5) / 0.5;
+  const centerWeight = 1 - Math.pow(distanceFromCenter, 0.82);
+
+  const centerSaturation = clamp(sourceSaturation * 0.78, 0.32, 0.68);
+  const tailSaturation = clamp(centerSaturation * 0.45, 0.16, 0.36);
+  const saturation =
+    tailSaturation + (centerSaturation - tailSaturation) * centerWeight;
+
+  const centerLightness = clamp(
+    sourceLightness + (sourceLightness < 0.5 ? 0.12 : 0.03),
+    0.48,
+    0.66,
+  );
+  const tailLightness = clamp(centerLightness + 0.08, 0.54, 0.74);
+  const lightness =
+    centerLightness + (tailLightness - centerLightness) * (1 - centerWeight);
+
+  const maxOpacity =
+    sourceLightness > 0.62 ? 0.24 : sourceLightness < 0.46 ? 0.34 : 0.3;
+  const opacity =
+    position <= 0 || position >= 1
+      ? 0
+      : maxOpacity * Math.pow(centerWeight, 0.9);
+
+  return {
+    fill: d3.hsl(hue, saturation, lightness).formatRgb(),
+    opacity,
+    hue,
+    saturation,
+    lightness,
+  };
 }
 
 export class DistributionRibbonGenerator implements Generator {
@@ -39,107 +146,54 @@ export class DistributionRibbonGenerator implements Generator {
   }
 
   redraw(range: [number, number]): void {
-    if (!this.xScale || !this.yScale || this.data.length === 0) {
+    if (!this.xScale || !this.yScale) {
       return;
     }
 
-    // Clear existing paths
     this.group.selectAll("*").remove();
 
-    /**
-     * Continuous opacity gradient across distribution
-     *
-     * Strategy: Render multiple fine-grained bands spanning p5-p95.
-     * - Color: determined by zone (red: p5-p10, yellow: p10-p25, green: p25-p75, yellow: p75-p90, red: p90-p95)
-     * - Opacity: continuous function of distance from p50 (peak at p50, decreasing toward edges)
-     *
-     * This creates a "density projection" effect where center (normal values) appears
-     * denser than edges (outliers), with no opacity reset between color zones.
-     */
+    if (this.data.length === 0) {
+      return;
+    }
 
-    // Opacity function: peaks at p50, decreases toward edges
-    // Maps position in distribution (0=p5, 0.5=p50, 1=p95) to opacity
-    const opacityFunction = (position: number): number => {
-      // Position 0.5 = p50 (center)
-      const distanceFromCenter = Math.abs(position - 0.5);
-      // Parabolic falloff from center
-      const maxOpacity = 0.30;
-      const minOpacity = 0.08;
-      return maxOpacity - (maxOpacity - minOpacity) * (distanceFromCenter / 0.5) ** 0.7;
-    };
-
-    // Color function: returns color based on position in distribution
-    const colorFunction = (position: number): string => {
-      if (position < 0.056) return STATUS_ZONE_COLORS.orangeRed; // p5-p10 (0 to 0.056 = 5% to 10%)
-      if (position < 0.222) return STATUS_ZONE_COLORS.yellow;    // p10-p25
-      if (position < 0.778) return STATUS_ZONE_COLORS.green;     // p25-p75
-      if (position < 0.944) return STATUS_ZONE_COLORS.yellow;    // p75-p90
-      return STATUS_ZONE_COLORS.orangeRed;                        // p90-p95
-    };
-
-    // Create fine-grained bands to simulate continuous gradient
-    const numBands = 20; // More bands = smoother gradient
-    for (let i = 0; i < numBands; i++) {
-      const lowerPosition = i / numBands;
-      const upperPosition = (i + 1) / numBands;
+    for (let i = 0; i < RIBBON_BAND_COUNT; i++) {
+      const lowerPosition = i / RIBBON_BAND_COUNT;
+      const upperPosition = (i + 1) / RIBBON_BAND_COUNT;
       const midPosition = (lowerPosition + upperPosition) / 2;
-
-      // Interpolate between percentiles
-      const getLowerPercentile = (d: DistributionPoint): number => {
-        const p5 = d.distribution.p5;
-        const p50 = d.distribution.p50;
-        const p95 = d.distribution.p95;
-        if (lowerPosition < 0.5) {
-          return p5 + (p50 - p5) * (lowerPosition / 0.5);
-        } else {
-          return p50 + (p95 - p50) * ((lowerPosition - 0.5) / 0.5);
-        }
-      };
-
-      const getUpperPercentile = (d: DistributionPoint): number => {
-        const p5 = d.distribution.p5;
-        const p50 = d.distribution.p50;
-        const p95 = d.distribution.p95;
-        if (upperPosition < 0.5) {
-          return p5 + (p50 - p5) * (upperPosition / 0.5);
-        } else {
-          return p50 + (p95 - p50) * ((upperPosition - 0.5) / 0.5);
-        }
-      };
+      const lowerPercentile = percentileForPosition(lowerPosition);
+      const upperPercentile = percentileForPosition(upperPosition);
+      const style = getRibbonBandStyle(this.color, midPosition);
 
       const area = d3
         .area<DistributionPoint>()
         .x((d) => this.xScale(new Date(d.timestamp * 1000)))
-        .y0((d) => this.yScale(getLowerPercentile(d)))
-        .y1((d) => this.yScale(getUpperPercentile(d)))
+        .y0((d) =>
+          this.yScale(
+            getDistributionValueAtPercentile(
+              d.distribution,
+              lowerPercentile,
+            ),
+          ),
+        )
+        .y1((d) =>
+          this.yScale(
+            getDistributionValueAtPercentile(
+              d.distribution,
+              upperPercentile,
+            ),
+          ),
+        )
         .curve(d3.curveMonotoneX);
 
       this.group
         .append("path")
-        .attr("class", `ribbon-band-${i}`)
+        .attr("class", `ribbon-band ribbon-band-${i}`)
         .datum(this.data)
         .attr("d", area)
-        .attr("fill", colorFunction(midPosition))
-        .attr("opacity", opacityFunction(midPosition))
+        .attr("fill", style.fill)
+        .attr("opacity", style.opacity)
         .attr("stroke", "none");
     }
-
-    // Render p50 expectation line on top
-    const expectationLine = d3
-      .line<DistributionPoint>()
-      .x((d) => this.xScale(new Date(d.timestamp * 1000)))
-      .y((d) => this.yScale(d.distribution.p50))
-      .curve(d3.curveMonotoneX);
-
-    this.group
-      .append("path")
-      .attr("class", "expectation-line")
-      .datum(this.data)
-      .attr("d", expectationLine)
-      .attr("fill", "none")
-      .attr("stroke", "#2a2a2a")
-      .attr("stroke-width", 1.5)
-      .attr("opacity", 1);
   }
 
   show(): void {

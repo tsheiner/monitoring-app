@@ -3,7 +3,7 @@
  */
 
 // ============================================================================
-// Status Zone Colors (shared by ribbon and tooltip gauges)
+// Status zone colors for tooltip classifier gauges.
 // ============================================================================
 
 export const STATUS_ZONE_COLORS = {

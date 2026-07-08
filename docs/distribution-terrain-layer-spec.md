@@ -29,6 +29,17 @@ The visualization has three priorities, in this order:
 
 The terrain communicates typicality only. It must not imply health, severity, success, or failure. Color may encode increasing density or elevation through a perceptually ordered sequential palette. Avoid traffic-light green/yellow/red progression and other status semantics. Any future health decoration will be a separate visual channel.
 
+## Corrected Ribbon Visual Language
+
+The accepted replacement direction for the original health-colored Bands display is a single-hue distribution ribbon derived from the active metric trace color. The ribbon communicates metric identity through hue and historical concentration through opacity and saturation.
+
+- The fill spans p1 through p99 and reaches full transparency at the footprint boundary.
+- The strongest fill is centered at p50, with less saturation than the measured trace so the trace remains the foreground mark.
+- Opacity and saturation fade continuously toward p1 and p99.
+- Geometry interpolates through p1, p5, p25, p50, p75, p95, and p99 so skewed distributions remain visible.
+- The ribbon renderer must not use green/yellow/red health or severity colors.
+- Multi-metric mode continues to hide distribution rendering.
+
 ## Display modes
 
 Add a distribution-style setting with two values:

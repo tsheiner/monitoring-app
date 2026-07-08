@@ -1,0 +1,209 @@
+import { afterEach, describe, expect, it } from "vitest";
+import * as d3 from "d3";
+import { ChartView } from "../chart/ChartView";
+import {
+  Distribution,
+  BaselineResponse,
+  ChartConfig,
+  STATUS_ZONE_COLORS,
+} from "../chart/types";
+import {
+  DistributionRibbonGenerator,
+  getDistributionValueAtPercentile,
+  getRibbonBandStyle,
+} from "../chart/generators/DistributionRibbonGenerator";
+
+const containers: HTMLElement[] = [];
+
+function makeDistribution(overrides: Partial<Distribution> = {}): Distribution {
+  return {
+    p1: 10,
+    p5: 14,
+    p10: 16,
+    p25: 20,
+    p50: 30,
+    p75: 42,
+    p90: 50,
+    p95: 56,
+    p99: 62,
+    mean: 31,
+    stddev: 8,
+    ...overrides,
+  };
+}
+
+function makeBaseline(distribution = makeDistribution()): BaselineResponse {
+  return {
+    metric: "throughput",
+    entity: null,
+    lookback_days: 30,
+    timezone: "local",
+    hourly_distributions: Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      sample_count: 100,
+      fallback_source: "data",
+      distribution,
+    })),
+  };
+}
+
+function appendContainer(): HTMLElement {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  containers.push(container);
+  return container;
+}
+
+function renderRibbon(traceColor: string, distribution = makeDistribution()) {
+  const container = appendContainer();
+  const svg = d3
+    .select(container)
+    .append("svg")
+    .attr("width", 500)
+    .attr("height", 240);
+  const group = svg.append("g");
+  const generator = new DistributionRibbonGenerator(group, traceColor);
+
+  generator.setScales(
+    d3.scaleTime().domain([new Date(0), new Date(3600 * 1000)]).range([0, 500]),
+    d3.scaleLinear().domain([0, 100]).range([240, 0]),
+  );
+  generator.update(
+    [
+      { timestamp: 0, distribution },
+      { timestamp: 3600, distribution },
+    ],
+    [0, 3600],
+  );
+
+  return {
+    container,
+    bands: Array.from(container.querySelectorAll<SVGPathElement>(".ribbon-band")),
+  };
+}
+
+function normalizedColor(color: string): string {
+  return d3.color(color)?.formatRgb() ?? color;
+}
+
+function hueDistance(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return Math.min(diff, 360 - diff);
+}
+
+afterEach(() => {
+  for (const container of containers.splice(0)) {
+    container.remove();
+  }
+});
+
+describe("DistributionRibbonGenerator", () => {
+  it("derives ribbon hue from each configured metric trace color", () => {
+    const metricColors = [
+      "#3498DB",
+      "#00BCD4",
+      "#00C853",
+      "#FF6B35",
+      "#FFD23F",
+      "#FF3366",
+    ];
+
+    for (const color of metricColors) {
+      const traceHue = d3.hsl(color).h;
+      const centerStyle = getRibbonBandStyle(color, 0.5);
+      expect(hueDistance(centerStyle.hue, traceHue)).toBeLessThan(0.1);
+    }
+  });
+
+  it("makes p50 less saturated than the trace and stronger than the tails", () => {
+    const traceColor = "#00BCD4";
+    const traceSaturation = d3.hsl(traceColor).s;
+    const centerStyle = getRibbonBandStyle(traceColor, 0.5);
+    const tailStyle = getRibbonBandStyle(traceColor, 0.08);
+
+    expect(centerStyle.saturation).toBeLessThan(traceSaturation);
+    expect(centerStyle.saturation).toBeGreaterThan(tailStyle.saturation);
+    expect(centerStyle.opacity).toBeGreaterThan(tailStyle.opacity);
+  });
+
+  it("reaches full transparency at and outside p1 and p99", () => {
+    const positions = [-0.25, 0, 1, 1.25];
+
+    for (const position of positions) {
+      expect(getRibbonBandStyle("#3498DB", position).opacity).toBe(0);
+    }
+  });
+
+  it("does not render traffic-light status colors", () => {
+    const { bands } = renderRibbon("#3498DB");
+    const statusColors = new Set(
+      Object.values(STATUS_ZONE_COLORS).map(normalizedColor),
+    );
+    const renderedColors = bands.map((band) =>
+      normalizedColor(band.getAttribute("fill") ?? ""),
+    );
+
+    expect(bands.length).toBeGreaterThan(20);
+    expect(renderedColors.some((color) => statusColors.has(color))).toBe(false);
+  });
+
+  it("uses asymmetric percentile anchors when mapping distribution geometry", () => {
+    const distribution = makeDistribution({
+      p1: 0,
+      p5: 2,
+      p25: 8,
+      p50: 16,
+      p75: 54,
+      p95: 90,
+      p99: 100,
+    });
+
+    const lowerQuartileSpan =
+      getDistributionValueAtPercentile(distribution, 50) -
+      getDistributionValueAtPercentile(distribution, 25);
+    const upperQuartileSpan =
+      getDistributionValueAtPercentile(distribution, 75) -
+      getDistributionValueAtPercentile(distribution, 50);
+
+    expect(upperQuartileSpan).toBeGreaterThan(lowerQuartileSpan);
+    expect(getDistributionValueAtPercentile(distribution, 62.5)).toBe(35);
+  });
+
+  it("preserves the measured trace path and color", () => {
+    const container = appendContainer();
+    const now = 1_700_000_000;
+    const traceColor = "#FF6B35";
+    const config: ChartConfig = {
+      width: 800,
+      height: 500,
+      margin: { top: 20, right: 20, bottom: 40, left: 60 },
+      metric: "throughput",
+      timeRange: [now - 3600, now],
+      showDistribution: true,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: traceColor,
+        distribution: `${traceColor}33`,
+        event: "#999",
+        eventHover: "#7EC7FF",
+      },
+    };
+
+    const chart = new ChartView(container, config);
+    chart.addMetric("throughput", traceColor, "Throughput");
+    chart.setBaseline("throughput", makeBaseline());
+    chart.loadHistoricalData("throughput", [
+      { timestamp: now - 3600, value: 24 },
+      { timestamp: now - 1800, value: 33 },
+      { timestamp: now, value: 28 },
+    ]);
+
+    const line = container.querySelector<SVGPathElement>("svg .line");
+    const bands = container.querySelectorAll(".ribbon-band");
+
+    expect(line?.getAttribute("stroke")).toBe(traceColor);
+    expect(line?.getAttribute("d")?.length).toBeGreaterThan(20);
+    expect(bands.length).toBeGreaterThan(20);
+  });
+});
