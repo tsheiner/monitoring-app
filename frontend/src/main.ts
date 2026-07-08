@@ -85,6 +85,7 @@ type APIClientLike = Pick<
   APIClient,
   | "fetchMetricHistory"
   | "fetchBaseline"
+  | "fetchClassifierBaseline"
   | "fetchEvents"
   | "connectWebSocket"
   | "onMetric"

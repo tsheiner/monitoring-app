@@ -15,6 +15,7 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
+import { buildTrendDisplay } from "./trend/aggregateTrend";
 import * as d3 from "d3";
 import {
   ChartConfig,
@@ -23,6 +24,7 @@ import {
   Event,
   BaselineResponse,
   STATUS_ZONE_COLORS,
+  TrendPoint,
 } from "./types";
 
 interface MetricData {
@@ -34,6 +36,7 @@ interface MetricData {
   label: string; // Human-readable display label (FD-023)
   normalizedYDomain: [number, number]; // For independent normalization
   bufferedRange: [number, number] | null; // Track what time range is buffered
+  displayData: TrendPoint[]; // Derived render/hover series for the current range
 }
 
 export class ChartView {
@@ -98,6 +101,10 @@ export class ChartView {
     value: number | null;
     color: string;
     classifiers?: Record<string, { value: number; status: string }>;
+    trendKind?: "raw" | "bucket";
+    bucketStart?: number;
+    bucketEnd?: number;
+    sampleCount?: number;
   }> = [];
   private lastCursorTimeSec: number | undefined;
   // Persist most recent classifiers by metric so tooltip details don't disappear
@@ -248,6 +255,11 @@ export class ChartView {
       return;
     }
 
+    if (this.isLiveEdgeHover(x, chartWidth)) {
+      this.hideCrosshair();
+      return;
+    }
+
     // Show crosshair
     this.crosshairGroup.style("display", null);
 
@@ -283,6 +295,25 @@ export class ChartView {
     }
   }
 
+  private isLiveEdgeHover(x: number, chartWidth: number): boolean {
+    const [rangeStart, rangeEnd] = this.sharedRange.getRange();
+    const duration = rangeEnd - rangeStart;
+    if (duration <= 0 || chartWidth <= 0) return false;
+
+    const now = Date.now() / 1000;
+    const rangeEndsNearNow =
+      this.config.liveMode || rangeEnd >= now - Math.max(60, duration * 0.01);
+    if (!rangeEndsNearNow) return false;
+
+    return x / chartWidth >= 0.95;
+  }
+
+  private getHoverData(metricData: MetricData): TrendPoint[] | Observation[] {
+    return metricData.displayData.length > 0
+      ? metricData.displayData
+      : metricData.dataTarget.getAll();
+  }
+
   /**
    * Update highlighted dots at each metric trace's y-position for cursor x (FD-022).
    * Dots are filled circles with radius 4 in the metric's trace color.
@@ -302,7 +333,7 @@ export class ChartView {
     }> = [];
 
     for (const [metricName, metricData] of this.metrics.entries()) {
-      const observations = metricData.dataTarget.getAll();
+      const observations = this.getHoverData(metricData);
       if (observations.length === 0) continue;
 
       const pointAtCursor = this.getPointAtTime(observations, cursorTime);
@@ -340,7 +371,7 @@ export class ChartView {
       .enter()
       .append("circle")
       .attr("class", "crosshair-dot")
-      .attr("r", 5.5)
+      .attr("r", 4)
       .attr("fill", (d) => d.color)
       .attr("stroke", (d) => (isNearest(d) ? "#C1C6CC" : "#2A2A2A"))
       .attr("stroke-width", 3)
@@ -349,7 +380,7 @@ export class ChartView {
 
     // Update: reposition existing dots and re-apply styles (nearestMetric may have changed)
     dots
-      .attr("r", 5.5)
+      .attr("r", 4)
       .attr("fill", (d) => d.color)
       .attr("stroke", (d) => (isNearest(d) ? "#C1C6CC" : "#2A2A2A"))
       .attr("stroke-width", 3)
@@ -388,7 +419,7 @@ export class ChartView {
 
     // For each metric, find the closest point in time and compute distance
     for (const [metricName, metricData] of this.metrics.entries()) {
-      const observations = metricData.dataTarget.getAll();
+      const observations = this.getHoverData(metricData);
 
       if (observations.length === 0) {
         continue;
@@ -461,10 +492,14 @@ export class ChartView {
       classifiers?: Record<string, { value: number; status: string }>;
       timeDiffSec?: number;
       classifierSource?: "point" | "cache" | "none";
+      trendKind?: "raw" | "bucket";
+      bucketStart?: number;
+      bucketEnd?: number;
+      sampleCount?: number;
     }> = [];
 
     for (const [metricName, metricData] of this.metrics.entries()) {
-      const observations = metricData.dataTarget.getAll();
+      const observations = this.getHoverData(metricData);
 
       if (observations.length === 0) {
         continue;
@@ -473,6 +508,7 @@ export class ChartView {
       const pointAtCursor = this.getPointAtTime(observations, cursorTime);
       if (pointAtCursor) {
         const pointClassifiers = pointAtCursor.closestObs.classifiers;
+        const trendPoint = pointAtCursor.closestObs as Partial<TrendPoint>;
         const cachedClassifiers =
           this.latestClassifiersByMetric.get(metricName);
         const effectiveClassifiers = pointClassifiers ?? cachedClassifiers;
@@ -488,6 +524,10 @@ export class ChartView {
             : cachedClassifiers
               ? "cache"
               : "none",
+          trendKind: trendPoint.trendKind,
+          bucketStart: trendPoint.bucketStart,
+          bucketEnd: trendPoint.bucketEnd,
+          sampleCount: trendPoint.sampleCount,
         });
       }
     }
@@ -765,6 +805,10 @@ export class ChartView {
       value: number | null;
       color: string;
       classifiers?: Record<string, { value: number; status: string }>;
+      trendKind?: "raw" | "bucket";
+      bucketStart?: number;
+      bucketEnd?: number;
+      sampleCount?: number;
     }>,
     cursorTimeSec?: number,
   ): string {
@@ -814,9 +858,17 @@ export class ChartView {
         metric.value !== null
           ? `${metric.value.toFixed(decimals)}${unit}`
           : "N/A";
+      const bucketSeconds =
+        metric.bucketStart !== undefined && metric.bucketEnd !== undefined
+          ? metric.bucketEnd - metric.bucketStart
+          : 0;
+      const trendLabel =
+        metric.trendKind === "bucket" && metric.sampleCount && bucketSeconds > 0
+          ? ` <span style="opacity:0.55;font-size:11px;">${Math.round(bucketSeconds / 60)}m median</span>`
+          : "";
 
       // Layout: [dot] name : value [icon] — icon is right-aligned at end of row
-      html += `<span style="flex:1;font-size:14px;line-height:12px;">${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}</span>`;
+      html += `<span style="flex:1;font-size:14px;line-height:12px;">${metric.label}<span style="opacity:0.6;margin:0 3px;">:</span>${formattedValue}${trendLabel}</span>`;
       html += ChartView.statusIcon(status ?? fallbackClassifierStatus);
       html += `</div>`; // close flex row
 
@@ -1047,6 +1099,7 @@ export class ChartView {
       label: label ?? metricName, // Use label if provided, else fall back to raw key (FD-023)
       normalizedYDomain: [Infinity, -Infinity], // Will be set to actual data range on first load
       bufferedRange: null,
+      displayData: [],
     });
 
     // Suppress y-axis ticks/labels in overlay mode (0-100 normalized values are meaningless)
@@ -1357,6 +1410,7 @@ export class ChartView {
       metricData.dataTarget.clear();
       metricData.normalizedYDomain = [Infinity, -Infinity];
       metricData.bufferedRange = null;
+      metricData.displayData = [];
       if (metricData.distributionGenerator) {
         metricData.distributionGenerator.hide();
       }
@@ -1667,27 +1721,50 @@ export class ChartView {
    */
   private render(): void {
     const range = this.sharedRange.getRange();
+    const plotWidth = Math.max(
+      1,
+      this.config.width - this.config.margin.left - this.config.margin.right,
+    );
 
     // Render each metric
     for (const [, metricData] of this.metrics) {
       // Get ALL buffered data (not just visible range) for pre-rendering
       const allObservations = metricData.dataTarget.getAll();
+      const trendDisplay = buildTrendDisplay(
+        allObservations,
+        range,
+        plotWidth,
+        metricData.baseline,
+      );
+      metricData.displayData = trendDisplay.points;
 
       if (this.metrics.size > 1) {
         // Multiple metrics: normalize to 0-100
-        const normalizedObs = allObservations.map((obs) => ({
-          timestamp: obs.timestamp,
+        const normalizedObs = trendDisplay.points.map((obs) => ({
+          ...obs,
           value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
         }));
-        metricData.lineGenerator.update(normalizedObs, range);
+        const normalizedExcursions = trendDisplay.excursions.map((obs) => ({
+          ...obs,
+          value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
+        }));
+        metricData.lineGenerator.update(
+          normalizedObs,
+          range,
+          normalizedExcursions,
+        );
 
         // Hide distribution for multi-metric view
         if (metricData.distributionGenerator) {
           metricData.distributionGenerator.hide();
         }
       } else {
-        // Single metric: use actual values for ALL buffered data
-        metricData.lineGenerator.update(allObservations, range);
+        // Single metric: use actual values for derived display data
+        metricData.lineGenerator.update(
+          trendDisplay.points,
+          range,
+          trendDisplay.excursions,
+        );
 
         // FIX C: Explicitly show distribution when in single-metric mode.
         // It may have been hidden during a prior multi-metric render.

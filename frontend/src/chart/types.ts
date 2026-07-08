@@ -27,6 +27,24 @@ export interface Observation {
   classifiers?: Record<string, ClassifierValue>;
 }
 
+export interface TrendPoint extends Observation {
+  trendKind: "raw" | "bucket";
+  bucketStart: number;
+  bucketEnd: number;
+  sampleCount: number;
+  sourceStartTimestamp: number;
+  sourceEndTimestamp: number;
+  minValue: number;
+  maxValue: number;
+}
+
+export interface TrendDisplay {
+  mode: "raw" | "bucketed";
+  bucketSeconds: number;
+  points: TrendPoint[];
+  excursions: TrendPoint[];
+}
+
 export interface Distribution {
   p1: number;
   p5: number;

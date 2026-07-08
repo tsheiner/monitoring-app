@@ -25,7 +25,17 @@ describe("UI Acceptance Tests", () => {
       width: 800,
       height: 600,
       margin: { top: 20, right: 20, bottom: 60, left: 60 },
+      metric: "throughput",
       timeRange: [now - 3600, now],
+      showDistribution: true,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: "#4CAF50",
+        distribution: "#4CAF5033",
+        event: "#ff6b6b",
+        eventHover: "#ff8787",
+      },
     };
   });
 

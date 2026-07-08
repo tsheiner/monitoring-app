@@ -36,11 +36,20 @@ export function restoreTimeFunctions(): void {
 // Make Date.now also use mocked time (in milliseconds)
 Date.now = () => mockedTime;
 
+type SetMockedTime = (time: number) => void;
+type AdvanceTime = (ms: number) => void;
+type ResetMockedTime = () => void;
+
 // Add global test helpers
 declare global {
-  var setMockedTime: typeof setMockedTime;
-  var advanceTime: typeof advanceTime;
-  var resetMockedTime: typeof resetMockedTime;
+  var setMockedTime: SetMockedTime;
+  var advanceTime: AdvanceTime;
+  var resetMockedTime: ResetMockedTime;
+
+  interface SVGElement {
+    getScreenCTM?: () => any;
+    createSVGPoint?: () => any;
+  }
 }
 
 globalThis.setMockedTime = setMockedTime;

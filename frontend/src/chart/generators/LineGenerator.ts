@@ -7,7 +7,7 @@
 
 import * as d3 from "d3";
 import { Generator } from "../types";
-import { Observation } from "../types";
+import { Observation, TrendPoint } from "../types";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -91,9 +91,11 @@ export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
   private path: d3.Selection<SVGPathElement, unknown, null, undefined>;
   private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private excursionsGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
-  private data: Observation[] = [];
+  private data: Array<Observation | TrendPoint> = [];
+  private excursions: Array<Observation | TrendPoint> = [];
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -123,6 +125,7 @@ export class LineGenerator implements Generator {
       .attr("stroke-width", strokeWidth);
 
     this.markersGroup = this.group.append("g").attr("class", "markers");
+    this.excursionsGroup = this.group.append("g").attr("class", "excursions");
   }
 
   setScales(xScale: any, yScale: any): void {
@@ -130,8 +133,13 @@ export class LineGenerator implements Generator {
     this.yScale = yScale;
   }
 
-  update(data: Observation[], range: [number, number]): void {
+  update(
+    data: Array<Observation | TrendPoint>,
+    range: [number, number],
+    excursions: Array<Observation | TrendPoint> = [],
+  ): void {
     this.data = data;
+    this.excursions = excursions;
     this.redraw(range);
   }
 
@@ -184,6 +192,36 @@ export class LineGenerator implements Generator {
         .attr("cx", (d) => this.xScale(new Date(d.timestamp * 1000)))
         .attr("cy", (d) => this.yScale(d.value));
     }
+
+    this.renderExcursionMarkers(range);
+  }
+
+  private renderExcursionMarkers(range: [number, number]): void {
+    const visibleExcursions = this.excursions.filter(
+      (d) => d.timestamp >= range[0] && d.timestamp <= range[1],
+    );
+
+    const markers = this.excursionsGroup
+      .selectAll<SVGCircleElement, Observation | TrendPoint>(".excursion-marker")
+      .data(
+        visibleExcursions,
+        (d) =>
+          `${(d as TrendPoint).sourceStartTimestamp ?? d.timestamp}-${(d as TrendPoint).sourceEndTimestamp ?? d.timestamp}`,
+      );
+
+    markers.exit().remove();
+
+    markers
+      .enter()
+      .append("circle")
+      .attr("class", "excursion-marker")
+      .attr("r", this.markerRadius + 2)
+      .attr("fill", "#2A2A2A")
+      .attr("stroke", this.color)
+      .attr("stroke-width", 2)
+      .merge(markers)
+      .attr("cx", (d) => this.xScale(new Date(d.timestamp * 1000)))
+      .attr("cy", (d) => this.yScale(d.value));
   }
 
   show(): void {
