@@ -889,6 +889,16 @@ Likely existing changes:
 - Add a deterministic diagnostic that reports outside rates per metric and hour for clean simulation and for perturbation-inclusive simulation.
 - Decide the intended perturbation frequency separately from baseline calibration. Perturbations may legitimately create clustered excursions, but their frequency should match the product story rather than compensate for a generator mismatch.
 
+### Phase 1 event-realism checkpoint
+
+The calibration diagnostic now separates three modes:
+
+- `clean`: clean/no-event generation, used as the pass/fail calibration gate.
+- `background`: background-event generation, using deterministic background-like scheduled events.
+- `scenario`: scenario/event-inclusive generation, using deterministic scenario-like scheduled events.
+
+Each mode reports p5–p95 and p1–p99 outside rates per metric and per UTC hour. The clean mode remains expected to stay near 10% outside p5–p95 and 2% outside p1–p99 within the recorded tolerance. Background and scenario modes are interpreted separately, so event-driven excursions can be assessed as causal clusters instead of baseline drift.
+
 ### Required tests
 
 - Bootstrap and live generation use the same state-advance function and produce the same output shape for a fixed seed and timestamp sequence.
