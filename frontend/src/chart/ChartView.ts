@@ -864,7 +864,7 @@ export class ChartView {
           : 0;
       const trendLabel =
         metric.trendKind === "bucket" && metric.sampleCount && bucketSeconds > 0
-          ? ` <span style="opacity:0.55;font-size:11px;">${Math.round(bucketSeconds / 60)}m</span>`
+          ? ` <span style="opacity:0.55;font-size:11px;">${Math.round(bucketSeconds / 60)}m median</span>`
           : "";
 
       // Layout: [dot] name : value [icon] — icon is right-aligned at end of row
