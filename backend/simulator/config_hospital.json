@@ -171,14 +171,14 @@
 
   "event_profile": {
     "name": "hospital",
-    "avg_interval_minutes": 10,
-    "emit_probability": 0.22,
+    "avg_interval_minutes": 12,
+    "emit_probability": 0.18,
     "business_hours_multiplier": 1.05,
     "off_hours_multiplier": 0.85,
     "severity_weights": {
-      "info": 0.70,
-      "warning": 0.27,
-      "critical": 0.03
+      "info": 0.74,
+      "warning": 0.25,
+      "critical": 0.01
     },
     "event_weights": {
       "ai_action": 0.22,

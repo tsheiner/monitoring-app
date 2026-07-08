@@ -507,23 +507,23 @@ EVENT_TYPE_ALIASES = {
 
 DEFAULT_EVENT_PROFILES = {
     "enterprise": {
-        "avg_interval_minutes": 7,
-        "emit_probability": 0.28,
+        "avg_interval_minutes": 9,
+        "emit_probability": 0.24,
         "business_hours_multiplier": 1.35,
         "off_hours_multiplier": 0.25,
-        "severity_weights": {"info": 0.55, "warning": 0.38, "critical": 0.07},
+        "severity_weights": {"info": 0.60, "warning": 0.36, "critical": 0.04},
         "event_weights": {
-            "config_change": 0.22,
-            "ai_action": 0.22,
+            "config_change": 0.24,
+            "ai_action": 0.24,
             "channel_change": 0.12,
             "firmware_update": 0.08,
             "device_restart": 0.05,
-            "dhcp_server_overload": 0.06,
-            "radius_timeout": 0.04,
+            "dhcp_server_overload": 0.05,
+            "radius_timeout": 0.03,
             "dns_resolution_failure": 0.04,
             "interference_event": 0.10,
             "high_density_event": 0.05,
-            "heat_event": 0.02,
+            "heat_event": 0.01,
         },
         "event_weight_windows": [
             {
@@ -539,11 +539,11 @@ DEFAULT_EVENT_PROFILES = {
         ],
     },
     "campus": {
-        "avg_interval_minutes": 4,
-        "emit_probability": 0.36,
+        "avg_interval_minutes": 5,
+        "emit_probability": 0.32,
         "business_hours_multiplier": 1.20,
         "off_hours_multiplier": 0.60,
-        "severity_weights": {"info": 0.42, "warning": 0.48, "critical": 0.10},
+        "severity_weights": {"info": 0.44, "warning": 0.48, "critical": 0.08},
         "event_weights": {
             "high_density_event": 0.22,
             "interference_event": 0.20,
@@ -573,11 +573,11 @@ DEFAULT_EVENT_PROFILES = {
         ],
     },
     "hospital": {
-        "avg_interval_minutes": 10,
-        "emit_probability": 0.22,
+        "avg_interval_minutes": 12,
+        "emit_probability": 0.18,
         "business_hours_multiplier": 1.05,
         "off_hours_multiplier": 0.85,
-        "severity_weights": {"info": 0.70, "warning": 0.27, "critical": 0.03},
+        "severity_weights": {"info": 0.74, "warning": 0.25, "critical": 0.01},
         "event_weights": {
             "ai_action": 0.22,
             "config_change": 0.16,

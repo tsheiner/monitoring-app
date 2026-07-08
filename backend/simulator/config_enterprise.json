@@ -171,27 +171,27 @@
 
   "event_profile": {
     "name": "enterprise",
-    "avg_interval_minutes": 7,
-    "emit_probability": 0.28,
+    "avg_interval_minutes": 9,
+    "emit_probability": 0.24,
     "business_hours_multiplier": 1.35,
     "off_hours_multiplier": 0.25,
     "severity_weights": {
-      "info": 0.55,
-      "warning": 0.38,
-      "critical": 0.07
+      "info": 0.60,
+      "warning": 0.36,
+      "critical": 0.04
     },
     "event_weights": {
-      "config_change": 0.22,
-      "ai_action": 0.22,
+      "config_change": 0.24,
+      "ai_action": 0.24,
       "channel_change": 0.12,
       "firmware_update": 0.08,
       "device_restart": 0.05,
-      "dhcp_server_overload": 0.06,
-      "radius_timeout": 0.04,
+      "dhcp_server_overload": 0.05,
+      "radius_timeout": 0.03,
       "dns_resolution_failure": 0.04,
       "interference_event": 0.10,
       "high_density_event": 0.05,
-      "heat_event": 0.02
+      "heat_event": 0.01
     },
     "event_weight_windows": [
       {

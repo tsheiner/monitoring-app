@@ -899,6 +899,15 @@ The calibration diagnostic now separates three modes:
 
 Each mode reports p5–p95 and p1–p99 outside rates per metric and per UTC hour. The clean mode remains expected to stay near 10% outside p5–p95 and 2% outside p1–p99 within the recorded tolerance. Background and scenario modes are interpreted separately, so event-driven excursions can be assessed as causal clusters instead of baseline drift.
 
+### Phase 5 event-realism acceptance
+
+The simulator now treats random background events as lower-drama operational texture and triggered scenarios as demo-worthy causal sequences:
+
+- Clean/no-event diagnostics should stay centered near 10% outside p5–p95 and 2% outside p1–p99, with the recorded tolerance accounting for temporal correlation and finite samples.
+- Background events should be visible and attributable, but usually warning/info severity. Enterprise favors config and AI operations during business hours, campus favors RF and high-density patterns, and hospital has the lowest critical-event mix.
+- Triggered scenarios are allowed to move traces clearly outside the normal ribbon when their visible events explain the excursion. Scenario effects must still flow through catalog classifier perturbations rather than direct metric overrides.
+- The distribution ribbon represents normal operation. Values outside it are acceptable when they are statistically expected or paired with a visible background/scenario event.
+
 ### Required tests
 
 - Bootstrap and live generation use the same state-advance function and produce the same output shape for a fixed seed and timestamp sequence.
