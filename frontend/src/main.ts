@@ -5,7 +5,13 @@
 import "./style.css";
 import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
-import { ChartConfig, Event, Observation } from "./chart/types";
+import { TerrainControls } from "./chart/terrain/TerrainControls";
+import {
+  ChartConfig,
+  DistributionStyle,
+  Event,
+  Observation,
+} from "./chart/types";
 
 /**
  * Static mapping of metrics to their classifier components.
@@ -85,6 +91,7 @@ type APIClientLike = Pick<
   APIClient,
   | "fetchMetricHistory"
   | "fetchBaseline"
+  | "fetchClassifierBaseline"
   | "fetchEvents"
   | "connectWebSocket"
   | "onMetric"
@@ -97,7 +104,7 @@ type APIClientLike = Pick<
 class MonitoringApp {
   private chart: ChartView;
   private api: APIClientLike;
-  private currentTimeRangeSeconds: number = 3600; // Start with 1 hour
+  private currentTimeRangeSeconds: number = 12 * 60 * 60;
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
   private dataFetchDebounceTimer: number | null = null;
@@ -106,6 +113,8 @@ class MonitoringApp {
   private _loadGeneration: number = 0;
   private baselineLoadedForMetric: Set<string> = new Set();
   private baselineLoadedForClassifier: Set<string> = new Set();
+  private distributionStyle: DistributionStyle = "bands";
+  private terrainControls: TerrainControls | null = null;
 
   // Metric configuration
   // Colors chosen for maximum distinctness when overlaid
@@ -530,6 +539,8 @@ class MonitoringApp {
 
         metricsList.appendChild(toggle);
       }
+
+      this.setupDistributionControls(metricsList);
     }
 
     // Build event group toggles
@@ -606,6 +617,68 @@ class MonitoringApp {
     });
   }
 
+  private setupDistributionControls(metricsList: HTMLElement): void {
+    this.terrainControls?.destroy();
+    document.getElementById("distribution-controls")?.remove();
+
+    const section = document.createElement("section");
+    section.id = "distribution-controls";
+    section.className = "distribution-controls";
+    section.setAttribute("aria-label", "Distribution display");
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Distribution";
+    section.appendChild(heading);
+
+    const selector = document.createElement("div");
+    selector.className = "distribution-style-selector";
+    selector.setAttribute("role", "group");
+    selector.setAttribute("aria-label", "Distribution style");
+
+    for (const style of ["bands", "terrain"] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.distributionStyle = style;
+      button.textContent = style === "bands" ? "Bands" : "Terrain";
+      button.addEventListener("click", () => this.selectDistributionStyle(style));
+      selector.appendChild(button);
+    }
+
+    section.appendChild(selector);
+    this.terrainControls = new TerrainControls(
+      section,
+      this.chart.getTerrainSettings(),
+      (settings) => this.chart.setTerrainSettings(settings),
+      (active) => this.chart.setTerrainPreviewMode(active),
+    );
+    metricsList.insertAdjacentElement("afterend", section);
+    this.updateDistributionControls();
+  }
+
+  private selectDistributionStyle(style: DistributionStyle): void {
+    this.distributionStyle = style;
+    this.chart.setDistributionStyle(style);
+    this.updateDistributionControls();
+  }
+
+  private updateDistributionControls(): void {
+    const section = document.getElementById("distribution-controls");
+    if (!section) return;
+
+    const singleMetric = this.metrics.filter((metric) => metric.enabled).length === 1;
+    section.hidden = !singleMetric;
+    this.terrainControls?.setVisible(
+      singleMetric && this.distributionStyle === "terrain",
+    );
+    for (const button of section.querySelectorAll<HTMLButtonElement>(
+      "button[data-distribution-style]",
+    )) {
+      const selected = button.dataset.distributionStyle === this.distributionStyle;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", selected.toString());
+    }
+  }
+
   private async toggleMetric(metricName: string): Promise<void> {
     await this.initialLoadPromise;
 
@@ -620,6 +693,7 @@ class MonitoringApp {
     const generationAtToggleStart = this._loadGeneration;
 
     metric.enabled = !metric.enabled;
+    this.updateDistributionControls();
 
     // Update UI immediately so the indicator responds to the click
     this.updateMetricIndicator(metricName, metric.enabled, metric.color);
@@ -664,6 +738,9 @@ class MonitoringApp {
         }
       } else {
         this.chart.removeMetric(metricName);
+        // Removing a metric also removes its ChartView baseline. Allow a
+        // future re-enable to fetch and attach that baseline again.
+        this.baselineLoadedForMetric.delete(metricName);
 
         // If exactly one metric remains, refresh its baseline (non-blocking).
         const remaining = this.metrics.filter((m) => m.enabled);
@@ -677,6 +754,7 @@ class MonitoringApp {
         metric.enabled = false;
         this.chart.removeMetric(metricName);
         this.updateMetricIndicator(metricName, false, metric.color);
+        this.updateDistributionControls();
       }
       console.error(`Failed to toggle metric ${metricName}:`, error);
     } finally {

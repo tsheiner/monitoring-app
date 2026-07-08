@@ -15,6 +15,17 @@ import { DataTarget } from "./DataTarget";
 import { LineGenerator } from "./generators/LineGenerator";
 import { DistributionRibbonGenerator } from "./generators/DistributionRibbonGenerator";
 import { EventMarkersGenerator } from "./generators/EventMarkersGenerator";
+import { TerrainCanvasLayer } from "./terrain/TerrainCanvasLayer";
+import {
+  DEFAULT_TERRAIN_SETTINGS,
+  normalizeTerrainSettings,
+  resolveTerrainConfig,
+} from "./terrain/defaults";
+import {
+  baselineToGaussianDescriptors,
+  medianReferenceSigma,
+} from "./terrain/baselineAdapter";
+import { buildTerrainShadowSamples } from "./terrain/terrainTraceShadow";
 import * as d3 from "d3";
 import {
   ChartConfig,
@@ -23,6 +34,8 @@ import {
   Event,
   BaselineResponse,
   STATUS_ZONE_COLORS,
+  DistributionStyle,
+  TerrainSettings,
 } from "./types";
 
 interface MetricData {
@@ -42,6 +55,9 @@ export class ChartView {
   private metrics: Map<string, MetricData> = new Map();
   private classifierBaselines: Map<string, BaselineResponse> = new Map();
   private eventMarkers: EventMarkersGenerator | null = null;
+  private terrainLayer: TerrainCanvasLayer;
+  private distributionStyle: DistributionStyle;
+  private terrainSettings: TerrainSettings;
   private config: ChartConfig;
   private onDataNeededCallback?: (range: [number, number]) => void;
 
@@ -118,6 +134,16 @@ export class ChartView {
 
     // Initialize core with the FULL time range immediately
     this.core = new ChartCore(container, config);
+    this.distributionStyle = config.distributionStyle ?? "bands";
+    this.terrainSettings = normalizeTerrainSettings(
+      config.terrainSettings ?? DEFAULT_TERRAIN_SETTINGS,
+    );
+    this.terrainLayer = new TerrainCanvasLayer(
+      container,
+      config.margin,
+      config.width,
+      config.height,
+    );
 
     // Initialize shared range with FULL window [past, now]
     this.sharedRange = new SharedRange(config.timeRange);
@@ -285,7 +311,7 @@ export class ChartView {
 
   /**
    * Update highlighted dots at each metric trace's y-position for cursor x (FD-022).
-   * Dots are filled circles with radius 4 in the metric's trace color.
+   * Dots are filled circles with radius 5.5 and a knockout border.
    */
   private updateCrosshairDots(x: number): void {
     const xScale = this.core.getXScale();
@@ -508,16 +534,43 @@ export class ChartView {
     const tooltipHtml = this.buildTooltipContent(metricsAtCursor, cursorTime);
     this.tooltipElement.innerHTML = tooltipHtml;
 
-    // Position tooltip
-    const svgRect = (
-      this.core.getSVG().node() as SVGSVGElement
-    ).getBoundingClientRect();
-    const tooltipX = svgRect.left + this.config.margin.left + x + 40;
-    const tooltipY = svgRect.top + this.config.margin.top + y + 15;
+    this.tooltipElement.style.display = "flex";
+
+    // The tooltip is absolutely positioned inside the chart container, so its
+    // coordinates must be local to that container. Keep it beside the cursor
+    // and flip it across the cursor near the right or bottom edge.
+    const cursorX = this.config.margin.left + x;
+    const cursorY = this.config.margin.top + y;
+    const gap = 16;
+    const container = this.tooltipElement.parentElement;
+    const containerWidth = container?.clientWidth || this.config.width;
+    const containerHeight = container?.clientHeight || this.config.height;
+    const tooltipWidth =
+      this.tooltipElement.getBoundingClientRect().width ||
+      Number.parseFloat(this.tooltipElement.style.width);
+    const tooltipHeight = this.tooltipElement.getBoundingClientRect().height;
+
+    let tooltipX = cursorX + gap;
+    if (tooltipX + tooltipWidth > containerWidth) {
+      tooltipX = cursorX - tooltipWidth - gap;
+    }
+
+    let tooltipY = cursorY + gap;
+    if (tooltipHeight > 0 && tooltipY + tooltipHeight > containerHeight) {
+      tooltipY = cursorY - tooltipHeight - gap;
+    }
+
+    tooltipX = Math.max(
+      0,
+      Math.min(tooltipX, Math.max(0, containerWidth - tooltipWidth)),
+    );
+    tooltipY = Math.max(
+      0,
+      Math.min(tooltipY, Math.max(0, containerHeight - tooltipHeight)),
+    );
 
     this.tooltipElement.style.left = `${tooltipX}px`;
     this.tooltipElement.style.top = `${tooltipY}px`;
-    this.tooltipElement.style.display = "flex";
   }
 
   private captureLatestClassifiers(
@@ -1361,6 +1414,7 @@ export class ChartView {
         metricData.distributionGenerator.hide();
       }
     }
+    this.terrainLayer.hide();
 
     this.sharedRange.setRange([this.chartStartTime, end]);
 
@@ -1422,7 +1476,7 @@ export class ChartView {
   setShowDistribution(enabled: boolean): void {
     this.config.showDistribution = enabled;
 
-    for (const [name, metricData] of this.metrics) {
+    for (const [, metricData] of this.metrics) {
       if (metricData.distributionGenerator) {
         if (enabled) {
           metricData.distributionGenerator.show();
@@ -1432,9 +1486,61 @@ export class ChartView {
       }
     }
 
+    if (!enabled) {
+      this.terrainLayer.hide();
+    }
+
     if (enabled) {
       this.render();
     }
+  }
+
+  /** Select the active single-metric distribution renderer. */
+  setDistributionStyle(style: DistributionStyle): void {
+    this.distributionStyle = style;
+    this.config.distributionStyle = style;
+    this.render();
+  }
+
+  getDistributionStyle(): DistributionStyle {
+    return this.distributionStyle;
+  }
+
+  /** Apply session-scoped terrain settings. */
+  setTerrainSettings(settings: TerrainSettings): void {
+    this.terrainSettings = normalizeTerrainSettings(settings);
+    this.config.terrainSettings = { ...this.terrainSettings };
+    this.render();
+  }
+
+  setTerrainPreviewMode(enabled: boolean): void {
+    this.terrainLayer.setPreviewMode(enabled);
+  }
+
+  getTerrainSettings(): TerrainSettings {
+    return { ...this.terrainSettings };
+  }
+
+  getTerrainRenderDurationMs(): number {
+    return this.terrainLayer.getLastRenderDurationMs();
+  }
+
+  _getTerrainStateForTest(): {
+    canvas: HTMLCanvasElement;
+    visible: boolean;
+    settings: TerrainSettings;
+    style: DistributionStyle;
+    preview: boolean;
+    flush: () => void;
+  } {
+    return {
+      canvas: this.terrainLayer.getCanvas(),
+      visible: this.terrainLayer.isVisible(),
+      settings: this.getTerrainSettings(),
+      style: this.distributionStyle,
+      preview: this.terrainLayer.isPreviewMode(),
+      flush: () => this.terrainLayer.renderNow(),
+    };
   }
 
   /**
@@ -1667,6 +1773,7 @@ export class ChartView {
    */
   private render(): void {
     const range = this.sharedRange.getRange();
+    let terrainRendered = false;
 
     // Render each metric
     for (const [, metricData] of this.metrics) {
@@ -1680,6 +1787,7 @@ export class ChartView {
           value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
         }));
         metricData.lineGenerator.update(normalizedObs, range);
+        metricData.lineGenerator.setTerrainShadow(null, range);
 
         // Hide distribution for multi-metric view
         if (metricData.distributionGenerator) {
@@ -1689,25 +1797,63 @@ export class ChartView {
         // Single metric: use actual values for ALL buffered data
         metricData.lineGenerator.update(allObservations, range);
 
-        // FIX C: Explicitly show distribution when in single-metric mode.
-        // It may have been hidden during a prior multi-metric render.
-        // Render distribution for single metric
-        if (metricData.distributionGenerator && this.config.showDistribution) {
-          metricData.distributionGenerator.show();
-
-          if (metricData.baseline) {
+        if (this.config.showDistribution && metricData.baseline) {
+          if (
+            this.distributionStyle === "bands" &&
+            metricData.distributionGenerator
+          ) {
+            this.terrainLayer.hide();
+            metricData.lineGenerator.setTerrainShadow(null, range);
+            metricData.distributionGenerator.show();
             // Generate distribution points from 24-hour baseline
             const distributionPoints = this.generateBaselineDistribution(
               metricData.baseline,
               range,
             );
             metricData.distributionGenerator.update(distributionPoints, range);
-          } else {
-            metricData.distributionGenerator.hide();
+          } else if (this.distributionStyle === "terrain") {
+            metricData.distributionGenerator?.hide();
+            const yDomain = this.core.getYScale().domain() as [number, number];
+            const ySpan = Math.abs(yDomain[1] - yDomain[0]);
+            const descriptors = baselineToGaussianDescriptors(
+              metricData.baseline,
+              range,
+              ySpan,
+            );
+            if (descriptors.length > 0) {
+              const terrainConfig = resolveTerrainConfig(this.terrainSettings);
+              metricData.lineGenerator.setTerrainShadow(
+                buildTerrainShadowSamples(
+                  allObservations,
+                  descriptors,
+                  terrainConfig.supportDensityRatio,
+                ),
+                range,
+                this.terrainSettings.shadowCrispness,
+              );
+              this.terrainLayer.update({
+                descriptors,
+                referenceSigma: medianReferenceSigma(descriptors),
+                timeRange: range,
+                yDomain,
+                settings: this.terrainSettings,
+              });
+              this.terrainLayer.show();
+              terrainRendered = true;
+            } else {
+              metricData.lineGenerator.setTerrainShadow(null, range);
+            }
           }
+        } else {
+          metricData.distributionGenerator?.hide();
+          metricData.lineGenerator.setTerrainShadow(null, range);
         }
       }
     }
+    if (!terrainRendered) {
+      this.terrainLayer.hide();
+    }
+
     // Redraw event markers if present
     if (this.eventMarkers && this.config.showEvents) {
       this.eventMarkers.redraw(range);
@@ -1722,6 +1868,7 @@ export class ChartView {
     this.config.height = height;
 
     this.core.resize(width, height);
+    this.terrainLayer.resize(width, height, this.config.margin);
 
     // Update scales for all generators after core resize
     for (const [, metricData] of this.metrics) {
@@ -1752,6 +1899,7 @@ export class ChartView {
    * Cleanup and destroy.
    */
   destroy(): void {
+    this.terrainLayer.destroy();
     this.core.destroy();
 
     for (const [, metricData] of this.metrics) {

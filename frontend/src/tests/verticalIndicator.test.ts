@@ -182,7 +182,7 @@ describe("FD-022: Vertical Indicator Visual Spec", () => {
       expect(fill).toBe(metricColor);
     });
 
-    it("should give dots radius 4px", () => {
+    it("should give dots a 5.5px radius for the knockout treatment", () => {
       const chart = new ChartView(container, config);
       chart.addMetric("throughput", "#3498DB");
 
@@ -197,7 +197,7 @@ describe("FD-022: Vertical Indicator Visual Spec", () => {
 
       const dot = container.querySelector(".crosshair-dot") as SVGCircleElement;
       expect(dot).toBeTruthy();
-      expect(dot.getAttribute("r")).toBe("4");
+      expect(dot.getAttribute("r")).toBe("5.5");
     });
 
     it("should hide dots when crosshair hides (mouseleave)", () => {

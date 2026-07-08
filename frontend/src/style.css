@@ -159,6 +159,10 @@ main {
   height: 100%;
 }
 
+#metrics-sidebar {
+  overflow-y: auto;
+}
+
 .sidebar-card h3 {
   font-size: 16px;
   font-weight: 600;
@@ -172,6 +176,138 @@ main {
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
+}
+
+.distribution-controls {
+  border-top: 1px solid #444;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.distribution-controls h3 {
+  margin-bottom: 10px;
+}
+
+.distribution-style-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  background: #202020;
+  border: 1px solid #444;
+  border-radius: 6px;
+}
+
+.distribution-style-selector button {
+  border: 0;
+  border-radius: 4px;
+  padding: 7px 8px;
+  color: #b8bec5;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.distribution-style-selector button:hover {
+  color: #fff;
+  background: #333;
+}
+
+.distribution-style-selector button:focus-visible {
+  outline: 2px solid #7ec7ff;
+  outline-offset: 1px;
+}
+
+.distribution-style-selector button.active {
+  color: #fff;
+  background: #4e8db8;
+}
+
+.terrain-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.terrain-settings[hidden] {
+  display: none;
+}
+
+.terrain-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.terrain-setting-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #d4d8dc;
+  font-size: 12px;
+}
+
+.terrain-setting output {
+  color: #9ba4ad;
+  font-variant-numeric: tabular-nums;
+}
+
+.terrain-setting input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: #4e8db8;
+}
+
+.terrain-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.terrain-copy-settings {
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 6px 9px;
+  color: #e0e0e0;
+  background: #333;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.terrain-copy-settings:hover {
+  background: #3d3d3d;
+  border-color: #666;
+}
+
+.terrain-copy-settings:focus-visible {
+  outline: 2px solid #7ec7ff;
+  outline-offset: 1px;
+}
+
+.terrain-copy-feedback {
+  color: #aeb7bf;
+  font-size: 11px;
+}
+
+.terrain-manual-copy {
+  width: 100%;
+  min-height: 92px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 7px;
+  color: #dce2e7;
+  background: #202020;
+  font: 11px/1.35 monospace;
+}
+
+.terrain-manual-copy[hidden] {
+  display: none;
 }
 
 .metric-toggle,
@@ -252,11 +388,20 @@ main {
   overflow: hidden;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 #chart svg {
   display: block;
   max-width: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+.terrain-canvas {
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
 }
 
 /* Chart Styles (D3) */

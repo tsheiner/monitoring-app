@@ -8,6 +8,10 @@
 import * as d3 from "d3";
 import { Generator } from "../types";
 import { Observation } from "../types";
+import {
+  resolveTerrainShadowStyle,
+  TerrainShadowSample,
+} from "../terrain/terrainTraceShadow";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -89,11 +93,14 @@ function lttbDownsample(
 
 export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private shadowGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private path: d3.Selection<SVGPathElement, unknown, null, undefined>;
   private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
   private data: Observation[] = [];
+  private shadowSamples: TerrainShadowSample[] = [];
+  private shadowCrispness = 0.6;
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -115,6 +122,11 @@ export class LineGenerator implements Generator {
 
     this.group = parent.append("g").attr("class", "line-generator");
 
+    this.shadowGroup = this.group
+      .append("g")
+      .attr("class", "terrain-trace-shadow")
+      .style("display", "none");
+
     this.path = this.group
       .append("path")
       .attr("class", "line")
@@ -133,6 +145,21 @@ export class LineGenerator implements Generator {
   update(data: Observation[], range: [number, number]): void {
     this.data = data;
     this.redraw(range);
+  }
+
+  setTerrainShadow(
+    samples: TerrainShadowSample[] | null,
+    range: [number, number],
+    crispness: number = this.shadowCrispness,
+  ): void {
+    this.shadowSamples = samples ?? [];
+    this.shadowCrispness = crispness;
+    if (this.shadowSamples.length > 1) {
+      this.shadowGroup.style("display", null);
+    } else {
+      this.shadowGroup.style("display", "none");
+    }
+    this.redrawShadow(range);
   }
 
   redraw(range: [number, number]): void {
@@ -159,6 +186,7 @@ export class LineGenerator implements Generator {
 
     // Update path with downsampled data
     this.path.datum(lineData).attr("d", line);
+    this.redrawShadow(range);
 
     // Update markers — only show when density is low enough to be useful
     const visibleData = allData.filter(
@@ -184,6 +212,63 @@ export class LineGenerator implements Generator {
         .attr("cx", (d) => this.xScale(new Date(d.timestamp * 1000)))
         .attr("cy", (d) => this.yScale(d.value));
     }
+  }
+
+  private redrawShadow(range: [number, number]): void {
+    if (!this.xScale || !this.yScale || this.shadowSamples.length < 2) {
+      this.shadowGroup.selectAll("path").remove();
+      return;
+    }
+
+    const runs: TerrainShadowSample[][] = [];
+    let currentRun: TerrainShadowSample[] = [];
+    for (const sample of this.shadowSamples) {
+      if (sample.strength > 0.01) {
+        currentRun.push(sample);
+      } else {
+        if (currentRun.length > 1) runs.push(currentRun);
+        currentRun = [];
+      }
+    }
+    if (currentRun.length > 1) runs.push(currentRun);
+
+    const visibleRuns = runs.filter(
+      (run) =>
+        run[run.length - 1].timestamp >= range[0] &&
+        run[0].timestamp <= range[1],
+    );
+    const shadowLine = d3
+      .line<TerrainShadowSample>()
+      .x((sample) => this.xScale(new Date(sample.timestamp * 1000)))
+      .y((sample) => this.yScale(sample.value))
+      .curve(d3.curveMonotoneX);
+    const shadowStyle = resolveTerrainShadowStyle(this.shadowCrispness);
+
+    const shadowPaths = this.shadowGroup
+      .selectAll<SVGPathElement, TerrainShadowSample[]>("path")
+      .data(visibleRuns, (run) => run[0].timestamp.toString());
+
+    shadowPaths.exit().remove();
+    shadowPaths
+      .enter()
+      .append("path")
+      .attr("fill", "none")
+      .attr("stroke", "#08070d")
+      .attr("stroke-linecap", "round")
+      .attr("stroke-linejoin", "round")
+      .merge(shadowPaths)
+      .attr("d", shadowLine)
+      .attr(
+        "transform",
+        `translate(${shadowStyle.offsetX} ${shadowStyle.offsetY})`,
+      )
+      .attr("stroke-width", this.strokeWidth + shadowStyle.spreadPx)
+      .style("filter", `blur(${shadowStyle.blurPx}px)`)
+      .attr("opacity", (run) => {
+        const strength =
+          run.reduce((total, sample) => total + sample.strength, 0) / run.length;
+        return (0.1 + 0.28 * strength) * shadowStyle.opacityScale;
+      });
   }
 
   show(): void {
