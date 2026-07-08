@@ -169,6 +169,46 @@
     }
   },
 
+  "event_profile": {
+    "name": "campus",
+    "avg_interval_minutes": 4,
+    "emit_probability": 0.36,
+    "business_hours_multiplier": 1.2,
+    "off_hours_multiplier": 0.6,
+    "severity_weights": {
+      "info": 0.42,
+      "warning": 0.48,
+      "critical": 0.10
+    },
+    "event_weights": {
+      "high_density_event": 0.22,
+      "interference_event": 0.20,
+      "rogue_ap": 0.06,
+      "dhcp_server_overload": 0.07,
+      "radius_timeout": 0.06,
+      "dns_resolution_failure": 0.05,
+      "config_change": 0.10,
+      "ai_action": 0.08,
+      "channel_change": 0.08,
+      "firmware_update": 0.03,
+      "device_restart": 0.03,
+      "heat_event": 0.02
+    },
+    "event_weight_windows": [
+      {
+        "label": "class_change",
+        "start_hour": 7.75,
+        "end_hour": 18.25,
+        "event_multipliers": {
+          "high_density_event": 1.7,
+          "interference_event": 1.35,
+          "dhcp_server_overload": 1.25,
+          "radius_timeout": 1.2
+        }
+      }
+    ]
+  },
+
   "ap_topology": {
     "description": "Campus AP topology - lecture halls, dorms, common areas",
     "AP-Floor1-01": {

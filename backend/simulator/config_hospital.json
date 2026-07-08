@@ -169,6 +169,34 @@
     }
   },
 
+  "event_profile": {
+    "name": "hospital",
+    "avg_interval_minutes": 10,
+    "emit_probability": 0.22,
+    "business_hours_multiplier": 1.05,
+    "off_hours_multiplier": 0.85,
+    "severity_weights": {
+      "info": 0.70,
+      "warning": 0.27,
+      "critical": 0.03
+    },
+    "event_weights": {
+      "ai_action": 0.22,
+      "config_change": 0.16,
+      "channel_change": 0.12,
+      "firmware_update": 0.10,
+      "dns_resolution_failure": 0.08,
+      "radius_timeout": 0.06,
+      "dhcp_server_overload": 0.06,
+      "interference_event": 0.06,
+      "high_density_event": 0.05,
+      "rogue_ap": 0.04,
+      "heat_event": 0.03,
+      "device_restart": 0.02
+    },
+    "event_weight_windows": []
+  },
+
   "ap_topology": {
     "description": "Hospital AP topology - patient areas, nursing stations, OR",
     "AP-Floor1-01": {

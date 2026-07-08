@@ -9,6 +9,35 @@ from typing import List, Dict, Optional
 from pathlib import Path
 
 
+EVENT_METADATA_FIELDS = ("event_source", "event_group", "affected_classifiers")
+
+
+def _metadata_for_storage(event: Dict) -> Optional[str]:
+    metadata = dict(event.get("metadata") or {})
+    for field in EVENT_METADATA_FIELDS:
+        if field in event:
+            metadata.setdefault(field, event[field])
+    return json.dumps(metadata) if metadata else None
+
+
+def _event_from_row(row: sqlite3.Row) -> Dict:
+    metadata = json.loads(row["metadata"]) if row["metadata"] else None
+    event = {
+        "id": row["id"],
+        "timestamp": row["timestamp"],
+        "event_type": row["event_type"],
+        "severity": row["severity"],
+        "entity": row["entity"],
+        "message": row["message"],
+        "metadata": metadata,
+    }
+    if isinstance(metadata, dict):
+        for field in EVENT_METADATA_FIELDS:
+            if field in metadata:
+                event[field] = metadata[field]
+    return event
+
+
 class EventsStore:
     """Store and query events using SQLite."""
     
@@ -78,7 +107,7 @@ class EventsStore:
         """
         cursor = self.conn.cursor()
         
-        metadata_json = json.dumps(event.get("metadata")) if event.get("metadata") else None
+        metadata_json = _metadata_for_storage(event)
         
         cursor.execute("""
             INSERT INTO events (timestamp, event_type, severity, entity, message, metadata)
@@ -111,7 +140,7 @@ class EventsStore:
                 event.get("severity"),
                 event.get("entity"),
                 event["message"],
-                json.dumps(event.get("metadata")) if event.get("metadata") else None
+                _metadata_for_storage(event)
             )
             for event in events
         ]
@@ -166,20 +195,7 @@ class EventsStore:
         cursor.execute(query, params)
         rows = cursor.fetchall()
         
-        events = []
-        for row in rows:
-            event = {
-                "id": row["id"],
-                "timestamp": row["timestamp"],
-                "event_type": row["event_type"],
-                "severity": row["severity"],
-                "entity": row["entity"],
-                "message": row["message"],
-                "metadata": json.loads(row["metadata"]) if row["metadata"] else None
-            }
-            events.append(event)
-        
-        return events
+        return [_event_from_row(row) for row in rows]
     
     def get_latest(self, limit: int = 100) -> List[Dict]:
         """
@@ -201,20 +217,7 @@ class EventsStore:
         
         rows = cursor.fetchall()
         
-        events = []
-        for row in rows:
-            event = {
-                "id": row["id"],
-                "timestamp": row["timestamp"],
-                "event_type": row["event_type"],
-                "severity": row["severity"],
-                "entity": row["entity"],
-                "message": row["message"],
-                "metadata": json.loads(row["metadata"]) if row["metadata"] else None
-            }
-            events.append(event)
-        
-        return events
+        return [_event_from_row(row) for row in rows]
     
     def count_events(self, event_type: Optional[str] = None) -> int:
         """

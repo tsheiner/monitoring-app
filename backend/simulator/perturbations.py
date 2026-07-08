@@ -23,6 +23,12 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from simulator.event_catalog import (
+    build_legacy_perturbation_templates,
+    get_perturbation_policy,
+    normalize_event_type,
+)
+
 
 @dataclass
 class Perturbation:
@@ -142,120 +148,7 @@ class PerturbationManager:
 #
 # Classifiers are flat, shared names (e.g., 'dhcp', not 'successful_connects.dhcp')
 
-PERTURBATION_TEMPLATES = {
-    # Connection/authentication events
-    "dhcp_server_overload": {
-        "affected_classifiers": {
-            "dhcp": -0.35,            # DHCP server under load
-        },
-        "duration_seconds": 180,
-        "decay_type": "exponential",
-    },
-    "radius_timeout": {
-        "affected_classifiers": {
-            "authorization": -0.30,   # RADIUS auth failures
-        },
-        "duration_seconds": 120,
-        "decay_type": "exponential",
-    },
-    "dns_resolution_failure": {
-        "affected_classifiers": {
-            "dns": -0.40,             # DNS server issues
-        },
-        "duration_seconds": 150,
-        "decay_type": "exponential",
-    },
-    
-    # Infrastructure health events
-    "device_crash": {
-        "affected_classifiers": {
-            "uptime": -0.50,          # Major uptime degradation
-            "cpu": -0.20,             # CPU impact from crash recovery
-            "client_density": -0.10,  # Clients redistribute
-        },
-        "duration_seconds": 120,
-        "decay_type": "exponential",
-    },
-    "device_restart": {
-        "affected_classifiers": {
-            "uptime": -0.30,          # Moderate uptime dip
-            "cpu": -0.10,             # Brief CPU impact
-        },
-        "duration_seconds": 60,
-        "decay_type": "exponential",
-    },
-    "firmware_update": {
-        "affected_classifiers": {
-            "uptime": -0.15,          # Brief uptime dip during update
-            "cpu": -0.08,             # CPU load from update process
-        },
-        "duration_seconds": 30,
-        "decay_type": "exponential",
-    },
-    "heat_event": {
-        "affected_classifiers": {
-            "temperature": -0.35,     # Thermal stress
-            "cpu": -0.15,             # CPU throttling
-        },
-        "duration_seconds": 240,
-        "decay_type": "sudden_recovery",
-    },
-    
-    # RF and capacity events
-    "interference_event": {
-        "affected_classifiers": {
-            "cochannel_interference": -0.30,  # Co-channel interference
-            "cca_busy": -0.25,                # CCA busy fraction increases (Phase 4)
-            "retry_rate": -0.20,              # More retries needed
-            "signal_strength": -0.15,         # RF degradation
-        },
-        "duration_seconds": 300,     # 5 minutes
-        "decay_type": "sudden_recovery",
-    },
-    "high_density_event": {
-        "affected_classifiers": {
-            "client_density": -0.25,          # High client load
-            "airtime_utilization": -0.20,     # Airtime congestion
-        },
-        "duration_seconds": 1800,    # 30 minutes
-        "decay_type": "linear",
-    },
-    "rogue_ap": {
-        "affected_classifiers": {
-            "cell_overlap": -0.30,            # Coverage interference
-            "retry_rate": -0.25,              # Increased retries
-        },
-        "duration_seconds": 600,     # 10 minutes
-        "decay_type": "sudden_recovery",
-    },
-    
-    # Configuration events
-    "config_change": {
-        "affected_classifiers": {
-            "channel_width": -0.05,   # Brief impact during reconfiguration
-        },
-        "duration_seconds": 20,
-        "decay_type": "exponential",
-    },
-    "channel_change": {
-        "affected_classifiers": {
-            "channel_width": -0.10,   # Channel reconfiguration
-            "rssi_tuning": -0.08,     # RSSI threshold adjustment
-        },
-        "duration_seconds": 40,
-        "decay_type": "exponential",
-    },
-    
-    # AI optimization events
-    "ai_action": {
-        "affected_classifiers": {
-            "channel_width": 0.08,    # AI optimizes channel config
-            "client_density": -0.03,  # Better load distribution
-        },
-        "duration_seconds": 60,
-        "decay_type": "gradual_improvement",
-    },
-}
+PERTURBATION_TEMPLATES = build_legacy_perturbation_templates()
 
 
 LOAD_PATTERN_TEMPLATES = {
@@ -305,8 +198,8 @@ def create_perturbation_from_event(event: Dict) -> Optional[Perturbation]:
 
     Returns None if the event type has no perturbation template.
     """
-    event_type = event.get("event_type", "")
-    template = PERTURBATION_TEMPLATES.get(event_type)
+    event_type = normalize_event_type(event.get("event_type", ""))
+    template = get_perturbation_policy(event_type, event.get("severity"))
 
     if template is None:
         return None
