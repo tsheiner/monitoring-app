@@ -588,7 +588,7 @@ Likely existing changes:
 ### Required tests
 
 - The measured core path is byte-for-byte or attribute-for-attribute unchanged by Terrain mode.
-- Shadow strength is monotonic with density.
+- Shadow strength is zero at the ridge and support boundary and reaches its maximum on the intervening slope.
 - Shadow opacity is zero outside the support cutoff.
 - The shadow follows the measured path through zoom, resize, range changes, and live append while retaining its projection offset.
 - Bands and multi-metric modes contain no terrain-shadow layer.
@@ -712,9 +712,248 @@ Complete the feature only when:
 - Copied settings exactly match the committed source defaults.
 - The corrected Terrain view materially improves the ability to answer the three original comprehension questions.
 
-## Delivery boundaries
+## Terrain-phase delivery boundaries
+
+These boundaries applied to the Terrain implementation through Step 12. The final experiment conclusion and corrective Bands sequence below supersede the “no backend changes” boundary because calibrated baseline semantics are now a prerequisite for evaluating either visualization.
 
 - No backend or API changes are required.
 - No health encoding, prediction, additional density models, persisted settings, user-facing explanatory UI, synthetic scenario UI, or ring buffer is included.
 - Saturated color is permitted only as a density/elevation channel. Metric health and severity remain outside this terrain layer.
 - Existing unrelated workspace changes must remain untouched.
+
+## Final experiment conclusion
+
+The Terrain experiment does not pass the Step 12 subjective acceptance gate. The corrective work made the distribution more visible and visually distinctive, but it did not materially improve how quickly a viewer could answer the three original questions compared with Bands:
+
+1. Is the measured value typical?
+2. Where does it become unusual?
+3. Which period is more predictable?
+
+The limiting issue is the metaphor itself. A topographic map describes one physical surface shared by contours, paths, and shadows. In this chart, probability density is represented as an imagined height while the measured series remains an independent time-series overlay. Stronger color, contours, and a projected trace shadow improved the illusion, but they also added relationships that required interpretation. The repeated need to tune ridge, lighting, relief, extent, and shadow treatments is evidence that the representation is visually sensitive without becoming more direct.
+
+Bands retains the stronger comprehension model because it expresses containment directly: a value is near the center, between reference boundaries, or outside the expected envelope. Distribution width also remains immediately visible without requiring the viewer to infer simulated height.
+
+The experiment still identified three topographic ideas worth carrying forward:
+
+- Use a continuous visual progression rather than categorical health-colored regions.
+- Give the distribution a clear outer footprint.
+- Use explicit contour lines as stable percentile landmarks.
+
+The recommendation is therefore to stop advancing Terrain as the product visualization and evolve Bands into a **contoured distribution ribbon**. Terrain may remain temporarily available only as an implementation comparison until the revised Bands treatment passes acceptance.
+
+## Recommended contoured distribution ribbon
+
+The revised Bands treatment should use the selected metric's existing hue for the distribution, the measured trace, and the contour family. Color communicates metric identity only; it does not communicate health or severity.
+
+The visual contract is:
+
+- Derive a perceptually normalized palette from the selected metric color so blue, cyan, green, orange, yellow, and red metrics have comparable visual weight on the dark chart background.
+- Keep the measured trace as the most saturated and crisp use of the metric hue.
+- Make the center of the distribution slightly less saturated than the measured trace while giving it enough opacity and luminance contrast to be immediately visible.
+- Fade saturation and opacity continuously away from p50 using the actual percentile anchors rather than linearly interpolating only between p5, p50, and p95.
+- Extend the faint distribution footprint to p1 and p99. Under a calibrated baseline, values outside this footprint should represent approximately 2% of comparable observations rather than the 10% implied by the current p5–p95 edge.
+- Draw five obvious contour lines at p5, p25, p50, p75, and p95. These correspond to percentile whiskers, quartiles, and median for this app's box-plot convention.
+- Make p50 the strongest contour, p25/p75 the next strongest pair, and p5/p95 clear outer-whisker landmarks. The p1/p99 footprint should fade beyond the outer contour pair rather than adding two more dominant lines.
+- Keep the measured trace above all ribbon and contour layers with a small neutral separation treatment only if needed for contrast. Do not use a density-responsive under-stroke or projected shadow.
+- Preserve asymmetry: skewed percentile spacing should produce visibly asymmetric gradients and contours.
+
+### Expected improved outcome
+
+| Question | Current Bands | Recommended ribbon |
+| --- | --- | --- |
+| What metric am I looking at? | Distribution colors imply health zones and differ from the trace. | Ribbon, contours, and trace share the selected metric hue. |
+| Where is the usual value? | The p50 line is present, but competes with categorical color regions. | The most concentrated fill and strongest contour meet at p50. |
+| How far is the value from usual? | The viewer crosses discrete green/yellow/red regions. | A continuous same-hue fade shows distance, while five contours provide exact landmarks. |
+| Where does the expected distribution end? | The colored region stops at p5/p95, so approximately 10% outside is normal. | The visible footprint fades to p1/p99; p5/p95 remain explicit whisker contours. |
+| Does color imply health? | Yes, plausibly. | No; hue identifies the selected metric and intensity identifies concentration. |
+| Does normal variability change over time? | Band width communicates it. | Contour spacing and gradient width preserve and strengthen that reading. |
+
+## Corrective Bands implementation sequence
+
+Each step uses the same checkpoint rule as the Terrain work: complete its tests and verification gate, then create a commit before beginning the next step.
+
+## Step 13 — Calibrate baseline and live-data semantics
+
+### Outcome
+
+Ensure the historical baseline and the measured trace represent comparable samples before judging any distribution visualization. Define percentile expectations explicitly so visual outliers have a trustworthy meaning.
+
+### Why this is required
+
+The current ribbon spans p5–p95, which predicts approximately 10% of comparable observations outside the ribbon even in a correctly calibrated system. The current simulator diverges much further: a diagnostic sample from the running 12-hour view placed approximately 39–58% of representative metric observations outside p5–p95 and 24–45% outside p1–p99.
+
+The live-generation sequence is inconsistent with bootstrap generation. Bootstrap calls `generate_all_metrics_at` once per AP and timestamp. The live loop iterates metrics first and calls `generate_observation` once per metric and AP. Because classifier state is shared, it advances while producing the first metric and is then reused for subsequent metrics. At a sampled live timestamp, all six APs had identical Throughput and Coverage values while Time to Connect varied across APs. This makes the clean baseline and measured series different stochastic products.
+
+### Expected file impact: 4–8 files
+
+Likely existing changes:
+
+- `backend/main.py`
+- `backend/simulator/realistic_generator.py`
+- `backend/simulator/bootstrap.py`
+- Backend simulator and bootstrap tests
+- Optional diagnostic script or fixture under `backend/tests/`
+
+### Work
+
+- Generate all metrics once per AP and timestamp in both bootstrap and live paths.
+- Capture classifier breakdowns without advancing shared state again for each metric.
+- Make AP aggregation semantics identical between baseline computation, stored observations, HTTP responses, and WebSocket observations.
+- Separate clean operating variation from explicitly injected perturbations in calibration reports.
+- Define expected outside rates for clean data: approximately 10% outside p5–p95 and 2% outside p1–p99, allowing statistically justified tolerance and accounting for temporal correlation.
+- Add a deterministic diagnostic that reports outside rates per metric and hour for clean simulation and for perturbation-inclusive simulation.
+- Decide the intended perturbation frequency separately from baseline calibration. Perturbations may legitimately create clustered excursions, but their frequency should match the product story rather than compensate for a generator mismatch.
+
+### Required tests
+
+- Bootstrap and live generation use the same state-advance function and produce the same output shape for a fixed seed and timestamp sequence.
+- Every metric at a timestamp is derived from the intended state snapshot rather than from metric-loop order.
+- Reordering metric names does not change generated values.
+- AP aggregation is consistent across stored, HTTP, and WebSocket representations.
+- A long deterministic clean run falls within defined tolerance around the expected p5–p95 and p1–p99 outside rates.
+- Enabling perturbations increases or clusters outside observations without changing the clean baseline.
+
+### Verification gate
+
+Advance only when:
+
+- The clean measured series and baseline are statistically calibrated for every displayed metric.
+- Large excursions can be attributed to an explicit perturbation or to the stated percentile probability, rather than generation-order mismatch.
+- The current 12-hour view no longer shows systematic displacement of whole metrics from their hourly baseline.
+- Backend tests pass and a fresh bootstrap-to-live transition is continuous.
+- `git diff --check` passes.
+
+## Step 14 — Replace health-colored regions with a metric-hue gradient
+
+### Outcome
+
+Render one continuous, same-hue distribution field from p1 through p99, centered visually at p50, while preserving the existing measured trace.
+
+### Expected file impact: 5–9 files
+
+Likely existing changes:
+
+- `frontend/src/chart/generators/DistributionRibbonGenerator.ts`
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/chart/types.ts`
+- `frontend/src/style.css`
+- Distribution renderer and chart-integration tests
+- `docs/distribution-terrain-layer-spec.md` or a successor ribbon specification
+
+### Work
+
+- Remove `STATUS_ZONE_COLORS` from ribbon rendering.
+- Derive ribbon colors from the selected metric's trace color using perceptually consistent lightness and saturation limits.
+- Keep the p50 fill slightly less saturated than the measured trace.
+- Fade both opacity and saturation toward p1 and p99, reaching full transparency at the footprint boundary.
+- Interpolate through p1, p5, p25, p50, p75, p95, and p99 so skew and unequal percentile spacing remain visible.
+- Keep the gradient continuous across percentile anchors with no color or opacity reset.
+- Preserve metric switching, range changes, resize, live append, and multi-metric behavior.
+
+### Required tests
+
+- Every metric produces a ribbon derived from its configured trace hue.
+- The p50 fill is less saturated than the measured trace and more visually concentrated than tail samples.
+- Alpha reaches zero at p1 and p99 and remains zero outside them.
+- No traffic-light status colors are used by the ribbon renderer.
+- Asymmetric percentile fixtures produce asymmetric ribbon geometry.
+- The measured trace path and color remain unchanged.
+
+### Verification gate
+
+Advance only when:
+
+- The distribution and trace clearly belong to the same metric-color family.
+- The trace remains the strongest foreground mark.
+- The p50 region is immediately locatable without a legend.
+- The p1/p99 footprint is visible as a deliberate fade rather than an ambiguous chart-background stain.
+- Blue, cyan, green, orange, yellow, and red metric examples have comparable perceived weight.
+- Targeted tests, the complete frontend suite, the production build, and `git diff --check` pass.
+
+## Step 15 — Add five percentile contour lines
+
+### Outcome
+
+Add stable landmarks at p5, p25, p50, p75, and p95 without recreating categorical colored bands.
+
+### Expected file impact: 3–7 files
+
+Likely existing changes:
+
+- `frontend/src/chart/generators/DistributionRibbonGenerator.ts`
+- `frontend/src/chart/ChartView.ts`
+- `frontend/src/style.css`
+- Distribution renderer and interaction tests
+
+### Work
+
+- Draw contour paths at p5, p25, p50, p75, and p95 from the same interpolated distribution points used by the fill.
+- Use a clear hierarchy: strongest p50, medium p25/p75, quieter but obvious p5/p95.
+- Derive contour color from the metric hue while maintaining contrast against both the ribbon and chart background.
+- Keep contour width and opacity stable across time so distribution width is communicated by spacing rather than style changes.
+- Ensure contours remain aligned through interpolation, resize, range changes, and live updates.
+- Keep contours below the measured trace, event marks, crosshair, dots, and tooltip.
+
+### Required tests
+
+- Exactly five contour paths exist for a single active metric with a baseline.
+- Each contour uses the correct percentile values and remains ordered for valid distributions.
+- p50 has the strongest visual treatment; paired quartile and whisker lines share their respective treatments.
+- Bands with missing or degenerate percentile data fail gracefully without crossed or invalid paths.
+- Multi-metric mode and hidden-distribution mode contain no ribbon contours.
+- Existing interaction tests continue to pass.
+
+### Verification gate
+
+Advance only when:
+
+- A reviewer can identify center, quartile range, and outer whiskers without statistical instruction.
+- Narrow and broad periods are immediately distinguishable from contour spacing.
+- The lines read as landmarks within one continuous distribution, not as boundaries between health states.
+- The measured trace remains visually dominant at crossings.
+- Targeted tests, the complete frontend suite, the production build, and `git diff --check` pass.
+
+## Step 16 — Comparative acceptance and Terrain retirement
+
+### Outcome
+
+Determine whether the contoured ribbon improves comprehension over current Bands and Terrain, then remove experimental Terrain UI and code only after the replacement passes.
+
+### Expected file impact: 4–15 files
+
+Likely additions or changes:
+
+- `docs/design-review/distribution-ribbon-visual-acceptance.md`
+- Matching screenshots under `docs/media/`
+- `frontend/src/main.ts`
+- `frontend/src/chart/ChartView.ts`
+- Terrain controls, renderer, defaults, tests, and styles if retirement is approved
+
+### Work
+
+- Capture current Bands, final Terrain, and contoured ribbon at matching metric, range, Y domain, and viewport settings.
+- Test at least three metric hues and the 1-hour, 6-hour, 12-hour, and 24-hour ranges.
+- Include calibrated examples near p50, between p25/p75, between p5/p95, in the p1/p5 or p95/p99 tail, and outside p1/p99.
+- Ask the original comprehension questions before explaining percentiles.
+- Record whether viewers interpret hue as metric identity and intensity as concentration rather than health.
+- Confirm that the visible frequency of values outside the p1/p99 footprint is consistent with the calibrated simulator and explicit perturbations.
+- If the contoured ribbon passes, remove the Bands/Terrain selector, Terrain tuning controls, Canvas layer, trace-shadow treatment, and Terrain-specific configuration from the production path. Preserve experiment findings and screenshots in documentation.
+
+### Required tests
+
+- Current chart interactions remain correct with the contoured ribbon as the sole single-metric distribution treatment.
+- No Terrain Canvas, Terrain controls, trace shadow, or stale style-selection state remains after retirement.
+- Metric selection updates ribbon hue and contours correctly.
+- Copy-settings behavior is removed with Terrain controls unless it serves another accepted purpose.
+- Historical and live data remain calibrated after a fresh bootstrap and through continuous operation.
+
+### Final verification gate
+
+Complete the revision only when:
+
+- Viewers answer the three original questions at least as accurately as with current Bands and with less explanation than Terrain required.
+- The same-hue treatment is understood as metric identity and distribution concentration.
+- The five contour lines improve landmark recognition without recreating categorical status zones.
+- Outside-footprint observations are statistically credible and traceable to percentile semantics or explicit perturbations.
+- Terrain is removed from the active product UI after the replacement is accepted.
+- All backend and frontend tests pass, the production build passes, visual evidence is recorded, and `git diff --check` passes.
