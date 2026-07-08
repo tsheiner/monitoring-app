@@ -21,12 +21,17 @@ from .models import (
     BaselineResponse,
     CurrentClassifiersResponse,
     ClassifierHourlyDistribution,
-    ClassifierBaselineResponse
+    ClassifierBaselineResponse,
+    ScenariosResponse,
+    ScenarioTriggerRequest,
+    ScenarioTriggerResponse,
+    ActiveScenariosResponse,
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
 from server.aggregation import aggregate_metric_observations
 from simulator.realistic_generator import RealisticMetricsGenerator
+from simulator.event_generator import EventGenerator, get_event_generator
 
 
 # Create FastAPI app
@@ -66,6 +71,63 @@ async def list_metrics():
     """
     metrics = RealisticMetricsGenerator.get_all_metrics()
     return MetricsListResponse(metrics=metrics)
+
+
+@app.get("/api/scenarios", response_model=ScenariosResponse)
+async def list_scenarios():
+    """List available scenario definitions."""
+    event_generator = get_event_generator()
+    return ScenariosResponse(
+        scenarios=event_generator.scenario_manager.list_scenarios()
+    )
+
+
+@app.post("/api/scenarios/trigger", response_model=ScenarioTriggerResponse)
+async def trigger_scenario(request: ScenarioTriggerRequest):
+    """Trigger a scenario run."""
+    if request.entity not in EventGenerator.ENTITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown entity '{request.entity}'",
+        )
+
+    event_generator = get_event_generator()
+    started_at = int(time.time())
+    try:
+        run = event_generator.trigger_scenario(
+            request.scenario_id,
+            entity=request.entity,
+            severity=request.severity,
+            started_at=started_at,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scenario '{request.scenario_id}' not found",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    emitted = event_generator.emit_due_scenario_events(started_at)
+    return ScenarioTriggerResponse(
+        scenario_run_id=run.scenario_run_id,
+        scenario_id=run.scenario_id,
+        entity=run.entity,
+        severity=run.severity,
+        started_at=run.started_at,
+        ends_at=run.ends_at,
+        scheduled_events=event_generator.scenario_manager.scheduled_events_for_run(run),
+        emitted_events=[Event(**event) for event in emitted],
+    )
+
+
+@app.get("/api/scenarios/active", response_model=ActiveScenariosResponse)
+async def active_scenarios():
+    """List active scenario runs."""
+    event_generator = get_event_generator()
+    return ActiveScenariosResponse(
+        active=event_generator.scenario_manager.active_runs(int(time.time()))
+    )
 
 
 @app.get("/api/metrics/{metric}", response_model=MetricResponse)

@@ -29,6 +29,7 @@ from simulator.event_catalog import (
     normalize_event_type,
 )
 from simulator.perturbations import create_perturbation_from_event
+from simulator.scenarios import ScenarioManager
 
 
 class EventGenerator:
@@ -49,9 +50,11 @@ class EventGenerator:
         """Initialize event generator."""
         self.event_callbacks: List[Callable] = []
         self._event_task = None
+        self._scenario_task = None
         self._metrics_generator = None  # Set via set_metrics_generator()
         self._config: Dict = {}
         self._event_profile = load_event_profile({})
+        self.scenario_manager = ScenarioManager()
 
         # Load AP topology (device identity) and server info from config (Phases 2 & 3)
         self._topology: Dict[str, Dict] = {}
@@ -133,6 +136,9 @@ class EventGenerator:
         severity: Optional[str] = None,
         metadata: Optional[Dict] = None,
         event_source: str = "background",
+        timestamp: Optional[int] = None,
+        scenario_id: Optional[str] = None,
+        scenario_run_id: Optional[str] = None,
         register_perturbation: bool = True
     ) -> Dict:
         """
@@ -172,9 +178,13 @@ class EventGenerator:
         metadata.setdefault("event_source", event_source)
         metadata.setdefault("event_group", definition.group)
         metadata.setdefault("affected_classifiers", affected_classifiers)
+        if scenario_id is not None:
+            metadata.setdefault("scenario_id", scenario_id)
+        if scenario_run_id is not None:
+            metadata.setdefault("scenario_run_id", scenario_run_id)
 
         event = {
-            "timestamp": int(time.time()),
+            "timestamp": timestamp or int(time.time()),
             "event_type": event_type,
             "severity": severity,
             "entity": entity,
@@ -184,6 +194,10 @@ class EventGenerator:
             "affected_classifiers": affected_classifiers,
             "metadata": metadata
         }
+        if scenario_id is not None:
+            event["scenario_id"] = scenario_id
+        if scenario_run_id is not None:
+            event["scenario_run_id"] = scenario_run_id
 
         # Create perturbation for metric causality
         if register_perturbation and self._metrics_generator is not None:
@@ -325,7 +339,13 @@ class EventGenerator:
                     )
                     self._emit_event(event)
 
+        async def scenario_loop():
+            while True:
+                self.emit_due_scenario_events(int(time.time()))
+                await asyncio.sleep(5)
+
         self._event_task = asyncio.create_task(event_loop())
+        self._scenario_task = asyncio.create_task(scenario_loop())
 
     def start(self) -> None:
         """Start the event generator (no-op, events start in schedule_random_events)."""
@@ -336,6 +356,44 @@ class EventGenerator:
         if self._event_task:
             self._event_task.cancel()
             self._event_task = None
+        if self._scenario_task:
+            self._scenario_task.cancel()
+            self._scenario_task = None
+
+    def trigger_scenario(
+        self,
+        scenario_id: str,
+        *,
+        entity: str,
+        severity: str,
+        started_at: Optional[int] = None,
+    ):
+        """Trigger a scenario run."""
+        return self.scenario_manager.trigger(
+            scenario_id,
+            entity=entity,
+            severity=severity,
+            started_at=started_at or int(time.time()),
+        )
+
+    def emit_due_scenario_events(self, timestamp: Optional[int] = None) -> List[Dict]:
+        """Emit all scenario events due at or before the timestamp."""
+        current_time = timestamp or int(time.time())
+        events = []
+        for due_event in self.scenario_manager.due_events(current_time):
+            event = self.generate_event(
+                due_event.step.event_type,
+                entity=due_event.entity,
+                severity=due_event.event_severity,
+                metadata=due_event.metadata(),
+                event_source="scenario",
+                timestamp=due_event.scheduled_at,
+                scenario_id=due_event.run.scenario_id,
+                scenario_run_id=due_event.run.scenario_run_id,
+            )
+            self._emit_event(event)
+            events.append(event)
+        return events
 
     def generate_correlated_event(
         self,

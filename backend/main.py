@@ -132,13 +132,13 @@ async def stream_events_loop():
     
     event_generator.register_callback(sync_callback)
     
-    # Schedule random events every 5 minutes
+    # Schedule profile-aware background events and scenario events.
     event_generator.schedule_random_events(avg_interval_minutes=5)
     
     # Start scheduler
     event_generator.start()
     
-    print("Event generator started (random events every 5 min)")
+    print("Event generator started (profile-aware background events and scenarios)")
 
 
 async def cleanup_old_data_loop():

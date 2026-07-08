@@ -9,7 +9,13 @@ from typing import List, Dict, Optional
 from pathlib import Path
 
 
-EVENT_METADATA_FIELDS = ("event_source", "event_group", "affected_classifiers")
+EVENT_METADATA_FIELDS = (
+    "event_source",
+    "event_group",
+    "affected_classifiers",
+    "scenario_id",
+    "scenario_run_id",
+)
 
 
 def _metadata_for_storage(event: Dict) -> Optional[str]:
