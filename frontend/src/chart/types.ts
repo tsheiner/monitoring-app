@@ -85,6 +85,11 @@ export interface Event {
   severity?: string | null;
   entity?: string | null;
   message: string;
+  event_source?: string | null;
+  event_group?: string | null;
+  affected_classifiers?: string[] | null;
+  scenario_id?: string | null;
+  scenario_run_id?: string | null;
   metadata?: Record<string, any> | null;
 }
 
@@ -162,6 +167,62 @@ export interface EventsResponse {
   count: number;
 }
 
+export interface ScenarioStep {
+  offset_seconds: number;
+  event_type: string;
+  severity?: string | null;
+  entity_selector?: string | null;
+  description?: string | null;
+}
+
+export interface ScenarioDefinition {
+  scenario_id: string;
+  label: string;
+  description: string;
+  default_severity: "warning" | "critical";
+  allowed_severities: Array<"warning" | "critical">;
+  steps: ScenarioStep[];
+}
+
+export interface ScenariosResponse {
+  scenarios: ScenarioDefinition[];
+}
+
+export interface ScenarioTriggerRequest {
+  scenario_id: string;
+  entity: string;
+  severity: "warning" | "critical";
+}
+
+export interface ScenarioTriggerResponse {
+  scenario_run_id: string;
+  scenario_id: string;
+  entity: string;
+  severity: string;
+  started_at: number;
+  ends_at: number;
+  scheduled_events: Array<Record<string, any>>;
+  emitted_events: Event[];
+}
+
+export interface ActiveScenarioRun {
+  scenario_run_id: string;
+  scenario_id: string;
+  label: string;
+  entity: string;
+  severity: string;
+  started_at: number;
+  ends_at: number;
+  status: string;
+  emitted_count: number;
+  total_events: number;
+  scheduled_events: Array<Record<string, any>>;
+}
+
+export interface ActiveScenariosResponse {
+  active: ActiveScenarioRun[];
+}
+
 // ============================================================================
 // WebSocket Message Types
 // ============================================================================
@@ -183,5 +244,10 @@ export interface EventMessage {
   severity?: string | null;
   entity?: string | null;
   message: string;
+  event_source?: string | null;
+  event_group?: string | null;
+  affected_classifiers?: string[] | null;
+  scenario_id?: string | null;
+  scenario_run_id?: string | null;
   metadata?: Record<string, any> | null;
 }

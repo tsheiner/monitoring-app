@@ -5,7 +5,13 @@
 import "./style.css";
 import { ChartView } from "./chart/ChartView";
 import { APIClient } from "./api/client";
-import { ChartConfig, Event, Observation } from "./chart/types";
+import {
+  ActiveScenarioRun,
+  ChartConfig,
+  Event,
+  Observation,
+  ScenarioDefinition,
+} from "./chart/types";
 
 /**
  * Static mapping of metrics to their classifier components.
@@ -81,6 +87,15 @@ interface EventGroup {
   icon: string; // SVG path data
 }
 
+const AP_ENTITIES = [
+  "AP-Floor1-01",
+  "AP-Floor1-02",
+  "AP-Floor2-01",
+  "AP-Floor2-02",
+  "AP-Floor3-01",
+  "AP-Floor3-02",
+];
+
 type APIClientLike = Pick<
   APIClient,
   | "fetchMetricHistory"
@@ -93,7 +108,11 @@ type APIClientLike = Pick<
   | "onConnected"
   | "onDisconnected"
   | "onReconnect"
->;
+> & {
+  fetchScenarios?: APIClient["fetchScenarios"];
+  triggerScenario?: APIClient["triggerScenario"];
+  fetchActiveScenarios?: APIClient["fetchActiveScenarios"];
+};
 
 class MonitoringApp {
   private chart: ChartView;
@@ -107,6 +126,9 @@ class MonitoringApp {
   private _loadGeneration: number = 0;
   private baselineLoadedForMetric: Set<string> = new Set();
   private baselineLoadedForClassifier: Set<string> = new Set();
+  private scenarios: ScenarioDefinition[] = [];
+  private activeScenarios: ActiveScenarioRun[] = [];
+  private activeScenarioTimer: number | null = null;
 
   // Metric configuration
   // Colors chosen for maximum distinctness when overlaid
@@ -140,32 +162,46 @@ class MonitoringApp {
   // Event group configuration with icon mappings
   private eventGroups: EventGroup[] = [
     {
-      name: "device_lifecycle",
-      label: "Device Lifecycle",
-      eventTypes: ["device_restart", "device_crash", "firmware_update"],
-      enabled: false,
-      icon: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z", // Wifi
+      name: "connection_auth",
+      label: "Connection/Auth",
+      eventTypes: ["dhcp_server_overload", "radius_timeout", "dns_resolution_failure"],
+      enabled: true,
+      icon: "M12 20h9M12 4h9M4 9h16M4 15h16M4 9l4-4M4 9l4 4M20 15l-4-4M20 15l-4 4",
+    },
+    {
+      name: "rf_capacity",
+      label: "RF/Capacity",
+      eventTypes: ["interference_event", "high_density_event"],
+      enabled: true,
+      icon: "M2 12h2m16 0h2M6.34 6.34 4.93 4.93m14.14 14.14-1.41-1.41M12 2v2m0 16v2M8 12a4 4 0 1 1 8 0",
+    },
+    {
+      name: "lifecycle",
+      label: "Lifecycle",
+      eventTypes: ["device_restart", "device_crash", "firmware_update", "heat_event"],
+      enabled: true,
+      icon: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6",
     },
     {
       name: "config",
       label: "Config",
-      eventTypes: ["config_change"],
-      enabled: false,
+      eventTypes: ["config_change", "channel_change"],
+      enabled: true,
       icon: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", // Settings
-    },
-    {
-      name: "agent",
-      label: "Agent",
-      eventTypes: ["ai_action"],
-      enabled: false,
-      icon: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z", // CheckCircle
     },
     {
       name: "security",
       label: "Security",
-      eventTypes: ["security_incident"],
-      enabled: false,
+      eventTypes: ["rogue_ap"],
+      enabled: true,
       icon: "M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm-1.06 13.54L7.4 12l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41-5.64 5.66z", // Shield
+    },
+    {
+      name: "ai",
+      label: "AI",
+      eventTypes: ["ai_action"],
+      enabled: true,
+      icon: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z", // CheckCircle
     },
   ];
 
@@ -252,6 +288,12 @@ class MonitoringApp {
     if (options.autoStart !== false) {
       // Setup UI controls
       this.setupControls();
+      void this.loadScenarioControls();
+      void this.refreshActiveScenarios();
+      this.activeScenarioTimer = window.setInterval(
+        () => void this.refreshActiveScenarios(),
+        15000,
+      );
 
       // Setup API callbacks
       this.setupAPICallbacks();
@@ -419,13 +461,7 @@ class MonitoringApp {
       }
 
       // Merge with existing events, removing duplicates
-      const existingIds = new Set(
-        this.allEvents.map((e) => `${e.timestamp}-${e.event_type}`),
-      );
-      const newEvents = eventsData.events.filter(
-        (e) => !existingIds.has(`${e.timestamp}-${e.event_type}`),
-      );
-      this.allEvents = [...this.allEvents, ...newEvents];
+      this.mergeEvents(eventsData.events);
       this.updateEventDisplay();
 
       console.log(
@@ -453,6 +489,49 @@ class MonitoringApp {
 
     // Update event counts in button labels
     this.updateEventCounts();
+  }
+
+  private eventKey(event: Event): string {
+    return [
+      event.scenario_run_id ?? event.metadata?.scenario_run_id ?? "",
+      event.timestamp,
+      event.event_type,
+      event.entity ?? "",
+    ].join(":");
+  }
+
+  private mergeEvents(events: Event[]): void {
+    const existingKeys = new Set(this.allEvents.map((event) => this.eventKey(event)));
+    const newEvents = events.filter((event) => !existingKeys.has(this.eventKey(event)));
+    if (newEvents.length === 0) {
+      return;
+    }
+    this.allEvents = [...this.allEvents, ...newEvents].sort(
+      (a, b) => a.timestamp - b.timestamp,
+    );
+    if (this.loadedRange[0] !== 0 || this.loadedRange[1] !== 0) {
+      const eventTimestamps = newEvents.map((event) => event.timestamp);
+      this.loadedRange = [
+        Math.min(this.loadedRange[0], ...eventTimestamps),
+        Math.max(this.loadedRange[1], ...eventTimestamps),
+      ];
+    }
+  }
+
+  private enableEventTypes(eventTypes: string[]): void {
+    const eventTypeSet = new Set(eventTypes);
+    for (const group of this.eventGroups) {
+      if (!group.eventTypes.some((eventType) => eventTypeSet.has(eventType))) {
+        continue;
+      }
+      group.enabled = true;
+      const toggle = document.querySelector(
+        `.event-toggle[data-group="${group.name}"]`,
+      );
+      if (toggle) {
+        toggle.classList.add("active");
+      }
+    }
   }
 
   private updateEventCounts(): void {
@@ -581,6 +660,15 @@ class MonitoringApp {
       }
     }
 
+    this.populateEntitySelect();
+
+    const scenarioTriggerButton = document.getElementById(
+      "scenario-trigger",
+    ) as HTMLButtonElement | null;
+    scenarioTriggerButton?.addEventListener("click", () => {
+      void this.triggerSelectedScenario();
+    });
+
     // Time range selector
     const timeRangeSelect = document.getElementById(
       "time-range",
@@ -605,6 +693,118 @@ class MonitoringApp {
     jumpToNowButton.addEventListener("click", () => {
       this.jumpToNow();
     });
+  }
+
+  private populateEntitySelect(): void {
+    const entitySelect = document.getElementById(
+      "scenario-entity",
+    ) as HTMLSelectElement | null;
+    if (!entitySelect) return;
+
+    entitySelect.innerHTML = "";
+    for (const entity of AP_ENTITIES) {
+      const option = document.createElement("option");
+      option.value = entity;
+      option.textContent = entity;
+      entitySelect.appendChild(option);
+    }
+  }
+
+  private async loadScenarioControls(): Promise<void> {
+    if (!this.api.fetchScenarios) return;
+
+    try {
+      const response = await this.api.fetchScenarios();
+      this.scenarios = response.scenarios;
+      const scenarioSelect = document.getElementById(
+        "scenario-select",
+      ) as HTMLSelectElement | null;
+      if (!scenarioSelect) return;
+
+      scenarioSelect.innerHTML = "";
+      for (const scenario of this.scenarios) {
+        const option = document.createElement("option");
+        option.value = scenario.scenario_id;
+        option.textContent = scenario.label;
+        scenarioSelect.appendChild(option);
+      }
+    } catch (error) {
+      console.warn("Failed to load scenarios:", error);
+    }
+  }
+
+  private async refreshActiveScenarios(): Promise<void> {
+    if (!this.api.fetchActiveScenarios) return;
+
+    try {
+      const response = await this.api.fetchActiveScenarios();
+      this.activeScenarios = response.active;
+      this.renderActiveScenarios();
+    } catch (error) {
+      console.warn("Failed to load active scenarios:", error);
+    }
+  }
+
+  private renderActiveScenarios(): void {
+    const container = document.getElementById("active-scenarios");
+    if (!container) return;
+
+    container.innerHTML = "";
+    if (this.activeScenarios.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "active-scenario-empty";
+      empty.textContent = "No active scenarios";
+      container.appendChild(empty);
+      return;
+    }
+
+    for (const run of this.activeScenarios) {
+      const item = document.createElement("div");
+      item.className = "active-scenario";
+      item.textContent = `${run.label} · ${run.entity}`;
+      container.appendChild(item);
+    }
+  }
+
+  private async triggerSelectedScenario(): Promise<void> {
+    if (!this.api.triggerScenario) return;
+
+    const scenarioSelect = document.getElementById(
+      "scenario-select",
+    ) as HTMLSelectElement | null;
+    const entitySelect = document.getElementById(
+      "scenario-entity",
+    ) as HTMLSelectElement | null;
+    const severitySelect = document.getElementById(
+      "scenario-severity",
+    ) as HTMLSelectElement | null;
+    const triggerButton = document.getElementById(
+      "scenario-trigger",
+    ) as HTMLButtonElement | null;
+
+    if (!scenarioSelect || !entitySelect || !severitySelect) return;
+
+    triggerButton?.setAttribute("disabled", "true");
+    try {
+      const response = await this.api.triggerScenario({
+        scenario_id: scenarioSelect.value,
+        entity: entitySelect.value,
+        severity: severitySelect.value as "warning" | "critical",
+      });
+
+      this.mergeEvents(response.emitted_events ?? []);
+      this.enableEventTypes(
+        response.scheduled_events
+          .map((event) => event.event_type)
+          .filter((eventType): eventType is string => typeof eventType === "string"),
+      );
+      this.updateEventDisplay();
+      await this.refreshActiveScenarios();
+    } catch (error) {
+      console.error("Failed to trigger scenario:", error);
+    } finally {
+      triggerButton?.removeAttribute("disabled");
+    }
   }
 
   private async toggleMetric(metricName: string): Promise<void> {
@@ -810,10 +1010,15 @@ class MonitoringApp {
         severity: message.severity,
         entity: message.entity,
         message: message.message,
+        event_source: message.event_source,
+        event_group: message.event_group,
+        affected_classifiers: message.affected_classifiers,
+        scenario_id: message.scenario_id,
+        scenario_run_id: message.scenario_run_id,
         metadata: message.metadata,
       };
 
-      this.allEvents.push(event);
+      this.mergeEvents([event]);
       this.updateEventDisplay();
     });
 

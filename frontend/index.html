@@ -53,6 +53,20 @@
           </div>
           
           <div class="sidebar-card">
+            <h3>Scenarios</h3>
+            <div id="scenario-controls" class="scenario-controls">
+              <select id="scenario-select" aria-label="Scenario"></select>
+              <select id="scenario-entity" aria-label="Entity"></select>
+              <div class="scenario-action-row">
+                <select id="scenario-severity" aria-label="Severity">
+                  <option value="warning">Warning</option>
+                  <option value="critical">Critical</option>
+                </select>
+                <button id="scenario-trigger" class="scenario-button">Trigger</button>
+              </div>
+              <div id="active-scenarios" class="active-scenarios" aria-live="polite"></div>
+            </div>
+            <div class="sidebar-divider"></div>
             <h3>Events</h3>
             <div id="events-list"></div>
           </div>
