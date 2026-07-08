@@ -8,12 +8,14 @@ import {
 describe("terrain trace shadow", () => {
   const params = { mu: 10, sigma: 2 };
 
-  it("is strongest on the ridge and decreases toward the support edge", () => {
+  it("vanishes at the ridge and boundary and opens across the slope", () => {
     const ridge = terrainShadowStrength(10, params, 0.01);
+    const nearRidge = terrainShadowStrength(10.5, params, 0.01);
     const slope = terrainShadowStrength(12, params, 0.01);
     const outside = terrainShadowStrength(18, params, 0.01);
-    expect(ridge).toBe(1);
-    expect(slope).toBeGreaterThan(outside);
+    expect(ridge).toBe(0);
+    expect(slope).toBeGreaterThan(nearRidge);
+    expect(nearRidge).toBeGreaterThan(ridge);
     expect(outside).toBe(0);
   });
 
@@ -35,7 +37,8 @@ describe("terrain trace shadow", () => {
       { timestamp: 5, value: 12 },
       { timestamp: 10, value: 18 },
     ]);
-    expect(samples[0].strength).toBeGreaterThan(samples[1].strength);
+    expect(samples[0].strength).toBe(0);
+    expect(samples[1].strength).toBeGreaterThan(samples[0].strength);
     expect(samples[2].strength).toBe(0);
   });
 

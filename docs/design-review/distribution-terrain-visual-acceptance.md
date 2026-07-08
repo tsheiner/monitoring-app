@@ -34,7 +34,7 @@ The initial implementation has low visual contrast, no decisive outer footprint,
 
 ![Corrected 24-hour Terrain view](../media/distribution-terrain-corrected-24h.jpg)
 
-The corrected view makes the distribution footprint, slopes, and ridge visible before inspecting the trace. A follow-up implementation replaces the coincident dark trace treatment shown here with a soft shadow projected below the trace where historical density is meaningful.
+The corrected view makes the distribution footprint, slopes, and ridge visible before inspecting the trace. A follow-up implementation replaces the coincident dark trace treatment shown here with a soft shadow projected below the trace on the slopes. The shadow closes to zero at the ridge so the trace appears to kiss the terrain tangent, and it also fades to zero at the terrain boundary.
 
 ## Range coverage
 
@@ -84,7 +84,7 @@ The terrain remains readable over a small negative-value range. Trace segments b
 
 | Question | Acceptance result | Evidence |
 | --- | --- | --- |
-| Is the measured value typical? | Pass | The warm ridge and density-responsive shadow make trace proximity to the ridge visible in all three metrics. |
+| Is the measured value typical? | Pass | The warm ridge is the no-shadow contact point; a growing projected shadow shows the trace moving away from that tangent onto either slope. |
 | Where does it become unusual? | Pass | The outer contour and fully transparent exterior create a decisive transition; the shadow disappears as the trace leaves support. |
 | Which periods are more predictable? | Pass | Narrow periods form tighter, more densely contoured ridges; broader periods occupy visibly wider terrain. |
 | Does color imply health? | Pass | The indigo–violet–warm-neutral sequence reads as elevation/density and contains no green/yellow/red status progression. |

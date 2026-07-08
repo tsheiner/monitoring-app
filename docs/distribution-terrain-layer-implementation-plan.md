@@ -579,7 +579,7 @@ Likely existing changes:
 - Keep the measured line's core color, position, and stroke width unchanged.
 - Evaluate historical density at each measured observation using the same interpolated parameters and support cutoff as the terrain.
 - Project a visibly displaced, blurred shadow below the core line only where density is meaningful.
-- Increase shadow strength toward the ridge and fade it smoothly toward the outer boundary.
+- Close the shadow to zero at the ridge so the measured trace appears to touch the terrain tangent there. Open the shadow across either slope, then fade it smoothly to zero at the outer boundary.
 - Remove the shadow outside the terrain footprint.
 - Keep the treatment below the measured core line and above the terrain Canvas.
 - Preserve event, crosshair, tooltip, marker, and multi-metric layering.
@@ -598,7 +598,7 @@ Likely existing changes:
 
 Advance only when:
 
-- A trace segment near the ridge casts a soft shadow onto the surface.
+- A trace segment exactly on the ridge has no shadow and appears to kiss the terrain tangent; the shadow becomes visible as the trace moves onto either slope.
 - The same trace visibly loses its shadow as it crosses the outer terrain boundary.
 - The shadow does not obscure small measured variations or suggest a second measured series.
 - The trace remains the dominant foreground element.

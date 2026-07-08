@@ -159,6 +159,8 @@ Settings have the following meanings:
 7. **Visible extent** (`distributionExtent`) — expands or contracts the visible low-density footprint without moving the ridge.
 8. **Shadow crispness** (`shadowCrispness`) — combines shadow blur, spread, and visual strength. At `0`, the shadow is broadly diffused and nearly invisible. At `1`, it has no blur or added spread and matches the measured trace's stroke width. Projection direction and offset remain stable.
 
+Shadow projection strength is zero where the measured value equals the distribution ridge, creating the appearance that the trace is kissing the terrain tangent. It increases across either slope and returns to zero at the practical outer boundary where terrain support ends.
+
 Keep these defaults in a dedicated, easy-to-find terrain configuration file, separate from unrelated chart configuration.
 
 ## App controls

@@ -50,7 +50,13 @@ export function terrainShadowStrength(
   const densityRatio = gaussianDensity.pdf(value, descriptor) / peak;
   const cutoff = clampUnit(supportDensityRatio);
   if (!Number.isFinite(densityRatio) || densityRatio <= cutoff) return 0;
-  return smoothstep((densityRatio - cutoff) / Math.max(1e-9, 1 - cutoff));
+  const surfacePosition = smoothstep(
+    (densityRatio - cutoff) / Math.max(1e-9, 1 - cutoff),
+  );
+  // The trace visually touches the terrain at the density ridge, so its cast
+  // shadow closes to zero there. The shadow opens across either slope and
+  // fades back to zero at the practical terrain boundary.
+  return 4 * surfacePosition * (1 - surfacePosition);
 }
 
 export function buildTerrainShadowSamples(
