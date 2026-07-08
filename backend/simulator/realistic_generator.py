@@ -31,7 +31,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from simulator.perturbations import PerturbationManager, create_load_perturbation
@@ -382,9 +382,13 @@ class RealisticMetricsGenerator:
         # AP topology from config
         self._topology = self.config.get("ap_topology", {})
 
-        # Classifier state (shared pool)
-        # Key: classifier name, Value: float (current value 0.0-1.0)
+        # Classifier state for the global/default entity. Kept as a direct
+        # mapping for compatibility with older diagnostics.
         self._classifier_state: Dict[str, float] = {}
+
+        # Per-entity classifier state.
+        # Key: entity_key, Value: classifier name -> current value 0.0-1.0.
+        self._classifier_state_by_entity: Dict[str, Dict[str, float]] = {}
         
         # Classifier thresholds (loaded from baselines.json)
         # Key: classifier name, Value: Dict[hour]->Dict[green_min, yellow_min]
@@ -396,6 +400,9 @@ class RealisticMetricsGenerator:
         
         # Last update times
         self._last_update_time: Dict[str, int] = {}
+
+        # Per-entity RNGs make AP iteration order irrelevant.
+        self._rng_by_entity: Dict[str, np.random.RandomState] = {}
 
         # Initialize global state
         self._init_entity_state("_global", self.start_time)
@@ -432,49 +439,80 @@ class RealisticMetricsGenerator:
         Returns:
             Observation dict with timestamp, metric, value, and optionally classifiers
         """
-        if metric not in self.get_all_metrics():
-            raise ValueError(f"Unknown metric: {metric}")
+        frame = self.generate_metric_frame(
+            timestamp=timestamp,
+            entity=entity,
+            include_classifiers=include_classifiers,
+            include_device_identity=include_device_identity,
+            metrics=[metric],
+        )
+        return frame[0]
 
+    def generate_metric_frame(
+        self,
+        timestamp: int = None,
+        entity: str = None,
+        include_classifiers: bool = False,
+        include_device_identity: bool = False,
+        metrics: Optional[Sequence[str]] = None,
+    ) -> List[Dict]:
+        """
+        Generate a complete observation frame for one entity and timestamp.
+
+        The frame advances simulator state once for the entity, then derives all
+        requested metrics and classifier breakdowns from that same state
+        snapshot. This keeps metric-loop order from changing generated values.
+        """
         ts = timestamp or (self.start_time + self.current_offset)
         entity_key = entity or "_global"
+        requested_metrics = (
+            list(metrics) if metrics is not None else self.get_all_metrics()
+        )
+
+        unknown_metrics = [
+            metric for metric in requested_metrics
+            if metric not in self.get_all_metrics()
+        ]
+        if unknown_metrics:
+            raise ValueError(f"Unknown metric: {unknown_metrics[0]}")
 
         # Ensure entity exists in state
         if entity_key not in self._client_load_state:
             self._init_entity_state(entity_key, ts)
 
-        # Update classifiers and client_load at this timestamp
+        # Update classifiers and client_load at this timestamp once.
         self._update_state(entity_key, ts)
 
-        # Derive metric value from daily profile + classifiers
-        value = self._derive_metric(metric, entity_key, timestamp=ts)
+        observations = []
+        for metric in requested_metrics:
+            value = self._derive_metric(metric, entity_key, timestamp=ts)
+            result = {
+                "timestamp": ts,
+                "metric": metric,
+                "value": round(value, 2),
+            }
+            if entity is not None:
+                result["entity"] = entity
 
-        # Inject load patterns during business hours
-        self._maybe_inject_load_patterns(ts)
+            if include_classifiers:
+                result["classifiers"] = self._get_classifier_breakdown(
+                    metric, ts, entity_key=entity_key
+                )
 
-        result = {
-            "timestamp": ts,
-            "metric": metric,
-            "value": round(value, 2),
-        }
-        if entity is not None:
-            result["entity"] = entity
+            # Include device identity if requested and entity is a known AP (Phase 2)
+            if include_device_identity and entity and entity in self._topology:
+                ap_info = self._topology[entity]
+                if "serial" in ap_info:
+                    result["device"] = {
+                        "name": entity,
+                        "serial": ap_info.get("serial", ""),
+                        "mac": ap_info.get("mac", ""),
+                        "model": ap_info.get("model", ""),
+                    }
 
-        # Include classifier breakdown if requested (FD-013)
-        if include_classifiers:
-            result["classifiers"] = self._get_classifier_breakdown(metric, ts)
+            observations.append(result)
 
-        # Include device identity if requested and entity is a known AP (Phase 2)
-        if include_device_identity and entity and entity in self._topology:
-            ap_info = self._topology[entity]
-            if "serial" in ap_info:
-                result["device"] = {
-                    "name": entity,
-                    "serial": ap_info.get("serial", ""),
-                    "mac": ap_info.get("mac", ""),
-                    "model": ap_info.get("model", ""),
-                }
-
-        return result
+        return observations
 
     def _load_classifier_thresholds(self) -> None:
         """
@@ -509,7 +547,9 @@ class RealisticMetricsGenerator:
             # If baselines are malformed or missing, continue without thresholds
             pass
     
-    def _get_classifier_breakdown(self, metric: str, timestamp: int) -> list[dict]:
+    def _get_classifier_breakdown(
+        self, metric: str, timestamp: int, entity_key: str = "_global"
+    ) -> list[dict]:
         """
         Get classifier breakdown for a metric (FD-013).
         
@@ -524,10 +564,11 @@ class RealisticMetricsGenerator:
         """
         metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
         classifiers = []
+        classifier_state = self._get_classifier_state(entity_key)
         
         for classifier_name, weight in metric_classifiers.items():
             classifier_cfg = CLASSIFIER_DEFINITIONS[classifier_name]
-            current_value = self._classifier_state[classifier_name]
+            current_value = classifier_state[classifier_name]
             
             # Compute status based on thresholds
             status = self._compute_classifier_status(classifier_name, current_value, timestamp)
@@ -601,18 +642,50 @@ class RealisticMetricsGenerator:
         else:
             return "red"
 
+    def _initial_classifier_state(self) -> Dict[str, float]:
+        """Create a fresh classifier state map."""
+        return {
+            classifier_name: cfg["initial_level"]
+            for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items()
+        }
+
+    def _seed_for_entity(self, entity_key: str) -> int:
+        """Build a deterministic seed that does not depend on Python hash salt."""
+        seed = abs(self.start_time) % (2**31)
+        for char in entity_key:
+            seed = (seed * 131 + ord(char)) % (2**31)
+        return seed
+
+    def _get_entity_rng(self, entity_key: str) -> np.random.RandomState:
+        """Get the deterministic RNG for an entity."""
+        if entity_key not in self._rng_by_entity:
+            self._rng_by_entity[entity_key] = np.random.RandomState(
+                self._seed_for_entity(entity_key)
+            )
+        return self._rng_by_entity[entity_key]
+
+    def _get_classifier_state(self, entity_key: str) -> Dict[str, float]:
+        """Get classifier state for an entity, initializing it if needed."""
+        if entity_key not in self._classifier_state_by_entity:
+            self._classifier_state_by_entity[entity_key] = self._initial_classifier_state()
+        if entity_key == "_global":
+            self._classifier_state = self._classifier_state_by_entity[entity_key]
+        return self._classifier_state_by_entity[entity_key]
+
     def _init_entity_state(self, entity_key: str, timestamp: int) -> None:
-        """Initialize classifier state (shared pool) and client_load for an entity."""
+        """Initialize classifier state and client_load for an entity."""
         entity = entity_key if entity_key != "_global" else None
 
-        # Initialize shared classifier pool (only once for the first entity)
-        if not self._classifier_state:
-            for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items():
-                self._classifier_state[classifier_name] = cfg["initial_level"]
+        self._classifier_state_by_entity[entity_key] = self._initial_classifier_state()
+        if entity_key == "_global":
+            self._classifier_state = self._classifier_state_by_entity[entity_key]
 
         # Initialize client_load for this entity
         self._client_load_state[entity_key] = self._client_load_mean(entity, timestamp)
         self._last_update_time[entity_key] = timestamp
+        self._rng_by_entity[entity_key] = np.random.RandomState(
+            self._seed_for_entity(entity_key)
+        )
 
     def _update_state(self, entity_key: str, timestamp: int) -> None:
         """
@@ -626,7 +699,8 @@ class RealisticMetricsGenerator:
         The OU process produces smooth, mean-reverting curves:
         x(t+dt) = μ(t) + (x(t) - μ(t)) * exp(-θ*dt) + noise
 
-        Classifiers are shared across all entities (one pool).
+        Classifiers are maintained per entity so AP iteration order cannot
+        change another AP's metric values.
         client_load is per-entity (environmental condition).
 
         After OU update, perturbations are applied to classifiers.
@@ -638,8 +712,10 @@ class RealisticMetricsGenerator:
         if dt > 0:
             # Get current client load for computing time-varying targets
             current_load = self._client_load_state[entity_key]
+            classifier_state = self._get_classifier_state(entity_key)
+            rng = self._get_entity_rng(entity_key)
 
-            # OU process update for each classifier (shared pool)
+            # OU process update for each classifier for this entity.
             for classifier_name, cfg in CLASSIFIER_DEFINITIONS.items():
                 theta = cfg["theta"]
                 sigma = cfg["sigma"]
@@ -648,7 +724,7 @@ class RealisticMetricsGenerator:
                 mu = get_classifier_target(classifier_name, current_load)
 
                 # Current state
-                x = self._classifier_state[classifier_name]
+                x = classifier_state[classifier_name]
 
                 # Exact OU update
                 decay = math.exp(-theta * dt)
@@ -659,7 +735,7 @@ class RealisticMetricsGenerator:
                 else:
                     noise_std = 0
 
-                x_new = mu + (x - mu) * decay + noise_std * self._rng.normal()
+                x_new = mu + (x - mu) * decay + noise_std * rng.normal()
 
                 # Apply perturbations (additive effects from events)
                 perturbation_effect = self.perturbation_manager.total_effect(
@@ -667,7 +743,7 @@ class RealisticMetricsGenerator:
                 )
                 x_new += perturbation_effect
 
-                self._classifier_state[classifier_name] = float(np.clip(x_new, 0.0, 1.0))
+                classifier_state[classifier_name] = float(np.clip(x_new, 0.0, 1.0))
             
             # OU process update for client_load (per-entity environmental condition) 
             theta_load = CLIENT_LOAD_CONFIG["theta"]
@@ -685,10 +761,12 @@ class RealisticMetricsGenerator:
             else:
                 noise_std_load = 0
             
-            x_load_new = mu_load + (x_load - mu_load) * decay_load + noise_std_load * self._rng.normal()
+            x_load_new = mu_load + (x_load - mu_load) * decay_load + noise_std_load * rng.normal()
             self._client_load_state[entity_key] = float(np.clip(x_load_new, 0.0, 1.0))
             
             self._last_update_time[entity_key] = timestamp
+            if entity_key == "_global":
+                self._classifier_state = classifier_state
 
     def _client_load_mean(self, entity: Optional[str], timestamp: int) -> float:
         """
@@ -768,25 +846,39 @@ class RealisticMetricsGenerator:
         """
         cfg = self.config[metric]
         metric_classifiers = METRIC_CLASSIFIERS.get(metric, {})
+        classifier_state = self._get_classifier_state(entity_key)
 
         # Compute weighted health score (0.0 to 1.0)
         weighted_health = 0.0
         for classifier_name, weight in metric_classifiers.items():
-            current_value = self._classifier_state[classifier_name]
+            current_value = classifier_state[classifier_name]
             weighted_health += weight * current_value
 
-        # Map health to metric range based on polarity
-        LOWER_IS_BETTER = {"time_to_connect", "capacity", "roaming"}
+        # Map health around the configured metric baseline. This keeps the
+        # clean operating center aligned with config while preserving classifier
+        # causality for deviations.
+        LOWER_IS_BETTER = {"time_to_connect", "roaming"}
         metric_range = cfg["max"] - cfg["min"]
+        nominal_health = self._nominal_metric_health(metric)
 
         if metric in LOWER_IS_BETTER:
-            # Healthier classifiers → lower metric value
-            value = cfg["min"] + (1.0 - weighted_health) * metric_range
+            # Healthier classifiers -> lower metric value
+            value = (
+                cfg["baseline"]
+                + (nominal_health - weighted_health) * metric_range
+            )
         else:
-            # Healthier classifiers → higher metric value
-            value = cfg["min"] + weighted_health * metric_range
+            # Healthier classifiers -> higher metric value
+            value = cfg["baseline"] + (weighted_health - nominal_health) * metric_range
 
         return float(np.clip(value, cfg["min"], cfg["max"]))
+
+    def _nominal_metric_health(self, metric: str) -> float:
+        """Compute nominal classifier health for baseline-centered metrics."""
+        return sum(
+            weight * CLASSIFIER_DEFINITIONS[classifier_name]["initial_level"]
+            for classifier_name, weight in METRIC_CLASSIFIERS.get(metric, {}).items()
+        )
 
     def _maybe_inject_load_patterns(self, timestamp: int) -> None:
         """Randomly inject load pattern perturbations during business hours."""
@@ -831,18 +923,8 @@ class RealisticMetricsGenerator:
         Returns:
             Dict mapping metric name to rounded value
         """
-        # Ensure entity exists in state
-        if entity not in self._client_load_state:
-            self._init_entity_state(entity, timestamp)
-
-        # Update state once for this entity/timestamp
-        self._update_state(entity, timestamp)
-
-        # Derive all metrics from daily profile + classifiers
-        result = {}
-        for metric in self.get_all_metrics():
-            result[metric] = round(self._derive_metric(metric, entity, timestamp=timestamp), 2)
-        return result
+        frame = self.generate_metric_frame(timestamp=timestamp, entity=entity)
+        return {obs["metric"]: obs["value"] for obs in frame}
 
     @classmethod
     def get_all_metrics(cls) -> List[str]:
@@ -889,8 +971,16 @@ def reset_for_live_streaming(start_time: int = None) -> None:
     if _generator_instance is not None:
         # Preserve state for continuity
         preserved_classifiers = dict(_generator_instance._classifier_state)
+        preserved_classifiers_by_entity = {
+            entity: dict(classifiers)
+            for entity, classifiers in _generator_instance._classifier_state_by_entity.items()
+        }
         preserved_client_load = {
             k: v for k, v in _generator_instance._client_load_state.items()
+        }
+        preserved_rng_by_entity = {
+            entity: rng.get_state()
+            for entity, rng in _generator_instance._rng_by_entity.items()
         }
         preserved_perturbations = _generator_instance.perturbation_manager
 
@@ -899,8 +989,17 @@ def reset_for_live_streaming(start_time: int = None) -> None:
 
         # Restore preserved state
         _generator_instance._classifier_state = preserved_classifiers
+        _generator_instance._classifier_state_by_entity = preserved_classifiers_by_entity
+        if "_global" in _generator_instance._classifier_state_by_entity:
+            _generator_instance._classifier_state = (
+                _generator_instance._classifier_state_by_entity["_global"]
+            )
         _generator_instance._client_load_state = preserved_client_load
         _generator_instance.perturbation_manager = preserved_perturbations
+        for entity, state in preserved_rng_by_entity.items():
+            rng = np.random.RandomState()
+            rng.set_state(state)
+            _generator_instance._rng_by_entity[entity] = rng
 
         # Update last update times to new start time
         for entity_key in _generator_instance._client_load_state.keys():
