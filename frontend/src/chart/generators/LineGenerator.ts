@@ -7,7 +7,7 @@
 
 import * as d3 from "d3";
 import { Generator } from "../types";
-import { Observation } from "../types";
+import { Observation, TrendPoint } from "../types";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -93,7 +93,7 @@ export class LineGenerator implements Generator {
   private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
-  private data: Observation[] = [];
+  private data: Array<Observation | TrendPoint> = [];
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -130,7 +130,7 @@ export class LineGenerator implements Generator {
     this.yScale = yScale;
   }
 
-  update(data: Observation[], range: [number, number]): void {
+  update(data: Array<Observation | TrendPoint>, range: [number, number]): void {
     this.data = data;
     this.redraw(range);
   }

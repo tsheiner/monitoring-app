@@ -28,6 +28,7 @@ class MetricsStore:
 
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.db = self.conn
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")

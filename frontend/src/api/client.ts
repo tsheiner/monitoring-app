@@ -6,6 +6,10 @@ import {
   MetricResponse,
   EventsResponse,
   BaselineResponse,
+  ScenariosResponse,
+  ScenarioTriggerRequest,
+  ScenarioTriggerResponse,
+  ActiveScenariosResponse,
   WebSocketMessage,
   MetricMessage,
   EventMessage,
@@ -32,12 +36,13 @@ export class APIClient {
   private async fetchJson<T>(
     url: string,
     timeoutMs: number = 10000,
+    init: RequestInit = {},
   ): Promise<T> {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, { ...init, signal: controller.signal });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -101,6 +106,27 @@ export class APIClient {
     }
 
     return this.fetchJson<EventsResponse>(url, 10000);
+  }
+
+  async fetchScenarios(): Promise<ScenariosResponse> {
+    const url = `${HTTP_BASE_URL}/api/scenarios`;
+    return this.fetchJson<ScenariosResponse>(url, 8000);
+  }
+
+  async triggerScenario(
+    request: ScenarioTriggerRequest,
+  ): Promise<ScenarioTriggerResponse> {
+    const url = `${HTTP_BASE_URL}/api/scenarios/trigger`;
+    return this.fetchJson<ScenarioTriggerResponse>(url, 10000, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  async fetchActiveScenarios(): Promise<ActiveScenariosResponse> {
+    const url = `${HTTP_BASE_URL}/api/scenarios/active`;
+    return this.fetchJson<ActiveScenariosResponse>(url, 8000);
   }
 
   /**   * Fetch baseline distribution for a metric.

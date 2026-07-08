@@ -18,11 +18,24 @@ describe("Tooltip Rendering", () => {
       width: 800,
       height: 600,
       margin: { top: 20, right: 20, bottom: 60, left: 60 },
+      metric: "throughput",
       timeRange: [now - 3600, now],
+      showDistribution: true,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: "#4CAF50",
+        distribution: "#4CAF5033",
+        event: "#ff6b6b",
+        eventHover: "#ff8787",
+      },
     };
   });
 
   afterEach(() => {
+    document.querySelectorAll(".event-tooltip").forEach((tooltip) => {
+      tooltip.remove();
+    });
     document.body.removeChild(container);
   });
 
@@ -79,6 +92,68 @@ describe("Tooltip Rendering", () => {
       const styleAttr = tooltip.getAttribute("style");
       expect(styleAttr).toContain("display: none");
     }
+  });
+
+  it("keeps trace tooltip hidden while event marker hover is active", () => {
+    setMockedTime(1_700_000_000_000);
+    const now = Math.floor(Date.now() / 1000);
+    config = {
+      ...config,
+      timeRange: [now - 3600, now],
+      showEvents: true,
+    };
+
+    const chart = new ChartView(container, config);
+    chart.addMetric("throughput", "#4CAF50");
+
+    const eventTime = now - 1800;
+    chart.loadHistoricalData("throughput", [
+      { timestamp: eventTime, value: 50 },
+    ]);
+    chart.updateEvents([
+      {
+        timestamp: eventTime,
+        event_type: "dhcp_server_overload",
+        message: "DHCP server overload",
+        entity: "AP-Floor1-01",
+      },
+    ]);
+
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    const chartCenterX =
+      config.margin.left +
+      (config.width - config.margin.left - config.margin.right) / 2;
+    const chartCenterY = config.margin.top + 100;
+
+    simulateMouseMove(svg, chartCenterX, chartCenterY);
+
+    const traceTooltip = container.querySelector(
+      ".chart-tooltip",
+    ) as HTMLElement;
+    expect(traceTooltip).toBeTruthy();
+    expect(traceTooltip.style.display).not.toBe("none");
+
+    const marker = container.querySelector("g.event-marker") as SVGGElement;
+    expect(marker).toBeTruthy();
+
+    const hitArea = marker.querySelector(".hit-area");
+    expect(hitArea?.tagName).toBe("circle");
+    expect(hitArea?.getAttribute("r")).toBe("18");
+
+    marker.dispatchEvent(
+      createMouseEvent("mouseenter", {
+        clientX: chartCenterX,
+        clientY: config.margin.top,
+      }),
+    );
+
+    expect(traceTooltip.style.display).toBe("none");
+    expect(document.body.querySelector(".event-tooltip")?.textContent).toContain(
+      "dhcp_server_overload",
+    );
+
+    simulateMouseMove(svg, chartCenterX, chartCenterY);
+    expect(traceTooltip.style.display).toBe("none");
   });
 
   it("should list all visible metrics at cursor time", () => {
@@ -151,6 +226,46 @@ describe("Tooltip Rendering", () => {
         firstPosition.top !== secondPosition.top,
     ).toBe(true);
   });
+
+  it("shows a concise bucket duration in aggregated tooltip rows", () => {
+    const rangeStart = 1800000;
+    const rangeEnd = rangeStart + 12 * 3600;
+    const bucketedConfig: ChartConfig = {
+      ...config,
+      metric: "time_to_connect",
+      timeRange: [rangeStart, rangeEnd],
+      showDistribution: false,
+      liveMode: false,
+      colors: {
+        ...config.colors,
+        line: "#3498DB",
+        distribution: "#3498DB33",
+      },
+    };
+    const chart = new ChartView(container, bucketedConfig);
+    chart.addMetric("time_to_connect", "#3498DB", "Time to Connect");
+
+    chart.loadHistoricalData("time_to_connect", [
+      { timestamp: rangeStart + 900, value: 20 },
+      { timestamp: rangeStart + 1020, value: 22 },
+      { timestamp: rangeStart + 1080, value: 21 },
+    ]);
+
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    const plotWidth =
+      bucketedConfig.width -
+      bucketedConfig.margin.left -
+      bucketedConfig.margin.right;
+    const bucketMidpoint = rangeStart + 1050;
+    const x =
+      bucketedConfig.margin.left +
+      ((bucketMidpoint - rangeStart) / (rangeEnd - rangeStart)) * plotWidth;
+    simulateMouseMove(svg, x, bucketedConfig.margin.top + 180);
+
+    const tooltip = container.querySelector(".chart-tooltip");
+    expect(tooltip?.textContent).toContain("5m");
+    expect(tooltip?.textContent).not.toContain("median");
+  });
 });
 
 describe("Active Metric and Classifier Details", () => {
@@ -168,7 +283,17 @@ describe("Active Metric and Classifier Details", () => {
       width: 800,
       height: 600,
       margin: { top: 20, right: 20, bottom: 60, left: 60 },
+      metric: "throughput",
       timeRange: [now - 3600, now],
+      showDistribution: true,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: "#4CAF50",
+        distribution: "#4CAF5033",
+        event: "#ff6b6b",
+        eventHover: "#ff8787",
+      },
     };
   });
 

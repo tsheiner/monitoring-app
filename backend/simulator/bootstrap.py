@@ -134,8 +134,8 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     # metric_sums[metric][t_idx] = sum of values across all APs
     metric_sums = {m: np.zeros(n_timestamps) for m in all_metrics}
     
-    # NEW: Track classifier values for baseline computation
-    # classifier_sums[classifier][t_idx] = sum of classifier values
+    # Track classifier values for baseline computation.
+    # classifier_sums[classifier][t_idx] = sum of classifier values across APs.
     all_classifiers = list(CLASSIFIER_DEFINITIONS.keys())
     classifier_sums = {c: np.zeros(n_timestamps) for c in all_classifiers}
 
@@ -143,9 +143,8 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     # Key: (metric, ap, bucket_start) -> {"sum": float, "count": int}
     bucket_accum = defaultdict(lambda: {"sum": 0.0, "count": 0})
 
-    # Classifier breakdown per (metric, bucket_start) for sidecar writes
-    # Classifiers are shared state (not per-AP); one entry per bucket suffices.
-    # Key: (metric, bucket_start) -> list[dict]
+    # Classifier breakdown per (metric, ap, bucket_start) for stored observations.
+    # Key: (metric, ap, bucket_start) -> list[dict]
     bucket_classifiers: dict = {}
 
     for ap_idx, ap in enumerate(ap_list):
@@ -157,11 +156,17 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
             ts = start_time + t_idx * 30
             age = now - ts
 
-            # Generate all metrics for this AP at this timestamp
+            # Generate all metrics for this AP at this timestamp.
             # Note: perturbation_manager is empty -> clean data
-            values = generator.generate_all_metrics_at(ts, entity=ap)
+            frame = generator.generate_metric_frame(
+                timestamp=ts,
+                entity=ap,
+                include_classifiers=True,
+            )
 
-            for metric, value in values.items():
+            for observation in frame:
+                metric = observation["metric"]
+                value = observation["value"]
                 # Accumulate for baseline (will divide by n_aps later)
                 metric_sums[metric][t_idx] += value
 
@@ -171,21 +176,15 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
                 key = (metric, ap, bucket_start)
                 bucket_accum[key]["sum"] += value
                 bucket_accum[key]["count"] += 1
-            
-            # NEW: Capture classifier values for baseline computation
-            # Classifiers are shared (not per-AP), so we only need to sample once per timestamp
-            if ap_idx == 0:
-                for classifier_name in all_classifiers:
-                    classifier_value = generator._classifier_state[classifier_name]
-                    classifier_sums[classifier_name][t_idx] = classifier_value
 
-                # Capture full classifier breakdown per (metric, bucket) for sidecar
-                for metric in all_metrics:
-                    interval = _get_tier_interval(age)
-                    bucket_start = (ts // interval) * interval
-                    breakdown = generator._get_classifier_breakdown(metric, ts)
-                    if breakdown:
-                        bucket_classifiers[(metric, bucket_start)] = breakdown
+                breakdown = observation.get("classifiers")
+                if breakdown:
+                    bucket_classifiers[(metric, ap, bucket_start)] = breakdown
+
+            # Capture classifier values for baseline computation.
+            classifier_state = generator._get_classifier_state(ap)
+            for classifier_name in all_classifiers:
+                classifier_sums[classifier_name][t_idx] += classifier_state[classifier_name]
 
         elapsed = time.time() - ap_start
         print(f"    {ap}: {n_timestamps:,} timestamps in {elapsed:.1f}s")
@@ -260,8 +259,8 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
     # NEW: Compute classifier baselines
     print(f"  Computing classifier baselines...")
     for classifier_name in all_classifiers:
-        # Classifier values are already raw (not per-AP averages)
-        classifier_values = classifier_sums[classifier_name]
+        # Average across APs to match metric baseline aggregation.
+        classifier_values = classifier_sums[classifier_name] / n_aps
         
         # Group by hour-of-day
         hourly_bins = defaultdict(list)
@@ -406,7 +405,7 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
             "value": round(mean_value, 2),
             "entity": ap,
         }
-        breakdown = bucket_classifiers.get((metric, bucket_start))
+        breakdown = bucket_classifiers.get((metric, ap, bucket_start))
         if breakdown:
             obs["classifiers"] = breakdown
         batch.append(obs)
