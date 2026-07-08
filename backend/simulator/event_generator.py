@@ -12,66 +12,30 @@ import json
 import time
 import random
 from typing import Dict, List, Optional, Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
+from simulator.event_catalog import (
+    ASSOC_FAILURE_REASONS,
+    AUTH_FAILURE_REASONS,
+    DHCP_FAILURE_REASONS,
+    DNS_FAILURE_REASONS,
+    build_event_message,
+    build_event_metadata,
+    get_affected_classifiers,
+    get_event_definition,
+    get_event_types,
+    load_event_profile,
+    normalize_event_type,
+)
 from simulator.perturbations import create_perturbation_from_event
-
-
-# --- Failure Reason Code Constants (Phase 1) ---
-# Sourced from production assurance-mock-generators (successful-connects.ts)
-
-DHCP_FAILURE_REASONS = [
-    {"type": "Meraki reason", "code": 108, "reason": "Unresponsive"},
-    {"type": "Meraki reason", "code": 109, "reason": "Timeout"},
-    {"type": "Meraki reason", "code": 110, "reason": "Stuck"},
-    {"type": "Meraki reason", "code": 112, "reason": "Nack"},
-]
-
-AUTH_FAILURE_REASONS = [
-    {"type": "Meraki reason", "code": 102, "reason": "EAPoL handshake error"},
-    {"type": "Meraki reason", "code": 103, "reason": "Invalid PSK"},
-    {"type": "802.11 reason", "code": 15, "reason": "4-way handshake timeout"},
-]
-
-DNS_FAILURE_REASONS = [
-    {"type": "Meraki reason", "code": 114, "reason": "No DNS Response"},
-    {"type": "Meraki reason", "code": 115, "reason": "Timeout"},
-]
-
-ASSOC_FAILURE_REASONS = [
-    {"type": "802.11 status", "code": 0, "reason": "Reserved"},
-    {"type": "802.11 reason", "code": 1, "reason": "Unspecified failure"},
-]
+from simulator.scenarios import ScenarioManager
 
 
 class EventGenerator:
     """Generate network events with realistic timing and metric perturbations."""
 
-    EVENT_TYPES = [
-        # Infrastructure health events
-        "device_restart",
-        "device_crash",
-        "firmware_update",
-        "heat_event",
-        
-        # Connection/auth events
-        "dhcp_server_overload",
-        "radius_timeout",
-        "dns_resolution_failure",
-        
-        # RF and capacity events
-        "interference_event",
-        "high_density_event",
-        "rogue_ap",
-        
-        # Configuration events
-        "config_change",
-        "channel_change",
-        
-        # AI optimization
-        "ai_action",
-    ]
+    EVENT_TYPES = get_event_types()
 
     ENTITIES = [
         "AP-Floor1-01",
@@ -86,7 +50,11 @@ class EventGenerator:
         """Initialize event generator."""
         self.event_callbacks: List[Callable] = []
         self._event_task = None
+        self._scenario_task = None
         self._metrics_generator = None  # Set via set_metrics_generator()
+        self._config: Dict = {}
+        self._event_profile = load_event_profile({})
+        self.scenario_manager = ScenarioManager()
 
         # Load AP topology (device identity) and server info from config (Phases 2 & 3)
         self._topology: Dict[str, Dict] = {}
@@ -109,6 +77,9 @@ class EventGenerator:
             with open(cp) as f:
                 cfg = json.load(f)
 
+            self._config = cfg
+            self._event_profile = load_event_profile(cfg)
+
             # Extract AP identity fields from topology (Phase 2)
             for ap_name, ap_data in cfg.get("ap_topology", {}).items():
                 if isinstance(ap_data, dict) and "serial" in ap_data:
@@ -123,6 +94,7 @@ class EventGenerator:
             self._servers = cfg.get("servers", {})
 
         except (IOError, KeyError, json.JSONDecodeError, ImportError):
+            self._event_profile = load_event_profile({})
             pass  # Graceful fallback — no identity/server enrichment
 
     def set_metrics_generator(self, generator) -> None:
@@ -163,6 +135,10 @@ class EventGenerator:
         entity: Optional[str] = None,
         severity: Optional[str] = None,
         metadata: Optional[Dict] = None,
+        event_source: str = "background",
+        timestamp: Optional[int] = None,
+        scenario_id: Optional[str] = None,
+        scenario_run_id: Optional[str] = None,
         register_perturbation: bool = True
     ) -> Dict:
         """
@@ -178,13 +154,20 @@ class EventGenerator:
         Returns:
             Event dict
         """
-        if event_type not in self.EVENT_TYPES:
+        event_type = normalize_event_type(event_type)
+        definition = get_event_definition(event_type)
+        if definition is None:
             raise ValueError(f"Unknown event type: {event_type}")
 
         entity = entity or random.choice(self.ENTITIES)
-        severity = severity or self._default_severity(event_type)
+        severity = definition.normalize_severity(severity)
         message = self._generate_message(event_type, entity)
-        metadata = metadata or self._generate_metadata(event_type)
+        metadata = (
+            dict(metadata)
+            if metadata is not None
+            else self._generate_metadata(event_type, entity)
+        )
+        affected_classifiers = get_affected_classifiers(event_type, severity)
 
         # Enrich metadata with device identity when entity is a known AP (Phase 2)
         device_identity = self._get_device_identity(entity)
@@ -192,14 +175,29 @@ class EventGenerator:
             metadata = dict(metadata)
             metadata["device"] = device_identity
 
+        metadata.setdefault("event_source", event_source)
+        metadata.setdefault("event_group", definition.group)
+        metadata.setdefault("affected_classifiers", affected_classifiers)
+        if scenario_id is not None:
+            metadata.setdefault("scenario_id", scenario_id)
+        if scenario_run_id is not None:
+            metadata.setdefault("scenario_run_id", scenario_run_id)
+
         event = {
-            "timestamp": int(time.time()),
+            "timestamp": timestamp or int(time.time()),
             "event_type": event_type,
             "severity": severity,
             "entity": entity,
             "message": message,
+            "event_source": event_source,
+            "event_group": definition.group,
+            "affected_classifiers": affected_classifiers,
             "metadata": metadata
         }
+        if scenario_id is not None:
+            event["scenario_id"] = scenario_id
+        if scenario_run_id is not None:
+            event["scenario_run_id"] = scenario_run_id
 
         # Create perturbation for metric causality
         if register_perturbation and self._metrics_generator is not None:
@@ -211,159 +209,108 @@ class EventGenerator:
 
     def _default_severity(self, event_type: str) -> Optional[str]:
         """Determine default severity for event type."""
-        severity_map = {
-            # Infrastructure health
-            "device_restart": "warning",
-            "device_crash": "critical",
-            "firmware_update": "info",
-            "heat_event": "critical",
-            
-            # Connection/auth issues
-            "dhcp_server_overload": "critical",
-            "radius_timeout": "critical",
-            "dns_resolution_failure": "critical",
-            
-            # RF and capacity
-            "interference_event": "warning",
-            "high_density_event": "warning",
-            "rogue_ap": "warning",
-            
-            # Configuration
-            "config_change": None,
-            "channel_change": "info",
-            
-            # AI
-            "ai_action": "info",
-        }
-        return severity_map.get(event_type)
+        definition = get_event_definition(event_type)
+        return definition.default_severity if definition is not None else None
 
     def _generate_message(self, event_type: str, entity: str) -> str:
         """Generate human-readable message for event."""
-        messages = {
-            # Infrastructure health
-            "device_restart": f"{entity} rebooted unexpectedly",
-            "device_crash": f"{entity} crashed and restarted",
-            "firmware_update": f"{entity} firmware updated successfully",
-            "heat_event": f"{entity} experiencing thermal stress",
-            
-            # Connection/auth issues
-            "dhcp_server_overload": f"DHCP server overload affecting {entity}",
-            "radius_timeout": f"RADIUS authentication timeout at {entity}",
-            "dns_resolution_failure": f"DNS resolution failures near {entity}",
-            
-            # RF and capacity
-            "interference_event": f"RF interference detected near {entity}",
-            "high_density_event": f"High client density at {entity}",
-            "rogue_ap": f"Rogue AP detected near {entity}",
-            
-            # Configuration
-            "config_change": f"{entity} configuration changed",
-            "channel_change": f"{entity} channel configuration updated",
-            
-            # AI
-            "ai_action": f"AI optimized {entity} channel settings",
-        }
-        return messages.get(event_type, f"{event_type} occurred on {entity}")
+        return build_event_message(event_type, entity)
 
-    def _generate_metadata(self, event_type: str) -> Dict:
+    def _generate_metadata(self, event_type: str, entity: str = "") -> Dict:
         """Generate realistic metadata for event type."""
-        if event_type == "device_restart":
-            return {
-                "previous_uptime": random.randint(3600, 604800),
-                "reason": random.choice(["watchdog_timeout", "manual", "power_loss"]),
-                "initiated_by": random.choice(["system", "admin"])
-            }
-        elif event_type == "device_crash":
-            return {
-                "crash_reason": random.choice(["kernel_panic", "out_of_memory", "hardware_error"]),
-                "uptime_at_crash": random.randint(86400, 604800),
-                "last_error": "System error code 0x" + format(random.randint(0, 0xFFFF), '04x')
-            }
-        elif event_type == "firmware_update":
-            versions = ["2.3.5", "2.4.0", "2.4.1", "2.5.0"]
-            from_ver = random.choice(versions[:-1])
-            to_ver = random.choice(versions[1:])
-            return {
-                "from_version": from_ver,
-                "to_version": to_ver,
-                "update_method": random.choice(["auto", "manual"])
-            }
-        elif event_type == "config_change":
-            change_types = ["channel_switch", "power_adjust", "policy_update"]
-            change_type = random.choice(change_types)
-            return {
-                "changed_by": random.choice(["admin_user", "automation", "ai_agent"]),
-                "change_type": change_type,
-                "old_value": str(random.randint(1, 11)),
-                "new_value": str(random.randint(1, 11))
-            }
-        elif event_type == "ai_action":
-            actions = [
-                ("channel_optimization", "Detected interference, switched to clearer channel"),
-                ("power_adjustment", "Optimized transmit power for better coverage"),
-                ("client_balancing", "Redistributed clients across APs for better performance")
-            ]
-            action_type, reasoning = random.choice(actions)
-            return {
-                "action_type": action_type,
-                "reasoning": reasoning,
-                "confidence": round(random.uniform(0.75, 0.95), 2),
-                "expected_impact": random.choice(["+10% throughput", "+15% coverage", "-20ms latency"])
-            }
-        elif event_type == "interference":
-            return {
-                "source": random.choice(["microwave_oven", "bluetooth_device", "neighboring_ap", "radar"]),
-                "affected_channel": random.randint(1, 11),
-                "severity_dbm": round(random.uniform(-20, -5), 1),
-                "estimated_duration_minutes": random.randint(2, 15)
-            }
-        elif event_type == "dhcp_server_overload":
-            # Phase 1: structured failure reason codes
-            num_reasons = random.randint(1, 3)
-            selected = random.sample(DHCP_FAILURE_REASONS, min(num_reasons, len(DHCP_FAILURE_REASONS)))
-            failure_reasons = [dict(r, count=random.randint(1, 50)) for r in selected]
-            metadata = {
-                "contributor": "dhcp",
-                "sub_contributor": "No DHCP response",
-                "failure_reasons": failure_reasons,
-            }
-            # Phase 3: server reference
-            server = self._get_server_reference("dhcp")
-            if server:
-                metadata["server"] = server
-            return metadata
-        elif event_type == "radius_timeout":
-            num_reasons = random.randint(1, 3)
-            selected = random.sample(AUTH_FAILURE_REASONS, min(num_reasons, len(AUTH_FAILURE_REASONS)))
-            failure_reasons = [dict(r, count=random.randint(1, 30)) for r in selected]
-            metadata = {
-                "contributor": "radius",
-                "sub_contributor": "Auth timeout",
-                "failure_reasons": failure_reasons,
-            }
-            server = self._get_server_reference("radius")
-            if server:
-                metadata["server"] = server
-            return metadata
-        elif event_type == "dns_resolution_failure":
-            num_reasons = random.randint(1, 2)
-            selected = random.sample(DNS_FAILURE_REASONS, min(num_reasons, len(DNS_FAILURE_REASONS)))
-            failure_reasons = [dict(r, count=random.randint(1, 40)) for r in selected]
-            metadata = {
-                "contributor": "dns",
-                "sub_contributor": "No DNS Response",
-                "failure_reasons": failure_reasons,
-            }
-            server = self._get_server_reference("dns")
-            if server:
-                metadata["server"] = server
-            return metadata
+        return build_event_metadata(
+            event_type,
+            entity,
+            rng=random,
+            server_lookup=self._get_server_reference,
+        )
 
-        return {}
+    def _hour_in_window(self, hour: float, start_hour: float, end_hour: float) -> bool:
+        if start_hour <= end_hour:
+            return start_hour <= hour < end_hour
+        return hour >= start_hour or hour < end_hour
+
+    def _profile_activity_multiplier(self, timestamp: int) -> float:
+        dt = datetime.fromtimestamp(timestamp)
+        hour = dt.hour + dt.minute / 60.0
+        business_hours = (
+            self._config.get("time_patterns", {})
+            .get("business_hours", {})
+        )
+        start_hour = float(business_hours.get("start", 8))
+        end_hour = float(business_hours.get("end", 18))
+        if self._hour_in_window(hour, start_hour, end_hour):
+            return float(self._event_profile.get("business_hours_multiplier", 1.0))
+        return float(self._event_profile.get("off_hours_multiplier", 1.0))
+
+    def background_emit_probability(self, timestamp: Optional[int] = None) -> float:
+        """Return profile-aware probability for emitting a background event."""
+        ts = timestamp or int(time.time())
+        probability = float(self._event_profile.get("emit_probability", 0.25))
+        return min(1.0, probability * self._profile_activity_multiplier(ts))
+
+    def background_avg_interval_minutes(self) -> float:
+        """Return profile-aware average scheduler interval."""
+        return float(self._event_profile.get("avg_interval_minutes", 5))
+
+    def _event_weights_for_timestamp(self, timestamp: int) -> Dict[str, float]:
+        weights = dict(self._event_profile.get("event_weights", {}))
+        dt = datetime.fromtimestamp(timestamp)
+        hour = dt.hour + dt.minute / 60.0
+
+        for window in self._event_profile.get("event_weight_windows", []):
+            if not self._hour_in_window(
+                hour,
+                float(window.get("start_hour", 0)),
+                float(window.get("end_hour", 24)),
+            ):
+                continue
+            for event_type, multiplier in window.get("event_multipliers", {}).items():
+                canonical_type = normalize_event_type(event_type)
+                if canonical_type in weights:
+                    weights[canonical_type] *= float(multiplier)
+
+        return {
+            event_type: weight
+            for event_type, weight in weights.items()
+            if get_event_definition(event_type) is not None and weight > 0
+        }
+
+    def choose_background_event_type(
+        self,
+        timestamp: Optional[int] = None,
+        rng=None,
+    ) -> str:
+        """Choose a profile-aware background event type."""
+        ts = timestamp or int(time.time())
+        chooser = rng or random
+        weights = self._event_weights_for_timestamp(ts)
+        event_types = list(weights.keys())
+        if not event_types:
+            raise ValueError("Event profile has no background-eligible event weights")
+        return chooser.choices(event_types, weights=list(weights.values()))[0]
+
+    def choose_background_severity(
+        self,
+        event_type: str,
+        rng=None,
+    ) -> str:
+        """Choose a profile-aware severity valid for the event type."""
+        definition = get_event_definition(event_type)
+        if definition is None:
+            raise ValueError(f"Unknown event type: {event_type}")
+
+        chooser = rng or random
+        severity_weights = self._event_profile.get("severity_weights", {})
+        choices = list(definition.severity_choices)
+        weights = [float(severity_weights.get(severity, 0.0)) for severity in choices]
+        if not any(weights):
+            return definition.default_severity
+        return chooser.choices(choices, weights=weights)[0]
 
     def schedule_random_events(self, avg_interval_minutes: int = 5) -> None:
         """
-        Schedule random events with randomized timing.
+        Schedule profile-aware background events with randomized timing.
 
         Uses exponential distribution for natural event spacing.
         """
@@ -371,30 +318,34 @@ class EventGenerator:
 
         async def event_loop():
             while True:
-                delay_minutes = random.expovariate(1.0 / avg_interval_minutes)
+                profile_interval = (
+                    avg_interval_minutes
+                    if avg_interval_minutes != 5
+                    else self.background_avg_interval_minutes()
+                )
+                delay_minutes = random.expovariate(1.0 / profile_interval)
                 delay_minutes = max(1, min(30, delay_minutes))
 
                 await asyncio.sleep(delay_minutes * 60)
 
-                # Weighted probability by event type
-                event_weights = {
-                    "device_restart": 0.12,
-                    "device_crash": 0.04,
-                    "firmware_update": 0.08,
-                    "config_change": 0.30,
-                    "ai_action": 0.30,
-                    "interference": 0.16,
-                }
-
-                if random.random() < 0.4:
-                    event_type = random.choices(
-                        list(event_weights.keys()),
-                        weights=list(event_weights.values())
-                    )[0]
-                    event = self.generate_event(event_type)
+                now = int(time.time())
+                if random.random() < self.background_emit_probability(now):
+                    event_type = self.choose_background_event_type(now)
+                    severity = self.choose_background_severity(event_type)
+                    event = self.generate_event(
+                        event_type,
+                        severity=severity,
+                        event_source="background",
+                    )
                     self._emit_event(event)
 
+        async def scenario_loop():
+            while True:
+                self.emit_due_scenario_events(int(time.time()))
+                await asyncio.sleep(5)
+
         self._event_task = asyncio.create_task(event_loop())
+        self._scenario_task = asyncio.create_task(scenario_loop())
 
     def start(self) -> None:
         """Start the event generator (no-op, events start in schedule_random_events)."""
@@ -405,6 +356,44 @@ class EventGenerator:
         if self._event_task:
             self._event_task.cancel()
             self._event_task = None
+        if self._scenario_task:
+            self._scenario_task.cancel()
+            self._scenario_task = None
+
+    def trigger_scenario(
+        self,
+        scenario_id: str,
+        *,
+        entity: str,
+        severity: str,
+        started_at: Optional[int] = None,
+    ):
+        """Trigger a scenario run."""
+        return self.scenario_manager.trigger(
+            scenario_id,
+            entity=entity,
+            severity=severity,
+            started_at=started_at or int(time.time()),
+        )
+
+    def emit_due_scenario_events(self, timestamp: Optional[int] = None) -> List[Dict]:
+        """Emit all scenario events due at or before the timestamp."""
+        current_time = timestamp or int(time.time())
+        events = []
+        for due_event in self.scenario_manager.due_events(current_time):
+            event = self.generate_event(
+                due_event.step.event_type,
+                entity=due_event.entity,
+                severity=due_event.event_severity,
+                metadata=due_event.metadata(),
+                event_source="scenario",
+                timestamp=due_event.scheduled_at,
+                scenario_id=due_event.run.scenario_id,
+                scenario_run_id=due_event.run.scenario_run_id,
+            )
+            self._emit_event(event)
+            events.append(event)
+        return events
 
     def generate_correlated_event(
         self,
@@ -431,7 +420,7 @@ class EventGenerator:
             "time_to_connect": ["config_change", "ai_action"],
             "throughput": ["config_change", "ai_action"],
             "capacity": ["ai_action"],
-            "coverage": ["interference"],
+            "coverage": ["interference_event"],
         }
 
         possible_events = correlation_map.get(metric, ["config_change"])

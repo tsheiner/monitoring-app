@@ -774,6 +774,89 @@ This document now serves as the project's working decision record and forward im
 
 Each step uses the same checkpoint rule as the Terrain work: complete its tests and verification gate, then create a commit before beginning the next step.
 
+### Implementation addendum before coding
+
+The next implementation pass should treat the following contracts as part of
+the plan, so the work remains testable instead of depending on visual judgment
+alone.
+
+**Backend generation frame**
+
+- Add one canonical generation path for a `(timestamp, entity)` frame. The
+  frame advances simulator state once, derives all metric values from that
+  state snapshot, and can return classifier breakdowns for each metric without
+  advancing state again.
+- Use that frame path from bootstrap, live streaming, and deterministic
+  diagnostics. `generate_observation` may remain as a compatibility wrapper,
+  but it must delegate to the frame path when callers need a single metric.
+- Define the output shape explicitly: each metric observation includes
+  `timestamp`, `metric`, `value`, optional `entity`, and optional
+  `classifiers`; classifier records include `name`, `value`, `status`,
+  `contribution`, and `weight`.
+- Add tests proving metric order and AP order do not change values within the
+  same deterministic timestamp sequence.
+
+**Shared AP aggregation**
+
+- Move AP aggregation into one shared backend helper used by HTTP responses,
+  WebSocket broadcasts, and tests.
+- Define aggregation semantics once: metric value is the arithmetic mean across
+  AP observations for the timestamp; classifier value, contribution, and weight
+  are arithmetic means across contributing AP records; classifier status is the
+  worst contributing AP status using `red > yellow > green`; aggregated
+  observations use `entity: null`.
+- Use identical rounding rules for live and historical aggregated observations.
+
+**Calibration diagnostic gate**
+
+- Add a deterministic diagnostic helper or test fixture that generates clean
+  baseline data and a separate clean measured sequence from the canonical frame
+  path.
+- Report outside rates per metric and hour for p5-p95 and p1-p99. The clean
+  acceptance target is centered on 10% and 2%, with tolerances recorded beside
+  the diagnostic so future maintainers know whether failures are statistical
+  noise or generator drift.
+- Use a fixed seed/start time, a fixed AP list, UTC hour bucketing, and enough
+  samples to keep the diagnostic stable. Perturbation-inclusive diagnostics
+  should be reported separately from the clean pass/fail gate.
+
+**Trend display data model**
+
+- Keep raw observations in `DataTarget` as the source of truth.
+- Introduce a derived display model with three concepts: raw points, aggregated
+  trend points, and p1/p99 excursion episodes. A trend point must carry bucket
+  start, bucket end, display timestamp, median value, sample count, and source
+  observation bounds so tooltips can describe it honestly.
+- Select bucket duration from both visible range and plot width, aiming for
+  roughly one trend point every 3-5 horizontal pixels while preserving raw
+  display at short ranges.
+- Recompute the display model when the range, plot width, metric, baseline, or
+  live data changes.
+
+**Ribbon and contour rendering**
+
+- Implement the same-hue ribbon with explicit percentile anchors at p1, p5,
+  p25, p50, p75, p95, and p99. The interpolation function should preserve
+  asymmetric percentile spacing and return transparent output outside p1-p99.
+- Use a documented color function based on the metric trace color. The p50 fill
+  should be less saturated than the trace, tails should fade in saturation and
+  opacity, and all active metric hues should have comparable perceived weight
+  on the dark chart background.
+- Add contour paths at p5, p25, p50, p75, and p95 from the same interpolated
+  distribution data used by the fill. Keep p50 strongest, p25/p75 medium, and
+  p5/p95 quieter but still obvious.
+
+**Verification**
+
+- Backend-only milestones require targeted backend tests, the full backend test
+  suite, and `git diff --check`.
+- Frontend milestones require targeted frontend tests, the full frontend suite,
+  a production build, `git diff --check`, and browser verification with a
+  captured snapshot because project instructions require Playwright validation
+  for UI work.
+- Each passing milestone receives its own commit before the next milestone
+  begins.
+
 ## Step 13 — Calibrate baseline and live-data semantics
 
 ### Outcome
@@ -805,6 +888,25 @@ Likely existing changes:
 - Define expected outside rates for clean data: approximately 10% outside p5–p95 and 2% outside p1–p99, allowing statistically justified tolerance and accounting for temporal correlation.
 - Add a deterministic diagnostic that reports outside rates per metric and hour for clean simulation and for perturbation-inclusive simulation.
 - Decide the intended perturbation frequency separately from baseline calibration. Perturbations may legitimately create clustered excursions, but their frequency should match the product story rather than compensate for a generator mismatch.
+
+### Phase 1 event-realism checkpoint
+
+The calibration diagnostic now separates three modes:
+
+- `clean`: clean/no-event generation, used as the pass/fail calibration gate.
+- `background`: background-event generation, using deterministic background-like scheduled events.
+- `scenario`: scenario/event-inclusive generation, using deterministic scenario-like scheduled events.
+
+Each mode reports p5–p95 and p1–p99 outside rates per metric and per UTC hour. The clean mode remains expected to stay near 10% outside p5–p95 and 2% outside p1–p99 within the recorded tolerance. Background and scenario modes are interpreted separately, so event-driven excursions can be assessed as causal clusters instead of baseline drift.
+
+### Phase 5 event-realism acceptance
+
+The simulator now treats random background events as lower-drama operational texture and triggered scenarios as demo-worthy causal sequences:
+
+- Clean/no-event diagnostics should stay centered near 10% outside p5–p95 and 2% outside p1–p99, with the recorded tolerance accounting for temporal correlation and finite samples.
+- Background events should be visible and attributable, but usually warning/info severity. Enterprise favors config and AI operations during business hours, campus favors RF and high-density patterns, and hospital has the lowest critical-event mix.
+- Triggered scenarios are allowed to move traces clearly outside the normal ribbon when their visible events explain the excursion. Scenario effects must still flow through catalog classifier perturbations rather than direct metric overrides.
+- The distribution ribbon represents normal operation. Values outside it are acceptable when they are statistically expected or paired with a visible background/scenario event.
 
 ### Required tests
 
