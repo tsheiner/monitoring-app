@@ -93,6 +93,7 @@ export class ChartView {
 
   // Interaction state
   private isPanning: boolean = false;
+  private isEventHoverActive: boolean = false;
 
   // Cache last rendered state so hysteresis timer can re-render when mouse is stationary
   private lastMetricsAtCursor: Array<{
@@ -135,6 +136,10 @@ export class ChartView {
         this.core.getUnclippedChartGroup(), // Use unclipped group so markers aren't cut off
         config.colors.event,
         config.colors.eventHover,
+        {
+          onHoverStart: () => this.handleEventHoverStart(),
+          onHoverEnd: () => this.handleEventHoverEnd(),
+        },
       );
       this.eventMarkers.setScales(this.core.getXScale(), this.core.getYScale());
     }
@@ -154,6 +159,7 @@ export class ChartView {
       .getUnclippedChartGroup()
       .append("g")
       .attr("class", "crosshair-group")
+      .style("pointer-events", "none")
       .style("display", "none");
 
     this.crosshairVertical = this.crosshairGroup
@@ -244,6 +250,11 @@ export class ChartView {
       return;
     }
 
+    if (this.isEventHoverActive) {
+      this.hideCrosshair();
+      return;
+    }
+
     const chartWidth =
       this.config.width - this.config.margin.left - this.config.margin.right;
     const chartHeight =
@@ -293,6 +304,15 @@ export class ChartView {
       clearTimeout(this.activeMetricTimer);
       this.activeMetricTimer = null;
     }
+  }
+
+  private handleEventHoverStart(): void {
+    this.isEventHoverActive = true;
+    this.hideCrosshair();
+  }
+
+  private handleEventHoverEnd(): void {
+    this.isEventHoverActive = false;
   }
 
   private isLiveEdgeHover(x: number, chartWidth: number): boolean {

@@ -33,6 +33,9 @@ describe("Tooltip Rendering", () => {
   });
 
   afterEach(() => {
+    document.querySelectorAll(".event-tooltip").forEach((tooltip) => {
+      tooltip.remove();
+    });
     document.body.removeChild(container);
   });
 
@@ -89,6 +92,68 @@ describe("Tooltip Rendering", () => {
       const styleAttr = tooltip.getAttribute("style");
       expect(styleAttr).toContain("display: none");
     }
+  });
+
+  it("keeps trace tooltip hidden while event marker hover is active", () => {
+    setMockedTime(1_700_000_000_000);
+    const now = Math.floor(Date.now() / 1000);
+    config = {
+      ...config,
+      timeRange: [now - 3600, now],
+      showEvents: true,
+    };
+
+    const chart = new ChartView(container, config);
+    chart.addMetric("throughput", "#4CAF50");
+
+    const eventTime = now - 1800;
+    chart.loadHistoricalData("throughput", [
+      { timestamp: eventTime, value: 50 },
+    ]);
+    chart.updateEvents([
+      {
+        timestamp: eventTime,
+        event_type: "dhcp_server_overload",
+        message: "DHCP server overload",
+        entity: "AP-Floor1-01",
+      },
+    ]);
+
+    const svg = container.querySelector("svg") as SVGSVGElement;
+    const chartCenterX =
+      config.margin.left +
+      (config.width - config.margin.left - config.margin.right) / 2;
+    const chartCenterY = config.margin.top + 100;
+
+    simulateMouseMove(svg, chartCenterX, chartCenterY);
+
+    const traceTooltip = container.querySelector(
+      ".chart-tooltip",
+    ) as HTMLElement;
+    expect(traceTooltip).toBeTruthy();
+    expect(traceTooltip.style.display).not.toBe("none");
+
+    const marker = container.querySelector("g.event-marker") as SVGGElement;
+    expect(marker).toBeTruthy();
+
+    const hitArea = marker.querySelector(".hit-area");
+    expect(hitArea?.tagName).toBe("circle");
+    expect(hitArea?.getAttribute("r")).toBe("18");
+
+    marker.dispatchEvent(
+      createMouseEvent("mouseenter", {
+        clientX: chartCenterX,
+        clientY: config.margin.top,
+      }),
+    );
+
+    expect(traceTooltip.style.display).toBe("none");
+    expect(document.body.querySelector(".event-tooltip")?.textContent).toContain(
+      "dhcp_server_overload",
+    );
+
+    simulateMouseMove(svg, chartCenterX, chartCenterY);
+    expect(traceTooltip.style.display).toBe("none");
   });
 
   it("should list all visible metrics at cursor time", () => {

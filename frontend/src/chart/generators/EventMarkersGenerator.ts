@@ -5,6 +5,11 @@
 import * as d3 from "d3";
 import { Generator, Event } from "../types";
 
+interface EventHoverCallbacks {
+  onHoverStart?: (event: Event) => void;
+  onHoverEnd?: () => void;
+}
+
 // Icon mappings for event types
 const EVENT_ICONS: Record<string, string> = {
   // Device Lifecycle events
@@ -35,14 +40,19 @@ export class EventMarkersGenerator implements Generator {
   private height: number = 0;
   private color: string;
   private hoverColor: string;
+  private hoverCallbacks: EventHoverCallbacks;
+  private hoverEndTimer: number | null = null;
+  private readonly HOVER_END_DELAY_MS = 90;
 
   constructor(
     parent: d3.Selection<SVGGElement, unknown, null, undefined>,
     color: string = "#999",
     hoverColor: string = "#7EC7FF",
+    hoverCallbacks: EventHoverCallbacks = {},
   ) {
     this.color = color;
     this.hoverColor = hoverColor;
+    this.hoverCallbacks = hoverCallbacks;
 
     this.group = parent.append("g").attr("class", "event-markers");
   }
@@ -74,6 +84,7 @@ export class EventMarkersGenerator implements Generator {
     );
 
     // Bind data to marker groups (each group contains tear drop + icon)
+    this.group.raise();
     const markerGroups = this.group
       .selectAll<SVGGElement, Event>("g.event-marker")
       .data(visibleEvents, (d) => `${d.timestamp}-${d.event_type}`);
@@ -92,18 +103,21 @@ export class EventMarkersGenerator implements Generator {
       .attr("stroke", this.color)
       .attr("stroke-width", 1)
       .attr("opacity", 0.6)
+      .attr("pointer-events", "none")
       .attr("x1", 0)
       .attr("y1", 16)
       .attr("x2", 0);
 
-    // Add invisible larger hit area for better hover detection (2px padding)
+    // Add invisible head hit target so the hollow marker is easy to acquire.
     enter
-      .append("path")
+      .append("circle")
       .attr("class", "hit-area")
+      .attr("cx", 0)
+      .attr("cy", 0)
+      .attr("r", 18)
       .attr("fill", "transparent")
       .attr("stroke", "none")
-      .attr("pointer-events", "all")
-      .attr("d", this.getHitAreaPath());
+      .attr("pointer-events", "all");
 
     // Add tear drop circle with slight point at bottom
     enter
@@ -113,6 +127,7 @@ export class EventMarkersGenerator implements Generator {
       .attr("stroke", this.color)
       .attr("stroke-width", 1)
       .attr("opacity", 0.8)
+      .attr("pointer-events", "none")
       .attr("d", this.getTearDropPath());
 
     // Add icon to each new marker (centered in tear drop)
@@ -120,6 +135,7 @@ export class EventMarkersGenerator implements Generator {
       .append("path")
       .attr("class", "event-icon")
       .attr("fill", this.color)
+      .attr("pointer-events", "none")
       .attr("transform", "translate(-8, -8) scale(0.67)");
 
     // Update positions for all markers (enter + update)
@@ -141,12 +157,12 @@ export class EventMarkersGenerator implements Generator {
     // Update tail heights to reach x-axis
     allMarkers.select("line.event-tail").attr("y2", this.height);
 
-    // Update hit area paths (need to recalculate when height changes)
-    allMarkers.select("path.hit-area").attr("d", this.getHitAreaPath());
-
     // Add hover behavior
     allMarkers
       .on("mouseenter", (event, d) => {
+        this.clearHoverEndTimer();
+        this.hoverCallbacks.onHoverStart?.(d);
+
         const group = d3.select(event.currentTarget as SVGGElement);
         group
           .select("path.tear-drop")
@@ -157,8 +173,7 @@ export class EventMarkersGenerator implements Generator {
           .attr("stroke", this.hoverColor)
           .attr("opacity", 1);
 
-        // Show tooltip
-        this.showTooltip(event, d);
+        this.showTooltip(event.currentTarget as SVGGElement, d);
       })
       .on("mouseleave", (event) => {
         const group = d3.select(event.currentTarget as SVGGElement);
@@ -171,34 +186,15 @@ export class EventMarkersGenerator implements Generator {
           .attr("stroke", this.color)
           .attr("opacity", 0.6);
 
-        this.hideTooltip();
+        this.hoverEndTimer = window.setTimeout(() => {
+          this.hoverCallbacks.onHoverEnd?.();
+          this.hideTooltip();
+          this.hoverEndTimer = null;
+        }, this.HOVER_END_DELAY_MS);
       });
 
     // Exit
     markerGroups.exit().remove();
-  }
-
-  /**
-   * Generate SVG path for larger hit area (tear drop + tail with 2px padding).
-   */
-  private getHitAreaPath(): string {
-    const radius = 14;
-    const pointExtension = 3;
-    const tailPadding = 2;
-
-    const path = `
-      M -${tailPadding},-${radius}
-      A ${radius},${radius} 0 0,1 ${radius},0
-      Q ${radius},${pointExtension} 0,${radius + pointExtension}
-      L 0,${this.height}
-      L ${tailPadding},${this.height}
-      L ${tailPadding},${radius + pointExtension}
-      Q ${radius + tailPadding},${pointExtension} ${radius + tailPadding},0
-      A ${radius + tailPadding},${radius + tailPadding} 0 0,0 -${tailPadding},-${radius}
-      Z
-    `;
-
-    return path.trim().replace(/\s+/g, " ");
   }
 
   /**
@@ -223,8 +219,28 @@ export class EventMarkersGenerator implements Generator {
     return path.trim().replace(/\s+/g, " ");
   }
 
-  private showTooltip(event: MouseEvent, data: Event): void {
-    // Simple tooltip (could be enhanced)
+  private showTooltip(markerGroup: SVGGElement, data: Event): void {
+    this.hideTooltip();
+
+    const relatedEvents = this.data.filter(
+      (event) => Math.abs(event.timestamp - data.timestamp) <= 1,
+    );
+    const header =
+      relatedEvents.length > 1
+        ? `<div class="event-tooltip-count">${relatedEvents.length} events</div>`
+        : "";
+    const rows = relatedEvents
+      .map(
+        (event) => `
+        <div class="event-tooltip-row">
+          <strong>${this.escapeHtml(event.event_type)}</strong>
+          <div>${this.escapeHtml(event.message)}</div>
+          ${event.entity ? `<em>${this.escapeHtml(event.entity)}</em>` : ""}
+        </div>
+      `,
+      )
+      .join("");
+
     const tooltip = d3
       .select("body")
       .append("div")
@@ -236,20 +252,70 @@ export class EventMarkersGenerator implements Generator {
       .style("border-radius", "4px")
       .style("font-size", "12px")
       .style("pointer-events", "none")
-      .style("z-index", "1000")
-      .html(
-        `
-        <strong>${data.event_type}</strong><br/>
-        ${data.message}<br/>
-        <em>${data.entity || ""}</em>
-      `,
-      )
-      .style("left", `${event.pageX + 10}px`)
-      .style("top", `${event.pageY - 10}px`);
+      .style("z-index", "1100")
+      .html(`${header}${rows}`);
+
+    this.positionTooltip(tooltip, markerGroup);
   }
 
   private hideTooltip(): void {
     d3.selectAll(".event-tooltip").remove();
+  }
+
+  private positionTooltip(
+    tooltip: d3.Selection<HTMLDivElement, unknown, HTMLElement, any>,
+    markerGroup: SVGGElement,
+  ): void {
+    const anchor =
+      markerGroup.querySelector<SVGElement>("circle.hit-area") ?? markerGroup;
+    const anchorRect = anchor.getBoundingClientRect();
+    const tooltipNode = tooltip.node();
+    if (!tooltipNode) return;
+
+    const tooltipRect = tooltipNode.getBoundingClientRect();
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight;
+
+    let left = window.scrollX + anchorRect.right + 12;
+    if (left + tooltipRect.width > window.scrollX + viewportWidth - 12) {
+      left = window.scrollX + anchorRect.left - tooltipRect.width - 12;
+    }
+
+    let top =
+      window.scrollY +
+      anchorRect.top +
+      anchorRect.height / 2 -
+      tooltipRect.height / 2;
+    top = Math.max(
+      window.scrollY + 12,
+      Math.min(top, window.scrollY + viewportHeight - tooltipRect.height - 12),
+    );
+
+    tooltip.style("left", `${left}px`).style("top", `${top}px`);
+  }
+
+  private clearHoverEndTimer(): void {
+    if (this.hoverEndTimer !== null) {
+      clearTimeout(this.hoverEndTimer);
+      this.hoverEndTimer = null;
+    }
+  }
+
+  private clearHoverState(): void {
+    this.clearHoverEndTimer();
+    this.hoverCallbacks.onHoverEnd?.();
+    this.hideTooltip();
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   show(): void {
@@ -257,6 +323,7 @@ export class EventMarkersGenerator implements Generator {
   }
 
   hide(): void {
+    this.clearHoverState();
     this.group.style("display", "none");
   }
 
@@ -266,6 +333,7 @@ export class EventMarkersGenerator implements Generator {
   }
 
   destroy(): void {
+    this.clearHoverState();
     this.group.remove();
   }
 }

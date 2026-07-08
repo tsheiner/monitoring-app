@@ -189,4 +189,27 @@ describe("Scenario controls", () => {
       document.querySelector('[data-group="ai"] span')?.textContent,
     ).toBe("AI 1");
   });
+
+  it("updates event group active and pressed states", () => {
+    const api = createMockApi();
+    const app = new MonitoringApp({
+      autoStart: false,
+      connectWebSocket: false,
+      apiClient: api,
+    });
+
+    (app as any).setupControls();
+
+    const toggle = document.querySelector(
+      '[data-group="connection_auth"]',
+    ) as HTMLElement;
+    expect(toggle).toBeTruthy();
+    expect(toggle.classList.contains("active")).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+    toggle.click();
+
+    expect(toggle.classList.contains("active")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  });
 });

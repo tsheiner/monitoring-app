@@ -619,6 +619,8 @@ class MonitoringApp {
         const toggle = document.createElement("div");
         toggle.className = "event-toggle";
         toggle.dataset.group = group.name;
+        toggle.setAttribute("role", "button");
+        toggle.setAttribute("aria-pressed", String(group.enabled));
 
         // Create SVG icon instead of circle indicator
         const svg = document.createElementNS(
@@ -951,6 +953,7 @@ class MonitoringApp {
       } else {
         toggle.classList.remove("active");
       }
+      toggle.setAttribute("aria-pressed", String(group.enabled));
     }
 
     // Update event display
