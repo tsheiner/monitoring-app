@@ -3,7 +3,7 @@ import { gaussianDensity } from "./GaussianDensity";
 import { interpolateGaussianParams } from "./baselineAdapter";
 import { DistributionDescriptor } from "./types";
 
-export interface TerrainContactSample {
+export interface TerrainShadowSample {
   timestamp: number;
   value: number;
   strength: number;
@@ -18,7 +18,7 @@ function smoothstep(value: number): number {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-export function terrainContactStrength(
+export function terrainShadowStrength(
   value: number,
   descriptor: DistributionDescriptor["params"],
   supportDensityRatio: number,
@@ -31,18 +31,18 @@ export function terrainContactStrength(
   return smoothstep((densityRatio - cutoff) / Math.max(1e-9, 1 - cutoff));
 }
 
-export function buildTerrainContactSamples(
+export function buildTerrainShadowSamples(
   observations: Observation[],
   descriptors: DistributionDescriptor[],
   supportDensityRatio: number,
-): TerrainContactSample[] {
+): TerrainShadowSample[] {
   return observations.map((observation) => {
     const params = interpolateGaussianParams(descriptors, observation.timestamp);
     return {
       timestamp: observation.timestamp,
       value: observation.value,
       strength: params
-        ? terrainContactStrength(
+        ? terrainShadowStrength(
             observation.value,
             params,
             supportDensityRatio,

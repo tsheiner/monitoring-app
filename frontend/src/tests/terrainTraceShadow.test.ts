@@ -1,23 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildTerrainContactSamples,
-  terrainContactStrength,
-} from "../chart/terrain/terrainTraceContact";
+  buildTerrainShadowSamples,
+  terrainShadowStrength,
+} from "../chart/terrain/terrainTraceShadow";
 
-describe("terrain trace contact", () => {
+describe("terrain trace shadow", () => {
   const params = { mu: 10, sigma: 2 };
 
   it("is strongest on the ridge and decreases toward the support edge", () => {
-    const ridge = terrainContactStrength(10, params, 0.01);
-    const slope = terrainContactStrength(12, params, 0.01);
-    const outside = terrainContactStrength(18, params, 0.01);
+    const ridge = terrainShadowStrength(10, params, 0.01);
+    const slope = terrainShadowStrength(12, params, 0.01);
+    const outside = terrainShadowStrength(18, params, 0.01);
     expect(ridge).toBe(1);
     expect(slope).toBeGreaterThan(outside);
     expect(outside).toBe(0);
   });
 
-  it("aligns one contact sample to every measured observation", () => {
-    const samples = buildTerrainContactSamples(
+  it("aligns one shadow sample to every measured observation", () => {
+    const samples = buildTerrainShadowSamples(
       [
         { timestamp: 0, value: 10 },
         { timestamp: 5, value: 12 },

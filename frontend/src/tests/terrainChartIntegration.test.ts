@@ -77,19 +77,22 @@ describe("Terrain chart integration", () => {
     expect(after).toEqual(before);
   });
 
-  it("adds density-responsive contact beneath the unchanged measured path", () => {
+  it("projects a density-clipped shadow beneath the unchanged measured path", () => {
     const corePath = container.querySelector<SVGPathElement>("path.line");
     const pathBefore = corePath?.getAttribute("d");
     chart.setDistributionStyle("terrain");
-    const contacts = container.querySelectorAll(
-      ".terrain-trace-contact line",
+    const shadows = container.querySelectorAll<SVGPathElement>(
+      ".terrain-trace-shadow path",
     );
-    expect(contacts.length).toBeGreaterThan(0);
+    expect(shadows.length).toBeGreaterThan(0);
+    expect(shadows[0].getAttribute("transform")).toBe("translate(3 8)");
+    expect(shadows[0].style.filter).toBe("blur(3px)");
+    expect(container.querySelector(".terrain-trace-contact")).toBeNull();
     expect(corePath?.getAttribute("d")).toBe(pathBefore);
 
     chart.setDistributionStyle("bands");
     expect(
-      container.querySelectorAll(".terrain-trace-contact line"),
+      container.querySelectorAll(".terrain-trace-shadow path"),
     ).toHaveLength(0);
   });
 
@@ -116,7 +119,7 @@ describe("Terrain chart integration", () => {
     expect(canvas.style.height).toBe("540px");
   });
 
-  it("uses a reduced backing buffer during interaction and restores DPR2", () => {
+  it("uses a CSS-resolution backing buffer during interaction and restores DPR2", () => {
     const originalRatio = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", {
       configurable: true,
@@ -132,7 +135,7 @@ describe("Terrain chart integration", () => {
       chart.setTerrainPreviewMode(true);
       expect(chart._getTerrainStateForTest().preview).toBe(true);
       expect(canvas.style.width).toBe("920px");
-      expect(canvas.width).toBe(460);
+      expect(canvas.width).toBe(920);
 
       chart.setTerrainPreviewMode(false);
       expect(chart._getTerrainStateForTest().preview).toBe(false);

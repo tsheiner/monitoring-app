@@ -8,7 +8,7 @@
 import * as d3 from "d3";
 import { Generator } from "../types";
 import { Observation } from "../types";
-import { TerrainContactSample } from "../terrain/terrainTraceContact";
+import { TerrainShadowSample } from "../terrain/terrainTraceShadow";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -90,13 +90,13 @@ function lttbDownsample(
 
 export class LineGenerator implements Generator {
   private group: d3.Selection<SVGGElement, unknown, null, undefined>;
-  private contactGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private shadowGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private path: d3.Selection<SVGPathElement, unknown, null, undefined>;
   private markersGroup: d3.Selection<SVGGElement, unknown, null, undefined>;
   private xScale: any;
   private yScale: any;
   private data: Observation[] = [];
-  private contactSamples: TerrainContactSample[] = [];
+  private shadowSamples: TerrainShadowSample[] = [];
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -118,9 +118,9 @@ export class LineGenerator implements Generator {
 
     this.group = parent.append("g").attr("class", "line-generator");
 
-    this.contactGroup = this.group
+    this.shadowGroup = this.group
       .append("g")
-      .attr("class", "terrain-trace-contact")
+      .attr("class", "terrain-trace-shadow")
       .style("display", "none");
 
     this.path = this.group
@@ -143,17 +143,17 @@ export class LineGenerator implements Generator {
     this.redraw(range);
   }
 
-  setTerrainContact(
-    samples: TerrainContactSample[] | null,
+  setTerrainShadow(
+    samples: TerrainShadowSample[] | null,
     range: [number, number],
   ): void {
-    this.contactSamples = samples ?? [];
-    if (this.contactSamples.length > 1) {
-      this.contactGroup.style("display", null);
+    this.shadowSamples = samples ?? [];
+    if (this.shadowSamples.length > 1) {
+      this.shadowGroup.style("display", null);
     } else {
-      this.contactGroup.style("display", "none");
+      this.shadowGroup.style("display", "none");
     }
-    this.redrawContact(range);
+    this.redrawShadow(range);
   }
 
   redraw(range: [number, number]): void {
@@ -180,7 +180,7 @@ export class LineGenerator implements Generator {
 
     // Update path with downsampled data
     this.path.datum(lineData).attr("d", line);
-    this.redrawContact(range);
+    this.redrawShadow(range);
 
     // Update markers — only show when density is low enough to be useful
     const visibleData = allData.filter(
@@ -208,47 +208,57 @@ export class LineGenerator implements Generator {
     }
   }
 
-  private redrawContact(range: [number, number]): void {
-    if (!this.xScale || !this.yScale || this.contactSamples.length < 2) {
-      this.contactGroup.selectAll("line").remove();
+  private redrawShadow(range: [number, number]): void {
+    if (!this.xScale || !this.yScale || this.shadowSamples.length < 2) {
+      this.shadowGroup.selectAll("path").remove();
       return;
     }
 
-    const segments = this.contactSamples
-      .slice(1)
-      .map((sample, index) => ({
-        start: this.contactSamples[index],
-        end: sample,
-        strength: (this.contactSamples[index].strength + sample.strength) / 2,
-      }))
-      .filter(
-        (segment) =>
-          segment.strength > 0.01 &&
-          segment.end.timestamp >= range[0] &&
-          segment.start.timestamp <= range[1],
-      );
+    const runs: TerrainShadowSample[][] = [];
+    let currentRun: TerrainShadowSample[] = [];
+    for (const sample of this.shadowSamples) {
+      if (sample.strength > 0.01) {
+        currentRun.push(sample);
+      } else {
+        if (currentRun.length > 1) runs.push(currentRun);
+        currentRun = [];
+      }
+    }
+    if (currentRun.length > 1) runs.push(currentRun);
 
-    const contactLines = this.contactGroup
-      .selectAll<SVGLineElement, (typeof segments)[number]>("line")
-      .data(segments, (segment) => segment.start.timestamp.toString());
+    const visibleRuns = runs.filter(
+      (run) =>
+        run[run.length - 1].timestamp >= range[0] &&
+        run[0].timestamp <= range[1],
+    );
+    const shadowLine = d3
+      .line<TerrainShadowSample>()
+      .x((sample) => this.xScale(new Date(sample.timestamp * 1000)))
+      .y((sample) => this.yScale(sample.value))
+      .curve(d3.curveMonotoneX);
 
-    contactLines.exit().remove();
-    contactLines
+    const shadowPaths = this.shadowGroup
+      .selectAll<SVGPathElement, TerrainShadowSample[]>("path")
+      .data(visibleRuns, (run) => run[0].timestamp.toString());
+
+    shadowPaths.exit().remove();
+    shadowPaths
       .enter()
-      .append("line")
-      .attr("stroke", "#171522")
+      .append("path")
+      .attr("fill", "none")
+      .attr("stroke", "#08070d")
       .attr("stroke-linecap", "round")
-      .merge(contactLines)
-      .attr("x1", (segment) =>
-        this.xScale(new Date(segment.start.timestamp * 1000)),
-      )
-      .attr("y1", (segment) => this.yScale(segment.start.value))
-      .attr("x2", (segment) =>
-        this.xScale(new Date(segment.end.timestamp * 1000)),
-      )
-      .attr("y2", (segment) => this.yScale(segment.end.value))
-      .attr("stroke-width", this.strokeWidth + 4)
-      .attr("opacity", (segment) => 0.16 + 0.5 * segment.strength);
+      .attr("stroke-linejoin", "round")
+      .style("filter", "blur(3px)")
+      .merge(shadowPaths)
+      .attr("d", shadowLine)
+      .attr("transform", "translate(3 8)")
+      .attr("stroke-width", this.strokeWidth + 3)
+      .attr("opacity", (run) => {
+        const strength =
+          run.reduce((total, sample) => total + sample.strength, 0) / run.length;
+        return 0.1 + 0.28 * strength;
+      });
   }
 
   show(): void {

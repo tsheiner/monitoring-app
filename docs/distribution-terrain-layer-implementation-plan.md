@@ -385,7 +385,8 @@ The app views were judged against the original questions without introducing sta
 5. **The measured trace appears to float above the terrain.** The trace is a uniform bright SVG line composited above a separate Canvas. Its treatment does not respond to the density beneath it, so typical and unusual segments have the same visual relationship to the surface.
 6. **Bands currently has greater visual presence.** Its saturated zones and explicit outer extent make the distribution easier to locate, even though the green/yellow/red palette risks implying health or severity.
 7. **Color remains appropriate when it encodes density rather than health.** The initial prohibition on meaningful color variation was too restrictive. A perceptually ordered, non-traffic-light palette can distinguish empty space, low-density slopes, and the high-density ridge without claiming that typical values are healthy.
-8. **The topographic metaphor has a useful limit.** Time and measured value define the map position; probability density defines elevation. A measured trace should cross contours when its typicality changes. The goal is to make its contact with the terrain legible, rather than creating a literal perspective path through three-dimensional mountains.
+8. **The topographic metaphor has a useful limit.** Time and measured value define the map position; probability density defines elevation. A measured trace should cross contours when its typicality changes. A soft, displaced shadow can connect the trace to the terrain while preserving the chart's two-dimensional reading.
+9. **A coincident under-stroke reads as a second line.** Post-implementation review found that the density-responsive stroke directly beneath the measured trace created a heavy outline and weakened the trace. The treatment should be visibly displaced and softened so it reads as a projected shadow.
 
 ## Expected improved outcome
 
@@ -395,7 +396,7 @@ The corrected Terrain view should produce the following visible progression:
 | --- | --- | --- |
 | Where does the distribution exist? | The field fades ambiguously into the chart background. | A visible outer boundary separates practical distribution support from empty chart space. |
 | Where is the usual value? | The ridge must be inferred from subtle gray shading. | A distinct high-density color/luminance treatment makes the ridge immediately visible. |
-| Is the measured value typical? | The trace has the same floating treatment everywhere. | Typical segments appear visually grounded in the terrain; segments leaving the distribution lose that contact treatment. |
+| Is the measured value typical? | The trace has the same floating treatment everywhere. | A soft shadow projects onto meaningful terrain density and disappears when the trace leaves the distribution. |
 | Does this period normally vary a lot? | Width is technically present but visually weak. | Narrow ridges and broad hills differ clearly in width, contour spacing, and surface shape. |
 | Does color imply health? | Terrain is neutral but weak; Bands uses traffic-light colors. | Terrain uses a saturated sequential density palette that avoids green/yellow/red status semantics. |
 
@@ -552,18 +553,18 @@ Advance only when:
 - Targeted tests, the complete frontend suite, and the production build pass.
 - `git diff --check` passes.
 
-## Step 10 — Add terrain-responsive trace contact
+## Step 10 — Add a terrain-responsive trace shadow
 
 ### Outcome
 
-Make the measured trace appear grounded when it passes through meaningful distribution density and visibly detached when it leaves the distribution.
+Connect the measured trace to meaningful distribution density with a soft, displaced shadow that disappears when the trace leaves the terrain.
 
 ### Expected file impact: 5–8 files
 
 Likely addition:
 
-- `frontend/src/chart/generators/TerrainTraceContactGenerator.ts`
-- `frontend/src/tests/terrainTraceContact.test.ts`
+- `frontend/src/chart/terrain/terrainTraceShadow.ts`
+- `frontend/src/tests/terrainTraceShadow.test.ts`
 
 Likely existing changes:
 
@@ -577,29 +578,29 @@ Likely existing changes:
 
 - Keep the measured line's core color, position, and stroke width unchanged.
 - Evaluate historical density at each measured observation using the same interpolated parameters and support cutoff as the terrain.
-- Draw a subtle under-stroke or contact shadow beneath the core line only where density is meaningful.
-- Increase contact strength toward the ridge and fade it smoothly toward the outer boundary.
-- Remove the contact treatment outside the terrain footprint.
+- Project a visibly displaced, blurred shadow below the core line only where density is meaningful.
+- Increase shadow strength toward the ridge and fade it smoothly toward the outer boundary.
+- Remove the shadow outside the terrain footprint.
 - Keep the treatment below the measured core line and above the terrain Canvas.
 - Preserve event, crosshair, tooltip, marker, and multi-metric layering.
-- Hide the contact treatment in Bands mode and whenever Terrain itself is unavailable.
+- Hide the shadow in Bands mode and whenever Terrain itself is unavailable.
 
 ### Required tests
 
 - The measured core path is byte-for-byte or attribute-for-attribute unchanged by Terrain mode.
-- Contact strength is monotonic with density.
-- Contact opacity is zero outside the support cutoff.
-- Contact segments align with the measured path through zoom, resize, range changes, and live append.
-- Bands and multi-metric modes contain no terrain-contact layer.
+- Shadow strength is monotonic with density.
+- Shadow opacity is zero outside the support cutoff.
+- The shadow follows the measured path through zoom, resize, range changes, and live append while retaining its projection offset.
+- Bands and multi-metric modes contain no terrain-shadow layer.
 - Crosshair dots and tooltips remain above all trace treatments.
 
 ### Verification gate
 
 Advance only when:
 
-- A trace segment near the ridge appears visually connected to the surface.
-- The same trace visibly loses contact as it crosses the outer terrain boundary.
-- The contact treatment does not obscure small measured variations or suggest a second measured series.
+- A trace segment near the ridge casts a soft shadow onto the surface.
+- The same trace visibly loses its shadow as it crosses the outer terrain boundary.
+- The shadow does not obscure small measured variations or suggest a second measured series.
 - The trace remains the dominant foreground element.
 - Targeted tests, the complete frontend suite, and the production build pass.
 - `git diff --check` passes.
@@ -684,7 +685,7 @@ Advance only when reviewers can consistently:
 - Identify which of two periods has the narrower expected distribution.
 - Point to where the trace becomes unusual without relying on a tooltip or statistical explanation.
 - Describe the color progression as amount, density, or elevation rather than health or severity.
-- Distinguish the measured trace from its contact treatment.
+- Distinguish the measured trace from its projected shadow.
 
 Record disagreements and failed examples as findings. A failed comprehension item requires another focused rendering/defaults checkpoint before final completion.
 
