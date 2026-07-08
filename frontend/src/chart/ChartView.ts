@@ -1744,15 +1744,7 @@ export class ChartView {
           ...obs,
           value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
         }));
-        const normalizedExcursions = trendDisplay.excursions.map((obs) => ({
-          ...obs,
-          value: this.normalizeValue(obs.value, metricData.normalizedYDomain),
-        }));
-        metricData.lineGenerator.update(
-          normalizedObs,
-          range,
-          normalizedExcursions,
-        );
+        metricData.lineGenerator.update(normalizedObs, range);
 
         // Hide distribution for multi-metric view
         if (metricData.distributionGenerator) {
@@ -1760,11 +1752,7 @@ export class ChartView {
         }
       } else {
         // Single metric: use actual values for derived display data
-        metricData.lineGenerator.update(
-          trendDisplay.points,
-          range,
-          trendDisplay.excursions,
-        );
+        metricData.lineGenerator.update(trendDisplay.points, range);
 
         // FIX C: Explicitly show distribution when in single-metric mode.
         // It may have been hidden during a prior multi-metric render.

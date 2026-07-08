@@ -98,7 +98,7 @@ type APIClientLike = Pick<
 class MonitoringApp {
   private chart: ChartView;
   private api: APIClientLike;
-  private currentTimeRangeSeconds: number = 3600; // Start with 1 hour
+  private currentTimeRangeSeconds: number = 43200; // Start with 12 hours
   private allEvents: Event[] = [];
   private loadedRange: [number, number] = [0, 0]; // Track the actual data range
   private dataFetchDebounceTimer: number | null = null;

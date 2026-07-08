@@ -216,6 +216,55 @@ describe("DistributionRibbonGenerator", () => {
     );
   });
 
+  it("represents outside-footprint observations through the trace without extra rings", () => {
+    const container = appendContainer();
+    const now = 1_700_000_000;
+    const traceColor = "#3498DB";
+    const config: ChartConfig = {
+      width: 800,
+      height: 500,
+      margin: { top: 20, right: 20, bottom: 40, left: 60 },
+      metric: "time_to_connect",
+      timeRange: [now - 3600, now],
+      showDistribution: true,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: traceColor,
+        distribution: `${traceColor}33`,
+        event: "#999",
+        eventHover: "#7EC7FF",
+      },
+    };
+
+    const chart = new ChartView(container, config);
+    chart.addMetric("time_to_connect", traceColor, "Time to Connect");
+    chart.setBaseline(
+      "time_to_connect",
+      makeBaseline(
+        makeDistribution({
+          p1: 18,
+          p5: 19,
+          p25: 21,
+          p50: 22,
+          p75: 23,
+          p95: 25,
+          p99: 26,
+        }),
+      ),
+    );
+    chart.loadHistoricalData("time_to_connect", [
+      { timestamp: now - 3600, value: 22 },
+      { timestamp: now - 1800, value: 33 },
+      { timestamp: now, value: 23 },
+    ]);
+
+    const line = container.querySelector<SVGPathElement>("svg .line");
+
+    expect(line?.getAttribute("d")?.length).toBeGreaterThan(20);
+    expect(container.querySelectorAll(".excursion-marker")).toHaveLength(0);
+  });
+
   it("renders exactly five percentile contours", () => {
     const { container } = renderRibbon("#3498DB");
     const contours = Array.from(

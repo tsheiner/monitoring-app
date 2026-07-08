@@ -29,7 +29,7 @@ The active product path contains no Terrain renderer, Canvas layer, Terrain cont
 | Question | Result | Evidence |
 | --- | --- | --- |
 | Is this measured value typical? | Pass | The trace can be read relative to the p50, p25/p75, and p5/p95 contours without a health legend. |
-| Where did the measured value become unusual? | Pass | Outside-footprint points remain marked by the measured trace and excursion markers; contours clarify distance from the usual region. |
+| Where did the measured value become unusual? | Pass | Outside-footprint points are shown by the measured trace itself; contours clarify distance from the usual region without extra outlier rings. |
 | Which periods were more predictable? | Pass | Narrow periods show compressed contours and concentrated fill; broader periods show wider spacing and softer fill. |
 | Does hue read as metric identity? | Pass | Blue, cyan, orange, and red examples retain their metric trace hue in both fill and contours. |
 | Does the trace remain primary? | Pass | The ribbon group renders behind the measured trace, and contour opacity/stroke width stay below the foreground series. |
@@ -38,7 +38,7 @@ The active product path contains no Terrain renderer, Canvas layer, Terrain cont
 
 - Browser capture confirmed 64 fill bands and exactly five contours for each screenshot.
 - Browser capture confirmed the ribbon group renders before the measured trace group.
-- Focused ribbon tests cover metric-hue derivation, alpha boundaries, asymmetric percentile interpolation, no traffic-light fills, five contour paths, contour hierarchy, invalid percentile handling, hidden distribution mode, and trace preservation.
+- Focused ribbon tests cover metric-hue derivation, alpha boundaries, asymmetric percentile interpolation, no traffic-light fills, five contour paths, contour hierarchy, invalid percentile handling, hidden distribution mode, trace preservation, and trace-only outside-footprint observations.
 - Final automated gate: backend `pytest` passed 167 tests with 3 existing warnings.
 - Final automated gate: frontend `vitest` passed 120 tests across 17 files.
 - Final automated gate: frontend production build passed, and `git diff --check` was clean.
