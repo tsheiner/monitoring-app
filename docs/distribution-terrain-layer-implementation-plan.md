@@ -626,6 +626,8 @@ Likely existing changes:
 
 - Add Color contrast and Distribution extent controls.
 - Present Relief as Surface contrast.
+- Follow-up review replaces implementation-oriented labels with visual-design vocabulary: Ridge sharpness, Lighting: shape ↔ time, Contour density, Shading contrast, Terrain opacity, Color saturation, Visible extent, and Shadow crispness.
+- Add Shadow crispness as one control over projected-shadow blur and spread while preserving its direction and offset.
 - Keep all controls live against the actual chart.
 - Preserve session-only behavior and source-controlled defaults.
 - Keep Copy settings synchronized with the revised settings object.
@@ -647,7 +649,7 @@ Advance only when:
 - Each control causes an immediate and understandable visual change.
 - The committed defaults satisfy the Step 9 and Step 10 visual gates without slider adjustment.
 - Slider extremes remain usable and never make the measured trace unreadable.
-- Performance remains within the existing 50 ms p95 rule or the preview-mode fallback is active.
+- Performance is measured against the existing 50 ms p95 rule. Slider interaction preserves the settled rendering resolution even when the target is exceeded, because a resolution change invalidates the visual comparison.
 - Targeted tests, the complete frontend suite, and the production build pass.
 - Copied settings exactly match the committed defaults.
 - `git diff --check` passes.
@@ -694,7 +696,7 @@ Record disagreements and failed examples as findings. A failed comprehension ite
 - All 1-hour, 6-hour, and 24-hour captures are free of seams, clipping, stale pixels, or Canvas/SVG misalignment.
 - Bands remains visually unchanged from the Step 0 baseline.
 - Crosshair, tooltip, events, zoom, pan, resize, live append, metric switching, and style switching remain usable.
-- A 1000 by 500 CSS-pixel plot at device-pixel ratio 2 satisfies the 50 ms p95 redraw rule or uses the verified preview fallback.
+- A 1000 by 500 CSS-pixel plot at device-pixel ratio 2 is measured against the 50 ms p95 redraw rule and retains identical rendering resolution throughout slider interaction.
 - The complete frontend test suite passes.
 - The production build passes.
 - `git diff --check` passes.

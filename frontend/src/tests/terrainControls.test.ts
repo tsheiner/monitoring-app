@@ -51,6 +51,11 @@ describe("Distribution style controls", () => {
     expect((app as any).chart.getDistributionStyle()).toBe("bands");
   });
 
+  it("starts with a 12-hour chart range", () => {
+    const [start, end] = (app as any).chart.getTimeRange();
+    expect(end - start).toBe(12 * 60 * 60);
+  });
+
   it("switches styles without duplicating chart layers", () => {
     const chart = (app as any).chart;
     const rangeBefore = chart.getTimeRange();
@@ -104,7 +109,7 @@ describe("Distribution style controls", () => {
       '[data-terrain-setting="ridgeDefinition"]',
     );
     expect(input?.closest<HTMLElement>(".terrain-settings")?.hidden).toBe(false);
-    if (!input) throw new Error("Ridge definition input missing");
+    if (!input) throw new Error("Ridge sharpness input missing");
     const previewSpy = vi.spyOn((app as any).chart, "setTerrainPreviewMode");
     input.value = "0.82";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -119,7 +124,7 @@ describe("Distribution style controls", () => {
     expect(previewSpy).toHaveBeenLastCalledWith(false);
   });
 
-  it("exposes seven controls and each changes exactly one setting", () => {
+  it("exposes eight visual controls and each changes exactly one setting", () => {
     document
       .querySelector<HTMLButtonElement>('[data-distribution-style="terrain"]')
       ?.click();
@@ -131,6 +136,7 @@ describe("Distribution style controls", () => {
       "presence",
       "colorContrast",
       "distributionExtent",
+      "shadowCrispness",
     ];
     const inputs = Array.from(
       document.querySelectorAll<HTMLInputElement>("[data-terrain-setting]"),
@@ -156,6 +162,23 @@ describe("Distribution style controls", () => {
     }
   });
 
+  it("labels controls by their visible design effect", () => {
+    const labels = Array.from(
+      document.querySelectorAll<HTMLLabelElement>(".terrain-setting label"),
+      (label) => label.textContent,
+    );
+    expect(labels).toEqual([
+      "Ridge sharpness",
+      "Lighting: shape ↔ time",
+      "Contour density",
+      "Shading contrast",
+      "Terrain opacity",
+      "Color saturation",
+      "Visible extent",
+      "Shadow crispness",
+    ]);
+  });
+
   it("retains session settings through style changes", () => {
     const terrain = document.querySelector<HTMLButtonElement>(
       '[data-distribution-style="terrain"]',
@@ -167,7 +190,7 @@ describe("Distribution style controls", () => {
     const input = document.querySelector<HTMLInputElement>(
       '[data-terrain-setting="presence"]',
     );
-    if (!input) throw new Error("Presence input missing");
+    if (!input) throw new Error("Terrain opacity input missing");
     input.value = "0.71";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     bands?.click();
@@ -197,6 +220,7 @@ describe("Distribution style controls", () => {
       "presence",
       "colorContrast",
       "distributionExtent",
+      "shadowCrispness",
     ]);
     await vi.waitFor(() =>
       expect(document.querySelector(".terrain-copy-feedback")?.textContent).toBe(

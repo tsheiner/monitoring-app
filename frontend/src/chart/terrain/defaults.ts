@@ -18,6 +18,7 @@ export const DEFAULT_TERRAIN_SETTINGS: TerrainSettings = {
   presence: 0.72,
   colorContrast: 0.78,
   distributionExtent: 0.68,
+  shadowCrispness: 0.6,
 };
 
 export const DEFAULT_TERRAIN_PALETTE: TerrainPalette = {
@@ -55,6 +56,10 @@ export function normalizeTerrainSettings(
     distributionExtent: clampUnit(
       settings.distributionExtent ??
         DEFAULT_TERRAIN_SETTINGS.distributionExtent,
+    ),
+    shadowCrispness: clampUnit(
+      settings.shadowCrispness ??
+        DEFAULT_TERRAIN_SETTINGS.shadowCrispness,
     ),
   };
 }

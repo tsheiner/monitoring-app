@@ -8,7 +8,10 @@
 import * as d3 from "d3";
 import { Generator } from "../types";
 import { Observation } from "../types";
-import { TerrainShadowSample } from "../terrain/terrainTraceShadow";
+import {
+  resolveTerrainShadowStyle,
+  TerrainShadowSample,
+} from "../terrain/terrainTraceShadow";
 
 /**
  * LTTB downsampling — reduces a sorted array of observations to `threshold`
@@ -97,6 +100,7 @@ export class LineGenerator implements Generator {
   private yScale: any;
   private data: Observation[] = [];
   private shadowSamples: TerrainShadowSample[] = [];
+  private shadowCrispness = 0.6;
   private color: string;
   private strokeWidth: number;
   private markerRadius: number;
@@ -146,8 +150,10 @@ export class LineGenerator implements Generator {
   setTerrainShadow(
     samples: TerrainShadowSample[] | null,
     range: [number, number],
+    crispness: number = this.shadowCrispness,
   ): void {
     this.shadowSamples = samples ?? [];
+    this.shadowCrispness = crispness;
     if (this.shadowSamples.length > 1) {
       this.shadowGroup.style("display", null);
     } else {
@@ -236,6 +242,7 @@ export class LineGenerator implements Generator {
       .x((sample) => this.xScale(new Date(sample.timestamp * 1000)))
       .y((sample) => this.yScale(sample.value))
       .curve(d3.curveMonotoneX);
+    const shadowStyle = resolveTerrainShadowStyle(this.shadowCrispness);
 
     const shadowPaths = this.shadowGroup
       .selectAll<SVGPathElement, TerrainShadowSample[]>("path")
@@ -249,15 +256,18 @@ export class LineGenerator implements Generator {
       .attr("stroke", "#08070d")
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
-      .style("filter", "blur(3px)")
       .merge(shadowPaths)
       .attr("d", shadowLine)
-      .attr("transform", "translate(3 8)")
-      .attr("stroke-width", this.strokeWidth + 3)
+      .attr(
+        "transform",
+        `translate(${shadowStyle.offsetX} ${shadowStyle.offsetY})`,
+      )
+      .attr("stroke-width", this.strokeWidth + shadowStyle.spreadPx)
+      .style("filter", `blur(${shadowStyle.blurPx}px)`)
       .attr("opacity", (run) => {
         const strength =
           run.reduce((total, sample) => total + sample.strength, 0) / run.length;
-        return 0.1 + 0.28 * strength;
+        return (0.1 + 0.28 * strength) * shadowStyle.opacityScale;
       });
   }
 

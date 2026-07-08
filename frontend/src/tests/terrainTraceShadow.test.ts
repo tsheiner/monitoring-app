@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTerrainShadowSamples,
+  resolveTerrainShadowStyle,
   terrainShadowStrength,
 } from "../chart/terrain/terrainTraceShadow";
 
@@ -36,5 +37,20 @@ describe("terrain trace shadow", () => {
     ]);
     expect(samples[0].strength).toBeGreaterThan(samples[1].strength);
     expect(samples[2].strength).toBe(0);
+  });
+
+  it("combines shadow blur and spread into crispness", () => {
+    const soft = resolveTerrainShadowStyle(0);
+    const crisp = resolveTerrainShadowStyle(1);
+    expect(soft.blurPx).toBeGreaterThan(crisp.blurPx);
+    expect(soft.spreadPx).toBeGreaterThan(crisp.spreadPx);
+    expect(soft.blurPx).toBe(12);
+    expect(soft.spreadPx).toBe(10);
+    expect(soft.opacityScale).toBeLessThan(0.1);
+    expect(crisp.blurPx).toBe(0);
+    expect(crisp.spreadPx).toBe(0);
+    expect(crisp.opacityScale).toBe(1);
+    expect(soft.offsetX).toBe(crisp.offsetX);
+    expect(soft.offsetY).toBe(crisp.offsetY);
   });
 });

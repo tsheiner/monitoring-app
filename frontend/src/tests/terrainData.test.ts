@@ -117,6 +117,7 @@ describe("Terrain setting mapping", () => {
         presence: 0.75,
         colorContrast: 1.5,
         distributionExtent: -0.5,
+        shadowCrispness: 1.5,
       }),
     ).toEqual({
       ridgeDefinition: 0,
@@ -126,6 +127,7 @@ describe("Terrain setting mapping", () => {
       presence: 0.75,
       colorContrast: 1,
       distributionExtent: 0,
+      shadowCrispness: 1,
     });
   });
 
@@ -142,6 +144,9 @@ describe("Terrain setting mapping", () => {
     );
     expect(normalized.distributionExtent).toBe(
       DEFAULT_TERRAIN_SETTINGS.distributionExtent,
+    );
+    expect(normalized.shadowCrispness).toBe(
+      DEFAULT_TERRAIN_SETTINGS.shadowCrispness,
     );
   });
 

@@ -8,6 +8,7 @@ export interface TerrainSettings {
   presence: number;
   colorContrast: number;
   distributionExtent: number;
+  shadowCrispness: number;
 }
 
 export interface GaussianParams {

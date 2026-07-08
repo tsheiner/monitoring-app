@@ -58,8 +58,6 @@ export class TerrainCanvasLayer {
   setPreviewMode(enabled: boolean): void {
     if (this.previewMode === enabled) return;
     this.previewMode = enabled;
-    this.updateBackingSize();
-    this.requestRender();
   }
 
   isPreviewMode(): boolean {
@@ -67,13 +65,10 @@ export class TerrainCanvasLayer {
   }
 
   private updateBackingSize(): void {
-    // Keep interactive renders at one raster pixel per CSS pixel. Dropping
-    // below that threshold materially changes the terrain's contours and
-    // contrast while a setting is being tuned, which removes the user's
-    // visual baseline. The settled render can still use the full device ratio.
-    const ratio = this.previewMode
-      ? Math.min(1, this.fullPixelRatio)
-      : this.fullPixelRatio;
+    // Keep one backing resolution for both settled and interactive renders.
+    // Any resolution switch changes contour and shading appearance at the
+    // exact moment the user needs a stable visual baseline for comparison.
+    const ratio = this.fullPixelRatio;
     this.canvas.width = Math.max(1, Math.round(this.plotWidth * ratio));
     this.canvas.height = Math.max(1, Math.round(this.plotHeight * ratio));
   }

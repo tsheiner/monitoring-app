@@ -86,9 +86,21 @@ describe("Terrain chart integration", () => {
     );
     expect(shadows.length).toBeGreaterThan(0);
     expect(shadows[0].getAttribute("transform")).toBe("translate(3 8)");
-    expect(shadows[0].style.filter).toBe("blur(3px)");
+    expect(shadows[0].style.filter).toBe("blur(4.8px)");
     expect(container.querySelector(".terrain-trace-contact")).toBeNull();
     expect(corePath?.getAttribute("d")).toBe(pathBefore);
+
+    chart.setTerrainSettings({
+      ...chart.getTerrainSettings(),
+      shadowCrispness: 1,
+    });
+    const crispShadow = container.querySelector<SVGPathElement>(
+      ".terrain-trace-shadow path",
+    );
+    expect(crispShadow?.style.filter).toBe("blur(0px)");
+    expect(crispShadow?.getAttribute("stroke-width")).toBe(
+      corePath?.getAttribute("stroke-width"),
+    );
 
     chart.setDistributionStyle("bands");
     expect(
@@ -119,7 +131,7 @@ describe("Terrain chart integration", () => {
     expect(canvas.style.height).toBe("540px");
   });
 
-  it("uses a CSS-resolution backing buffer during interaction and restores DPR2", () => {
+  it("preserves the full backing buffer during interaction", () => {
     const originalRatio = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", {
       configurable: true,
@@ -135,7 +147,7 @@ describe("Terrain chart integration", () => {
       chart.setTerrainPreviewMode(true);
       expect(chart._getTerrainStateForTest().preview).toBe(true);
       expect(canvas.style.width).toBe("920px");
-      expect(canvas.width).toBe(920);
+      expect(canvas.width).toBe(1840);
 
       chart.setTerrainPreviewMode(false);
       expect(chart._getTerrainStateForTest().preview).toBe(false);

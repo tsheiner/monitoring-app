@@ -118,7 +118,7 @@ The observed series must remain clearly readable at every default setting. Setti
 
 ## Terrain settings
 
-Expose seven live settings, each represented as a number from 0 to 1:
+Expose eight live settings, each represented as a number from 0 to 1:
 
 ```ts
 interface TerrainSettings {
@@ -129,6 +129,7 @@ interface TerrainSettings {
   presence: number;
   colorContrast: number;
   distributionExtent: number;
+  shadowCrispness: number;
 }
 ```
 
@@ -142,19 +143,21 @@ Initial source-controlled defaults:
   relief: 0.68,
   presence: 0.72,
   colorContrast: 0.78,
-  distributionExtent: 0.68
+  distributionExtent: 0.68,
+  shadowCrispness: 0.60
 }
 ```
 
 Settings have the following meanings:
 
-1. **Ridge definition** — increases the value-axis gradient gain so ridge shape and slopes become easier to perceive.
-2. **Time vs. shape bias** — rotates lighting emphasis from distribution shape at `0` toward change over time at `1`.
-3. **Contour detail** — selects a fixed contour interval on a logarithmic scale, ranging from approximately 3 to 24 bands at the reference peak.
-4. **Surface contrast** (`relief`) — adjusts ambient light and shading contrast, ranging from a flat printed-map appearance to stronger three-dimensional relief.
-5. **Presence** — adjusts overall terrain opacity without changing terrain structure or color separation.
-6. **Color contrast** — adjusts perceptual separation between low-density slopes and the high-density ridge without changing geometry or opacity.
-7. **Distribution extent** — adjusts the practical low-density cutoff and visible outer envelope without moving the ridge or changing the underlying density.
+1. **Ridge sharpness** (`ridgeDefinition`) — increases value-axis shading definition so the ridge and slopes read more sharply.
+2. **Lighting: shape ↔ time** (`timeVsShapeBias`) — rotates lighting emphasis from distribution shape at the left end toward changes over time at the right end.
+3. **Contour density** (`contourDetail`) — ranges from approximately 3 broad contour bands to 24 closely spaced bands at the reference peak.
+4. **Shading contrast** (`relief`) — ranges from a flatter printed-map treatment to stronger light-and-shadow relief.
+5. **Terrain opacity** (`presence`) — adjusts overall terrain opacity without changing structure or color.
+6. **Color saturation** (`colorContrast`) — ranges from near-grayscale terrain to the full density palette without changing geometry or opacity.
+7. **Visible extent** (`distributionExtent`) — expands or contracts the visible low-density footprint without moving the ridge.
+8. **Shadow crispness** (`shadowCrispness`) — combines shadow blur, spread, and visual strength. At `0`, the shadow is broadly diffused and nearly invisible. At `1`, it has no blur or added spread and matches the measured trace's stroke width. Projection direction and offset remain stable.
 
 Keep these defaults in a dedicated, easy-to-find terrain configuration file, separate from unrelated chart configuration.
 
@@ -163,7 +166,7 @@ Keep these defaults in a dedicated, easy-to-find terrain configuration file, sep
 Add a Distribution section beneath the metric controls in the left rail.
 
 - Provide a `Bands / Terrain` style selector.
-- Show the seven sliders when Terrain is selected and exactly one metric is active.
+- Show the eight sliders when Terrain is selected and exactly one metric is active.
 - Update the actual chart in real time as sliders move.
 - Display the current numeric value beside each slider.
 - Provide a **Copy settings** action that copies JSON matching `TerrainSettings`.
@@ -182,11 +185,11 @@ Render the full visible terrain when any of these change:
 - Distribution style
 - Terrain settings
 
-Coalesce repeated slider input through `requestAnimationFrame`. Render at device-pixel resolution up to a device-pixel ratio of 2.
+Coalesce repeated slider input through `requestAnimationFrame`. Render at device-pixel resolution up to a device-pixel ratio of 2. Keep the same backing resolution throughout slider interaction so grabbing a control does not change contours, shading, or color before the setting itself changes.
 
 The first implementation intentionally uses full visible-window redraws. Its cost is bounded by plot resolution rather than observation-history length. Measure redraw performance before adding incremental caching.
 
-If a 1000 by 500 CSS-pixel plot at device-pixel ratio 2 takes more than 50 ms at the 95th percentile during slider interaction, render a lower-resolution preview while dragging and perform a full-resolution render when interaction ends.
+If a 1000 by 500 CSS-pixel plot at device-pixel ratio 2 takes more than 50 ms at the 95th percentile during slider interaction, retain the stable full-resolution appearance for this prototype and record the performance gap. Future optimization must preserve identical visual output while dragging.
 
 A streaming ring buffer is a future optimization for higher-frequency updates. It is outside this prototype's scope.
 
@@ -200,7 +203,7 @@ A streaming ring buffer is a future optimization for higher-frequency updates. I
 6. Expected-ridge movement remains visible while the ridge's shape and the measured line remain the dominant reading.
 7. Terrain uses a sequential density palette and contains no health or severity encoding.
 8. The terrain sits behind all measured-series and interaction elements and does not impede their use.
-9. All seven sliders update the actual chart during interaction and display their current values.
+9. All eight sliders update the actual chart during interaction and display their current values.
 10. Copy settings produces valid JSON that can replace the source-controlled `TerrainSettings` defaults.
 11. Multi-metric mode hides distribution rendering and restores the selected style when one metric remains.
 12. Existing chart behavior is unchanged when Terrain is inactive or its presence is zero.

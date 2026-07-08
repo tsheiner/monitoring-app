@@ -100,9 +100,9 @@ The terrain remains readable over a small negative-value range. Trace segments b
 
 ## Performance finding
 
-At a browser viewport producing an approximately 938 by 583 CSS-pixel terrain at device-pixel ratio 1.1, a full render measured 81.20 ms. This exceeds the 50 ms interaction target, so reduced-resolution preview rendering remains required during slider input.
+At a browser viewport producing an approximately 938 by 583 CSS-pixel terrain at device-pixel ratio 1.1, a full render measured 81.20 ms. This exceeds the 50 ms interaction target.
 
-The interaction path is active and covered at device-pixel ratio 2: a 920 CSS-pixel-wide plot uses a 920-pixel backing width during interaction and restores an 1840-pixel backing width on release. Keeping one raster pixel per CSS pixel preserves the terrain's contours, contrast, and apparent shape while settings change. Full device-resolution rendering remains the settled result after interaction.
+Follow-up review found that changing backing resolution when a slider was grabbed changed the terrain's contours, contrast, and apparent shape before the setting itself changed. Interactive rendering now retains the same device-resolution backing buffer as the settled chart. Repeated input remains frame-coalesced; further performance work must preserve identical visual output during tuning.
 
 ## Acceptance decision
 
@@ -118,6 +118,7 @@ The committed defaults used in these captures are:
   "relief": 0.68,
   "presence": 0.72,
   "colorContrast": 0.78,
-  "distributionExtent": 0.68
+  "distributionExtent": 0.68,
+  "shadowCrispness": 0.60
 }
 ```

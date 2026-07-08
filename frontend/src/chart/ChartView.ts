@@ -1829,6 +1829,7 @@ export class ChartView {
                   terrainConfig.supportDensityRatio,
                 ),
                 range,
+                this.terrainSettings.shadowCrispness,
               );
               this.terrainLayer.update({
                 descriptors,

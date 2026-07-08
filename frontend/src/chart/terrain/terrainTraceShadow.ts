@@ -9,8 +9,30 @@ export interface TerrainShadowSample {
   strength: number;
 }
 
+export interface TerrainShadowStyle {
+  blurPx: number;
+  spreadPx: number;
+  opacityScale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+export function resolveTerrainShadowStyle(
+  crispness: number,
+): TerrainShadowStyle {
+  const amount = clampUnit(crispness);
+  return {
+    blurPx: Math.round(12 * (1 - amount) * 100) / 100,
+    spreadPx: Math.round(10 * (1 - amount) * 100) / 100,
+    opacityScale:
+      Math.round((0.08 + 0.92 * amount ** 1.5) * 1000) / 1000,
+    offsetX: 3,
+    offsetY: 8,
+  };
 }
 
 function smoothstep(value: number): number {

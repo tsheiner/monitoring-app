@@ -7,13 +7,14 @@ const CONTROL_DEFINITIONS: Array<{
   key: TerrainSettingKey;
   label: string;
 }> = [
-  { key: "ridgeDefinition", label: "Ridge definition" },
-  { key: "timeVsShapeBias", label: "Time vs. shape" },
-  { key: "contourDetail", label: "Contour detail" },
-  { key: "relief", label: "Surface contrast" },
-  { key: "presence", label: "Presence" },
-  { key: "colorContrast", label: "Color contrast" },
-  { key: "distributionExtent", label: "Distribution extent" },
+  { key: "ridgeDefinition", label: "Ridge sharpness" },
+  { key: "timeVsShapeBias", label: "Lighting: shape ↔ time" },
+  { key: "contourDetail", label: "Contour density" },
+  { key: "relief", label: "Shading contrast" },
+  { key: "presence", label: "Terrain opacity" },
+  { key: "colorContrast", label: "Color saturation" },
+  { key: "distributionExtent", label: "Visible extent" },
+  { key: "shadowCrispness", label: "Shadow crispness" },
 ];
 
 export class TerrainControls {
