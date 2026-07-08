@@ -8,9 +8,12 @@ import {
   STATUS_ZONE_COLORS,
 } from "../chart/types";
 import {
+  DISTRIBUTION_CONTOUR_PERCENTILES,
   DistributionRibbonGenerator,
+  getRibbonContourStyle,
   getDistributionValueAtPercentile,
   getRibbonBandStyle,
+  isValidRibbonDistribution,
 } from "../chart/generators/DistributionRibbonGenerator";
 
 const containers: HTMLElement[] = [];
@@ -201,9 +204,107 @@ describe("DistributionRibbonGenerator", () => {
 
     const line = container.querySelector<SVGPathElement>("svg .line");
     const bands = container.querySelectorAll(".ribbon-band");
+    const ribbon = container.querySelector(".distribution-ribbon");
+    const lineGroup = container.querySelector(".line-generator");
 
     expect(line?.getAttribute("stroke")).toBe(traceColor);
     expect(line?.getAttribute("d")?.length).toBeGreaterThan(20);
     expect(bands.length).toBeGreaterThan(20);
+    expect(ribbon?.parentElement?.firstElementChild).toBe(ribbon);
+    expect(lineGroup?.compareDocumentPosition(ribbon as Node)).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING,
+    );
+  });
+
+  it("renders exactly five percentile contours", () => {
+    const { container } = renderRibbon("#3498DB");
+    const contours = Array.from(
+      container.querySelectorAll<SVGPathElement>(".ribbon-contour"),
+    );
+
+    expect(contours).toHaveLength(5);
+    expect(
+      DISTRIBUTION_CONTOUR_PERCENTILES.every((percentile) =>
+        container.querySelector(`.ribbon-contour-p${percentile}`),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps contour values ordered for valid distributions", () => {
+    const distribution = makeDistribution({
+      p5: 14,
+      p25: 22,
+      p50: 34,
+      p75: 47,
+      p95: 64,
+      p99: 70,
+    });
+    const values = DISTRIBUTION_CONTOUR_PERCENTILES.map((percentile) =>
+      getDistributionValueAtPercentile(distribution, percentile),
+    );
+
+    expect(isValidRibbonDistribution(distribution)).toBe(true);
+    expect(values).toEqual([...values].sort((a, b) => a - b));
+  });
+
+  it("gives p50 the strongest contour treatment", () => {
+    const traceColor = "#00C853";
+    const p50 = getRibbonContourStyle(traceColor, 50);
+    const p25 = getRibbonContourStyle(traceColor, 25);
+    const p5 = getRibbonContourStyle(traceColor, 5);
+
+    expect(p50.strokeWidth).toBeGreaterThan(p25.strokeWidth);
+    expect(p25.strokeWidth).toBeGreaterThan(p5.strokeWidth);
+    expect(p50.opacity).toBeGreaterThan(p25.opacity);
+    expect(p25.opacity).toBeGreaterThan(p5.opacity);
+  });
+
+  it("skips invalid or crossed percentile data without invalid path output", () => {
+    const { bands, container } = renderRibbon(
+      "#3498DB",
+      makeDistribution({ p25: 45, p50: 30 }),
+    );
+    const paths = [
+      ...bands,
+      ...Array.from(
+        container.querySelectorAll<SVGPathElement>(".ribbon-contour"),
+      ),
+    ];
+
+    expect(paths.length).toBeGreaterThan(0);
+    for (const path of paths) {
+      expect(path.getAttribute("d") ?? "").not.toContain("NaN");
+    }
+  });
+
+  it("does not render contours when distribution display is disabled", () => {
+    const container = appendContainer();
+    const now = 1_700_000_000;
+    const config: ChartConfig = {
+      width: 800,
+      height: 500,
+      margin: { top: 20, right: 20, bottom: 40, left: 60 },
+      metric: "throughput",
+      timeRange: [now - 3600, now],
+      showDistribution: false,
+      showEvents: false,
+      liveMode: false,
+      colors: {
+        line: "#3498DB",
+        distribution: "#3498DB33",
+        event: "#999",
+        eventHover: "#7EC7FF",
+      },
+    };
+
+    const chart = new ChartView(container, config);
+    chart.addMetric("throughput", "#3498DB", "Throughput");
+    chart.setBaseline("throughput", makeBaseline());
+    chart.loadHistoricalData("throughput", [
+      { timestamp: now - 3600, value: 24 },
+      { timestamp: now, value: 28 },
+    ]);
+
+    expect(container.querySelectorAll(".ribbon-contour")).toHaveLength(0);
   });
 });

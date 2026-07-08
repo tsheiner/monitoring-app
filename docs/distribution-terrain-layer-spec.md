@@ -37,6 +37,7 @@ The accepted replacement direction for the original health-colored Bands display
 - The strongest fill is centered at p50, with less saturation than the measured trace so the trace remains the foreground mark.
 - Opacity and saturation fade continuously toward p1 and p99.
 - Geometry interpolates through p1, p5, p25, p50, p75, p95, and p99 so skewed distributions remain visible.
+- Five same-hue contours at p5, p25, p50, p75, and p95 provide landmarks; p50 is strongest, quartiles are medium, and whiskers are quietest.
 - The ribbon renderer must not use green/yellow/red health or severity colors.
 - Multi-metric mode continues to hide distribution rendering.
 
