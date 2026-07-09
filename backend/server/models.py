@@ -56,6 +56,11 @@ class Event(BaseModel):
     severity: Optional[str] = Field(None, description="info|warning|critical")
     entity: Optional[str] = Field(None, description="Affected device/system")
     message: str = Field(..., description="Human-readable description")
+    event_source: Optional[str] = Field(None, description="background|scenario")
+    event_group: Optional[str] = Field(None, description="Event group for UI grouping")
+    affected_classifiers: Optional[List[str]] = Field(None, description="Affected classifiers")
+    scenario_id: Optional[str] = Field(None, description="Scenario ID for scenario events")
+    scenario_run_id: Optional[str] = Field(None, description="Scenario run ID")
     metadata: Optional[Dict] = Field(None, description="Event-specific data")
 
 
@@ -65,6 +70,72 @@ class EventsResponse(BaseModel):
     end: int = Field(..., description="End timestamp")
     events: List[Event] = Field(..., description="Events in range")
     count: int = Field(..., description="Total events returned")
+
+
+class ScenarioStepModel(BaseModel):
+    """A scheduled catalog event within a scenario definition or run."""
+    offset_seconds: int = Field(..., description="Offset from scenario start")
+    event_type: str = Field(..., description="Catalog event type")
+    severity: Optional[str] = Field(None, description="Fixed event severity, if any")
+    entity_selector: Optional[str] = Field(None, description="Entity selection strategy")
+    description: Optional[str] = Field(None, description="Step description")
+
+
+class ScenarioModel(BaseModel):
+    """Scenario definition."""
+    scenario_id: str = Field(..., description="Scenario identifier")
+    label: str = Field(..., description="Display label")
+    description: str = Field(..., description="Scenario description")
+    default_severity: str = Field(..., description="Default scenario severity")
+    allowed_severities: List[str] = Field(..., description="Allowed scenario severities")
+    steps: List[ScenarioStepModel] = Field(..., description="Scheduled events")
+
+
+class ScenariosResponse(BaseModel):
+    """Response for scenario listing."""
+    scenarios: List[ScenarioModel] = Field(..., description="Available scenarios")
+
+
+class ScenarioTriggerRequest(BaseModel):
+    """Request to trigger a scenario."""
+    scenario_id: str = Field(..., description="Scenario identifier")
+    entity: str = Field(..., description="Target AP entity")
+    severity: Literal["warning", "critical"] = Field(
+        "warning",
+        description="Scenario severity"
+    )
+
+
+class ScenarioTriggerResponse(BaseModel):
+    """Response after triggering a scenario."""
+    scenario_run_id: str = Field(..., description="Scenario run identifier")
+    scenario_id: str = Field(..., description="Scenario identifier")
+    entity: str = Field(..., description="Target AP entity")
+    severity: str = Field(..., description="Scenario severity")
+    started_at: int = Field(..., description="Start timestamp")
+    ends_at: int = Field(..., description="Estimated end timestamp")
+    scheduled_events: List[Dict] = Field(..., description="Scheduled catalog events")
+    emitted_events: List[Event] = Field(..., description="Events emitted immediately")
+
+
+class ActiveScenarioRun(BaseModel):
+    """Active scenario run."""
+    scenario_run_id: str = Field(..., description="Scenario run identifier")
+    scenario_id: str = Field(..., description="Scenario identifier")
+    label: str = Field(..., description="Scenario label")
+    entity: str = Field(..., description="Target AP entity")
+    severity: str = Field(..., description="Scenario severity")
+    started_at: int = Field(..., description="Start timestamp")
+    ends_at: int = Field(..., description="Estimated end timestamp")
+    status: str = Field(..., description="Run status")
+    emitted_count: int = Field(..., description="Number of emitted scenario events")
+    total_events: int = Field(..., description="Total scheduled events")
+    scheduled_events: List[Dict] = Field(..., description="Scheduled catalog events")
+
+
+class ActiveScenariosResponse(BaseModel):
+    """Response for active scenario runs."""
+    active: List[ActiveScenarioRun] = Field(..., description="Active scenario runs")
 
 
 class MetricsListResponse(BaseModel):

@@ -21,11 +21,17 @@ from .models import (
     BaselineResponse,
     CurrentClassifiersResponse,
     ClassifierHourlyDistribution,
-    ClassifierBaselineResponse
+    ClassifierBaselineResponse,
+    ScenariosResponse,
+    ScenarioTriggerRequest,
+    ScenarioTriggerResponse,
+    ActiveScenariosResponse,
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
+from server.aggregation import aggregate_metric_observations
 from simulator.realistic_generator import RealisticMetricsGenerator
+from simulator.event_generator import EventGenerator, get_event_generator
 
 
 # Create FastAPI app
@@ -67,6 +73,63 @@ async def list_metrics():
     return MetricsListResponse(metrics=metrics)
 
 
+@app.get("/api/scenarios", response_model=ScenariosResponse)
+async def list_scenarios():
+    """List available scenario definitions."""
+    event_generator = get_event_generator()
+    return ScenariosResponse(
+        scenarios=event_generator.scenario_manager.list_scenarios()
+    )
+
+
+@app.post("/api/scenarios/trigger", response_model=ScenarioTriggerResponse)
+async def trigger_scenario(request: ScenarioTriggerRequest):
+    """Trigger a scenario run."""
+    if request.entity not in EventGenerator.ENTITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown entity '{request.entity}'",
+        )
+
+    event_generator = get_event_generator()
+    started_at = int(time.time())
+    try:
+        run = event_generator.trigger_scenario(
+            request.scenario_id,
+            entity=request.entity,
+            severity=request.severity,
+            started_at=started_at,
+        )
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scenario '{request.scenario_id}' not found",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    emitted = event_generator.emit_due_scenario_events(started_at)
+    return ScenarioTriggerResponse(
+        scenario_run_id=run.scenario_run_id,
+        scenario_id=run.scenario_id,
+        entity=run.entity,
+        severity=run.severity,
+        started_at=run.started_at,
+        ends_at=run.ends_at,
+        scheduled_events=event_generator.scenario_manager.scheduled_events_for_run(run),
+        emitted_events=[Event(**event) for event in emitted],
+    )
+
+
+@app.get("/api/scenarios/active", response_model=ActiveScenariosResponse)
+async def active_scenarios():
+    """List active scenario runs."""
+    event_generator = get_event_generator()
+    return ActiveScenariosResponse(
+        active=event_generator.scenario_manager.active_runs(int(time.time()))
+    )
+
+
 @app.get("/api/metrics/{metric}", response_model=MetricResponse)
 async def query_metric(
     metric: str,
@@ -106,65 +169,11 @@ async def query_metric(
         for obs in all_observations:
             timestamp_groups[obs["timestamp"]].append(obs)
 
-        def _derive_status(value: float, classifiers_list: list) -> str:
-            """Derive worst status from a list of per-AP classifier records."""
-            statuses = [c.get("status", "green") for c in classifiers_list]
-            if "red" in statuses:
-                return "red"
-            if "yellow" in statuses:
-                return "yellow"
-            return "green"
-
-        def _aggregate_classifiers(obs_list: list):
-            """
-            Average classifier values across APs; derive status from worst-of-APs.
-            Returns None if no observations have classifiers.
-            """
-            # Collect per-classifier values across all APs
-            classifier_values = defaultdict(list)
-            classifier_all_recs = defaultdict(list)
-            classifier_weights = {}
-            has_any = False
-            for obs in obs_list:
-                if obs.get("classifiers"):
-                    has_any = True
-                    for c in obs["classifiers"]:
-                        name = c["name"]
-                        classifier_values[name].append(c["value"])
-                        classifier_all_recs[name].append(c)
-                        if "weight" in c:
-                            classifier_weights[name] = c["weight"]
-            if not has_any:
-                return None
-            result = []
-            for name, vals in classifier_values.items():
-                avg_val = sum(vals) / len(vals)
-                worst_status = _derive_status(avg_val, classifier_all_recs[name])
-                agg_c = {
-                    "name": name,
-                    "value": avg_val,
-                    "status": worst_status,
-                    "contribution": 0.0,
-                }
-                if name in classifier_weights:
-                    agg_c["weight"] = classifier_weights[name]
-                result.append(agg_c)
-            # Preserve insertion order of classifiers (first AP's ordering)
-            return result if result else None
-
         observations = []
         for ts, obs_list in sorted(timestamp_groups.items()):
-            values = [o["value"] for o in obs_list]
-            agg_classifiers = _aggregate_classifiers(obs_list)
-            obs_dict = {
-                "timestamp": ts,
-                "metric": metric,
-                "value": sum(values) / len(values),
-                "entity": None,
-            }
-            if agg_classifiers is not None:
-                obs_dict["classifiers"] = agg_classifiers
-            observations.append(obs_dict)
+            aggregated = aggregate_metric_observations(obs_list)
+            if aggregated is not None:
+                observations.append(aggregated)
     elif entity == "_all":
         observations = store.query_range(metric, start, end, entity=None)
     else:

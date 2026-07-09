@@ -169,3 +169,28 @@ def test_create_perturbation_from_event_uses_classifiers():
     if pert is not None:
         # Should have affected_classifiers, not affected_metrics
         assert hasattr(pert, 'affected_classifiers')
+
+
+def test_event_catalog_severity_changes_classifier_effect_and_duration():
+    """Catalog severity controls perturbation magnitude and recovery."""
+    from simulator.perturbations import create_perturbation_from_event
+
+    warning = create_perturbation_from_event({
+        "timestamp": 1000,
+        "event_type": "dhcp_server_overload",
+        "severity": "warning",
+        "entity": "ap_1",
+    })
+    critical = create_perturbation_from_event({
+        "timestamp": 1000,
+        "event_type": "dhcp_server_overload",
+        "severity": "critical",
+        "entity": "ap_1",
+    })
+
+    assert warning is not None
+    assert critical is not None
+    assert abs(critical.affected_classifiers["dhcp"]) > abs(
+        warning.affected_classifiers["dhcp"]
+    )
+    assert critical.duration_seconds > warning.duration_seconds
