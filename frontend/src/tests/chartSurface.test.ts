@@ -139,6 +139,39 @@ describe("Chart Surface Mounting", () => {
     expect(svg).toBeTruthy();
   });
 
+  it("should keep y-axis spine visible while hiding ticks in compare mode", () => {
+    const chart = new ChartView(container, config);
+
+    chart.addMetric("throughput", "#4CAF50");
+    chart.addMetric("capacity", "#2196F3");
+
+    const yAxis = container.querySelector(".y-axis") as SVGGElement;
+    const domain = yAxis.querySelector(".domain") as SVGPathElement;
+    const ticks = Array.from(yAxis.querySelectorAll(".tick")) as SVGGElement[];
+
+    expect(yAxis).toBeTruthy();
+    expect(yAxis.style.display).not.toBe("none");
+    expect(domain).toBeTruthy();
+    expect(domain.style.display).not.toBe("none");
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks.every((tick) => tick.style.display === "none")).toBe(true);
+  });
+
+  it("should restore y-axis ticks when compare mode ends", () => {
+    const chart = new ChartView(container, config);
+
+    chart.addMetric("throughput", "#4CAF50");
+    chart.addMetric("capacity", "#2196F3");
+    chart.removeMetric("capacity");
+
+    const yAxis = container.querySelector(".y-axis") as SVGGElement;
+    const ticks = Array.from(yAxis.querySelectorAll(".tick")) as SVGGElement[];
+
+    expect(yAxis.style.display).not.toBe("none");
+    expect(ticks.length).toBeGreaterThan(0);
+    expect(ticks.every((tick) => tick.style.display !== "none")).toBe(true);
+  });
+
   it("should create chart with deterministic dimensions", () => {
     new ChartView(container, config);
 

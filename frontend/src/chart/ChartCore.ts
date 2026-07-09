@@ -22,6 +22,7 @@ export class ChartCore {
   private durationText: d3.Selection<SVGTextElement, unknown, null, undefined>;
   private rangeText: d3.Selection<SVGTextElement, unknown, null, undefined>;
   private zoom: d3.ZoomBehavior<SVGSVGElement, unknown>;
+  private yAxisTicksVisible: boolean = true;
   private onRangeChangeCallback?: (
     range: [number, number],
     userInitiated: boolean,
@@ -232,8 +233,18 @@ export class ChartCore {
       .attr("stroke-width", 2)
       .attr("shape-rendering", "crispEdges");
 
+    this.applyYAxisTickVisibility();
+
     // Update time range info
     this.updateTimeRangeInfo();
+  }
+
+  private applyYAxisTickVisibility(): void {
+    this.yAxis.style("display", "");
+    this.yAxis.selectAll(".domain").style("display", "");
+    this.yAxis
+      .selectAll(".tick")
+      .style("display", this.yAxisTicksVisible ? "" : "none");
   }
 
   /**
@@ -354,7 +365,8 @@ export class ChartCore {
    * Hide when multiple metrics are overlaid (0-100 normalized values are not meaningful).
    */
   setYAxisVisible(visible: boolean): void {
-    this.yAxis.style("display", visible ? "" : "none");
+    this.yAxisTicksVisible = visible;
+    this.applyYAxisTickVisibility();
   }
 
   /**
