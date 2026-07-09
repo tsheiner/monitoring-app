@@ -85,6 +85,7 @@ type APIClientLike = Pick<
   APIClient,
   | "fetchMetricHistory"
   | "fetchBaseline"
+  | "fetchClassifierBaseline"
   | "fetchEvents"
   | "connectWebSocket"
   | "onMetric"
@@ -526,7 +527,9 @@ class MonitoringApp {
         toggle.appendChild(indicator);
         toggle.appendChild(label);
 
-        toggle.addEventListener("click", () => this.toggleMetric(metric.name));
+        toggle.addEventListener("click", (event) => {
+          void this.toggleMetric(metric.name, event.shiftKey);
+        });
 
         metricsList.appendChild(toggle);
       }
@@ -606,11 +609,20 @@ class MonitoringApp {
     });
   }
 
-  private async toggleMetric(metricName: string): Promise<void> {
+  private async toggleMetric(
+    metricName: string,
+    compareMode: boolean = false,
+  ): Promise<void> {
     await this.initialLoadPromise;
 
     const metric = this.metrics.find((m) => m.name === metricName);
     if (!metric) return;
+    const enabledMetrics = this.metrics.filter((m) => m.enabled);
+
+    // The chart always keeps at least one selected metric.
+    if (metric.enabled && enabledMetrics.length === 1) {
+      return;
+    }
 
     // Concurrency guard: skip duplicate clicks while this metric is in-flight.
     if (this.togglesInProgress.has(metricName)) {
@@ -618,14 +630,35 @@ class MonitoringApp {
     }
     this.togglesInProgress.add(metricName);
     const generationAtToggleStart = this._loadGeneration;
+    const wasMetricEnabled = metric.enabled;
+    const commitSingleMetricSelection = () => {
+      for (const otherMetric of this.metrics) {
+        if (otherMetric.name === metricName || !otherMetric.enabled) continue;
+        otherMetric.enabled = false;
+        this.chart.removeMetric(otherMetric.name);
+        this.updateMetricIndicator(otherMetric.name, false, otherMetric.color);
+      }
 
-    metric.enabled = !metric.enabled;
-
-    // Update UI immediately so the indicator responds to the click
-    this.updateMetricIndicator(metricName, metric.enabled, metric.color);
+      const remaining = this.metrics.filter((m) => m.enabled);
+      if (remaining.length === 1) {
+        this.ensureBaseline(remaining[0].name);
+      }
+    };
 
     try {
-      if (metric.enabled) {
+      if (!compareMode) {
+        // Plain click switches inspection to exactly one metric.
+        if (!metric.enabled) {
+          metric.enabled = true;
+          this.updateMetricIndicator(metricName, true, metric.color);
+        }
+      } else {
+        // Shift-click keeps the comparison affordance: add/remove one trace.
+        metric.enabled = !metric.enabled;
+        this.updateMetricIndicator(metricName, metric.enabled, metric.color);
+      }
+
+      if (metric.enabled && !this.chart.hasMetric(metricName)) {
         this.chart.addMetric(metricName, metric.color, metric.label);
         const [rangeStart, rangeEnd] = this.chart.getTimeRange();
 
@@ -646,6 +679,9 @@ class MonitoringApp {
         }
 
         if (this._loadGeneration !== generationAtToggleStart) {
+          if (!compareMode && metric.enabled) {
+            commitSingleMetricSelection();
+          }
           return;
         }
 
@@ -662,7 +698,7 @@ class MonitoringApp {
           this.chart.setBaseline(metricName, baseline);
           this.baselineLoadedForMetric.add(metricName);
         }
-      } else {
+      } else if (!metric.enabled) {
         this.chart.removeMetric(metricName);
 
         // If exactly one metric remains, refresh its baseline (non-blocking).
@@ -671,9 +707,13 @@ class MonitoringApp {
           this.ensureBaseline(remaining[0].name);
         }
       }
+
+      if (!compareMode && metric.enabled) {
+        commitSingleMetricSelection();
+      }
     } catch (error) {
       // Roll back failed enable so UI and chart state remain consistent.
-      if (metric.enabled) {
+      if (!wasMetricEnabled && metric.enabled) {
         metric.enabled = false;
         this.chart.removeMetric(metricName);
         this.updateMetricIndicator(metricName, false, metric.color);

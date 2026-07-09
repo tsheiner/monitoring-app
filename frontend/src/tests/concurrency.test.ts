@@ -65,6 +65,32 @@ function makeBaseline(metric: string) {
   };
 }
 
+function makeClassifierBaseline(classifier: string) {
+  return {
+    classifier,
+    entity: null,
+    timezone: "UTC",
+    hourly_distributions: Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      fallback_source: "self",
+      sample_count: 100,
+      distribution: {
+        p1: 0.8,
+        p5: 0.85,
+        p10: 0.9,
+        p25: 0.94,
+        p50: 0.97,
+        p75: 0.99,
+        p90: 0.995,
+        p95: 0.998,
+        p99: 0.999,
+        mean: 0.96,
+        stddev: 0.03,
+      },
+    })),
+  };
+}
+
 function createMockApi(overrides: Partial<APIClient> = {}): APIClient {
   const mock = {
     fetchMetricHistory: vi.fn(
@@ -72,6 +98,9 @@ function createMockApi(overrides: Partial<APIClient> = {}): APIClient {
         makeMetricResponse(metric, start, end),
     ),
     fetchBaseline: vi.fn(async (metric: string) => makeBaseline(metric)),
+    fetchClassifierBaseline: vi.fn(async (classifier: string) =>
+      makeClassifierBaseline(classifier),
+    ),
     fetchEvents: vi.fn(async (start: number, end: number) => ({
       start,
       end,
