@@ -204,12 +204,28 @@ describe("Scenario controls", () => {
       '[data-group="connection_auth"]',
     ) as HTMLElement;
     expect(toggle).toBeTruthy();
-    expect(toggle.classList.contains("active")).toBe(true);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.classList.contains("active")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
 
     toggle.click();
 
-    expect(toggle.classList.contains("active")).toBe(false);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.classList.contains("active")).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("starts with every event group hidden", () => {
+    const api = createMockApi();
+    const app = new MonitoringApp({
+      autoStart: false,
+      connectWebSocket: false,
+      apiClient: api,
+    });
+
+    (app as any).setupControls();
+
+    const toggles = Array.from(document.querySelectorAll(".event-toggle"));
+    expect(toggles).toHaveLength(6);
+    expect(toggles.every((toggle) => !toggle.classList.contains("active"))).toBe(true);
+    expect(toggles.every((toggle) => toggle.getAttribute("aria-pressed") === "false")).toBe(true);
   });
 });

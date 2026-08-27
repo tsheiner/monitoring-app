@@ -165,42 +165,42 @@ class MonitoringApp {
       name: "connection_auth",
       label: "Connection/Auth",
       eventTypes: ["dhcp_server_overload", "radius_timeout", "dns_resolution_failure"],
-      enabled: true,
+      enabled: false,
       icon: "M12 20h9M12 4h9M4 9h16M4 15h16M4 9l4-4M4 9l4 4M20 15l-4-4M20 15l-4 4",
     },
     {
       name: "rf_capacity",
       label: "RF/Capacity",
       eventTypes: ["interference_event", "high_density_event"],
-      enabled: true,
+      enabled: false,
       icon: "M2 12h2m16 0h2M6.34 6.34 4.93 4.93m14.14 14.14-1.41-1.41M12 2v2m0 16v2M8 12a4 4 0 1 1 8 0",
     },
     {
       name: "lifecycle",
       label: "Lifecycle",
       eventTypes: ["device_restart", "device_crash", "firmware_update", "heat_event"],
-      enabled: true,
+      enabled: false,
       icon: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6",
     },
     {
       name: "config",
       label: "Config",
       eventTypes: ["config_change", "channel_change"],
-      enabled: true,
+      enabled: false,
       icon: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", // Settings
     },
     {
       name: "security",
       label: "Security",
       eventTypes: ["rogue_ap"],
-      enabled: true,
+      enabled: false,
       icon: "M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm-1.06 13.54L7.4 12l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41-5.64 5.66z", // Shield
     },
     {
       name: "ai",
       label: "AI",
       eventTypes: ["ai_action"],
-      enabled: true,
+      enabled: false,
       icon: "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z", // CheckCircle
     },
   ];
@@ -530,6 +530,7 @@ class MonitoringApp {
       );
       if (toggle) {
         toggle.classList.add("active");
+        toggle.setAttribute("aria-pressed", "true");
       }
     }
   }
