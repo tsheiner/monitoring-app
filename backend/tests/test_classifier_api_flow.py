@@ -271,7 +271,7 @@ class TestClassifierApiEndpointsAccessible:
         """
         # Create a minimal baselines.json with classifier data
         baselines = {
-            "generated_at": "2026-02-01T00:00:00",
+            "generated_at": int(__import__("time").time()),
             "lookback_days": 30,
             "classifiers": {
                 "dhcp": [
@@ -289,27 +289,22 @@ class TestClassifierApiEndpointsAccessible:
             },
         }
 
+        from simulator.baseline_artifact import build_baseline_metadata
+        baselines.update(
+            build_baseline_metadata(
+                generated_at=baselines["generated_at"],
+                n_aps=6,
+                ap_list=["AP-Floor1-01"],
+                lookback_days=30,
+            )
+        )
+
         baselines_path = tmp_path / "baselines.json"
         baselines_path.write_text(json.dumps(baselines))
 
-        # Monkeypatch Path("data/baselines.json") in http_api
+        # Monkeypatch the centralized baseline path in http_api.
         import server.http_api as http_api_module
-        original_path_class = http_api_module.Path
-
-        class PatchedPath:
-            def __init__(self, *args):
-                self._path = original_path_class(*args)
-                self._patched = str(self._path) == "data/baselines.json"
-                if self._patched:
-                    self._path = baselines_path
-
-            def exists(self):
-                return self._path.exists()
-
-            def __fspath__(self):
-                return str(self._path)
-
-        monkeypatch.setattr(http_api_module, "Path", PatchedPath)
+        monkeypatch.setattr(http_api_module, "get_baseline_path", lambda: baselines_path)
 
         response = api_client.get("/api/classifiers/dhcp/baseline")
         assert response.status_code == 200

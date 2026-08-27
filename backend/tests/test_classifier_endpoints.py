@@ -6,16 +6,64 @@ Tests:
 - GET /api/classifiers/{classifier}/baseline - classifier baseline distributions
 - Invalid metric/classifier returns 404
 """
+import json
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 from server.http_api import app
 from storage.metrics_store import get_metrics_store
+from simulator.baseline_artifact import build_baseline_metadata
+from simulator.realistic_generator import CLASSIFIER_DEFINITIONS
 
 
 @pytest.fixture
 def api_client():
     """Create test client for API."""
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def valid_baseline_artifact(tmp_path, monkeypatch):
+    """Give endpoint tests an isolated, compatible baseline artifact."""
+
+    now = int(time.time())
+    distribution = {
+        "p1": 0.90,
+        "p5": 0.92,
+        "p10": 0.94,
+        "p25": 0.96,
+        "p50": 0.98,
+        "p75": 0.99,
+        "p90": 0.995,
+        "p95": 0.998,
+        "p99": 0.999,
+        "mean": 0.975,
+        "stddev": 0.02,
+    }
+    artifact = {
+        **build_baseline_metadata(
+            generated_at=now,
+            n_aps=1,
+            ap_list=["AP-Floor1-01"],
+            lookback_days=30,
+        ),
+        "classifiers": {
+            name: [
+                {
+                    "hour": hour,
+                    "distribution": distribution,
+                    "sample_count": 100,
+                }
+                for hour in range(24)
+            ]
+            for name in CLASSIFIER_DEFINITIONS
+        },
+        "metrics": {},
+    }
+    path = tmp_path / "baselines.json"
+    path.write_text(json.dumps(artifact))
+    monkeypatch.setattr("server.http_api.get_baseline_path", lambda: path)
 
 
 @pytest.fixture

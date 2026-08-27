@@ -16,7 +16,11 @@ from pathlib import Path
 
 from simulator.realistic_generator import get_generator, NETWORK_PROFILES
 from simulator.event_generator import get_event_generator
-from simulator.bootstrap import bootstrap_historical_data
+from simulator.bootstrap import (
+    bootstrap_historical_data,
+    ensure_precomputed_baselines_current,
+)
+from simulator.baseline_artifact import BASELINE_CHECK_INTERVAL_SECONDS
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
 from server.aggregation import aggregate_metric_observations
@@ -216,6 +220,21 @@ async def cleanup_old_data_loop():
             await asyncio.sleep(3600)
 
 
+async def maintain_baseline_loop():
+    """Keep the clean baseline compatible during an indefinitely long run."""
+
+    while True:
+        await asyncio.sleep(BASELINE_CHECK_INTERVAL_SECONDS)
+        try:
+            await asyncio.to_thread(ensure_precomputed_baselines_current)
+            # Classifier statuses are generated in-process, so reload their
+            # thresholds after an atomic baseline replacement.
+            get_generator().reload_classifier_thresholds()
+        except Exception as e:
+            # Keep serving the last known-good artifact; the next check retries.
+            print(f"Error refreshing baseline artifact: {e}")
+
+
 async def run_backend():
     """
     Run the complete backend system.
@@ -271,6 +290,10 @@ async def run_backend():
             age_seconds = time.time() - metrics_db.stat().st_mtime
             age_hours = age_seconds / 3600
             print(f"Data file last modified: {age_hours:.1f} hours ago")
+
+        # Continuous mode preserves the rolling database, but baselines are
+        # model artifacts that must match the current generator and profile.
+        ensure_precomputed_baselines_current()
         print("="*60 + "\n")
         
     else:
@@ -334,7 +357,8 @@ async def run_backend():
         server.serve(),  # HTTP API
         stream_metrics_loop(),
         stream_events_loop(),
-        cleanup_old_data_loop()  # Periodic cleanup to maintain 30-day window
+        cleanup_old_data_loop(),  # Periodic cleanup to maintain 30-day window
+        maintain_baseline_loop(),
     )
 
 

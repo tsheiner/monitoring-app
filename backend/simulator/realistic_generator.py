@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from simulator.perturbations import PerturbationManager, create_load_perturbation
+from simulator.baseline_artifact import get_baseline_path
 
 
 # --- Classifier definitions (Phase 1: Classifier Simulation Engine) ---
@@ -522,7 +523,7 @@ class RealisticMetricsGenerator:
         If baselines don't exist, thresholds remain empty and status will default to
         a fallback computation.
         """
-        baselines_path = Path("data/baselines.json")
+        baselines_path = get_baseline_path()
         if not baselines_path.exists():
             return
         
@@ -546,6 +547,12 @@ class RealisticMetricsGenerator:
         except (json.JSONDecodeError, KeyError, IOError):
             # If baselines are malformed or missing, continue without thresholds
             pass
+
+    def reload_classifier_thresholds(self) -> None:
+        """Reload classifier status thresholds after a baseline refresh."""
+
+        self._classifier_thresholds.clear()
+        self._load_classifier_thresholds()
     
     def _get_classifier_breakdown(
         self, metric: str, timestamp: int, entity_key: str = "_global"

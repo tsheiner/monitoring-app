@@ -6,6 +6,11 @@ Provides endpoints for querying metrics with distributions and events.
 import json
 import time
 from pathlib import Path
+from simulator.baseline_artifact import (
+    baseline_staleness_reason,
+    get_baseline_path,
+    load_baseline,
+)
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -365,12 +370,10 @@ async def get_classifier_baseline(classifier: str):
         24 hourly baseline distributions
     """
     # Load baselines from file
-    baselines_path = Path("data/baselines.json")
-    if not baselines_path.exists():
+    baselines_path = get_baseline_path()
+    baselines = load_baseline(baselines_path)
+    if baseline_staleness_reason(baselines) is not None:
         raise HTTPException(status_code=503, detail="Baseline data not yet available")
-    
-    with open(baselines_path, 'r') as f:
-        baselines = json.load(f)
     
     # Check if classifier exists
     if "classifiers" not in baselines or classifier not in baselines["classifiers"]:
@@ -400,8 +403,18 @@ async def get_classifier_baseline(classifier: str):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Report service health and clean-baseline compatibility."""
+
+    baseline = load_baseline()
+    baseline_reason = baseline_staleness_reason(baseline)
+    return {
+        "status": "healthy" if baseline_reason is None else "degraded",
+        "baseline": {
+            "status": "current" if baseline_reason is None else "stale",
+            "reason": baseline_reason,
+            "generated_at": baseline.get("generated_at") if baseline else None,
+        },
+    }
 
 
 @app.get("/debug/memory")
