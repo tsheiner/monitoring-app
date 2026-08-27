@@ -367,15 +367,13 @@ existing data across restarts (for continuous operation), set:
 SKIP_BOOTSTRAP=true python main.py
 ```
 
-This is useful for long-running deployments where you want to maintain
-historical continuity. However, if the simulation architecture changes
-(e.g., how metrics are computed from classifiers), you MUST clear the old
-baselines and regenerate them:
-
-```bash
-rm data/baselines.json data/metrics.db* data/events.db
-python main.py  # will regenerate with current architecture
-```
+This preserves the rolling metrics and events databases while validating the
+clean baseline artifact against the active network profile, configuration,
+generator, and baseline algorithm. Missing, malformed, incompatible, or
+older-than-seven-days baselines are regenerated without deleting historical
+data. The running service also checks the artifact hourly, so a deployment can
+remain up indefinitely without silently mixing a new generator with an old
+baseline.
 
 **Ports at a glance:**
 

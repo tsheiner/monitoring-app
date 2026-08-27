@@ -34,6 +34,7 @@ import numpy as np
 
 from simulator.realistic_generator import (
     get_generator,
+    get_config_path,
     reset_for_live_streaming,
     RealisticMetricsGenerator,
     CLASSIFIER_DEFINITIONS,
@@ -46,6 +47,13 @@ from simulator.perturbations import (
 )
 from storage.metrics_store import get_metrics_store
 from storage.events_store import get_events_store
+from simulator.baseline_artifact import (
+    baseline_staleness_reason,
+    build_baseline_metadata,
+    get_baseline_path,
+    load_baseline,
+    write_baseline_atomically,
+)
 
 
 # Tier definitions: age boundaries from "now" and bucket interval
@@ -63,6 +71,155 @@ TIERS = [
 TOTAL_DURATION = TIERS[-1]["max_age"]  # ~29.75 days
 
 
+def _distribution(values: np.ndarray, *, classifier: bool = False) -> dict:
+    """Compute the percentile shape stored in a baseline artifact."""
+
+    percentiles = {p: float(np.percentile(values, p)) for p in (1, 5, 10, 25, 50, 75, 90, 95, 99)}
+    result = {
+        "p1": percentiles[1],
+        "p5": percentiles[5],
+        "p10": percentiles[10],
+        "p25": percentiles[25],
+        "p50": percentiles[50],
+        "p75": percentiles[75],
+        "p90": percentiles[90],
+        "p95": percentiles[95],
+        "p99": percentiles[99],
+        "mean": float(np.mean(values)),
+        "stddev": float(np.std(values)),
+    }
+    if classifier:
+        result["p2"] = float(np.percentile(values, 2))
+        result["p98"] = float(np.percentile(values, 98))
+    return result
+
+
+def _compute_baseline_sets(
+    *,
+    metric_sums: dict[str, np.ndarray],
+    classifier_sums: dict[str, np.ndarray],
+    all_metrics: list[str],
+    all_classifiers: list[str],
+    hours_of_day: np.ndarray,
+    n_aps: int,
+) -> tuple[dict, dict]:
+    """Compute metric and classifier baselines from clean sample accumulators."""
+
+    baselines = {}
+    classifier_baselines = {}
+
+    def grouped(values: np.ndarray, *, classifier: bool = False) -> list[dict]:
+        hourly_bins = defaultdict(list)
+        for t_idx, hour in enumerate(hours_of_day):
+            hourly_bins[int(hour)].append(float(values[t_idx]))
+
+        result = []
+        for hour in range(24):
+            hour_values = np.array(hourly_bins.get(hour, []))
+            if len(hour_values) < 5:
+                continue
+            entry = {
+                "hour": hour,
+                "distribution": _distribution(hour_values, classifier=classifier),
+                "sample_count": len(hour_values),
+            }
+            if classifier:
+                entry["thresholds"] = {
+                    "green_min": float(np.percentile(hour_values, 25)),
+                    "yellow_min": float(np.percentile(hour_values, 10)),
+                }
+            entry["fallback_source"] = "data"
+            result.append(entry)
+        return result
+
+    for metric in all_metrics:
+        baselines[metric] = grouped(metric_sums[metric] / n_aps)
+
+    for classifier_name in all_classifiers:
+        classifier_baselines[classifier_name] = grouped(
+            classifier_sums[classifier_name] / n_aps,
+            classifier=True,
+        )
+
+    return baselines, classifier_baselines
+
+
+def generate_clean_baseline_artifact(now: Optional[int] = None) -> dict:
+    """Generate a clean baseline without modifying the rolling metrics store."""
+
+    now = int(time.time()) if now is None else int(now)
+    start_time = now - TOTAL_DURATION
+    ap_list = _get_ap_list()
+    generator = RealisticMetricsGenerator(start_time=start_time)
+    all_metrics = generator.get_all_metrics()
+    all_classifiers = list(CLASSIFIER_DEFINITIONS.keys())
+    n_timestamps = TOTAL_DURATION // 30
+    metric_sums = {metric: np.zeros(n_timestamps) for metric in all_metrics}
+    classifier_sums = {classifier: np.zeros(n_timestamps) for classifier in all_classifiers}
+
+    for ap in ap_list:
+        generator._init_entity_state(ap, start_time)
+        for t_idx in range(n_timestamps):
+            timestamp = start_time + t_idx * 30
+            frame = generator.generate_metric_frame(
+                timestamp=timestamp,
+                entity=ap,
+                include_classifiers=True,
+            )
+            for observation in frame:
+                metric_sums[observation["metric"]][t_idx] += observation["value"]
+
+            classifier_state = generator._get_classifier_state(ap)
+            for classifier_name in all_classifiers:
+                classifier_sums[classifier_name][t_idx] += classifier_state[classifier_name]
+
+    hours_of_day = np.array([
+        datetime.fromtimestamp(start_time + t * 30).hour
+        for t in range(n_timestamps)
+    ])
+    baselines, classifier_baselines = _compute_baseline_sets(
+        metric_sums=metric_sums,
+        classifier_sums=classifier_sums,
+        all_metrics=all_metrics,
+        all_classifiers=all_classifiers,
+        hours_of_day=hours_of_day,
+        n_aps=len(ap_list),
+    )
+    return {
+        **build_baseline_metadata(
+            generated_at=now,
+            n_aps=len(ap_list),
+            ap_list=ap_list,
+            lookback_days=TOTAL_DURATION / 86400,
+        ),
+        "metrics": baselines,
+        "classifiers": classifier_baselines,
+    }
+
+
+def refresh_precomputed_baselines(now: Optional[int] = None) -> Path:
+    """Refresh the clean baseline artifact atomically and return its path."""
+
+    baseline = generate_clean_baseline_artifact(now=now)
+    path = write_baseline_atomically(baseline, get_baseline_path())
+    print(f"  Baselines refreshed at {path}")
+    return path
+
+
+def ensure_precomputed_baselines_current(now: Optional[int] = None) -> Path:
+    """Reuse a compatible baseline or refresh it before continuous operation."""
+
+    baseline = load_baseline()
+    reason = baseline_staleness_reason(baseline, now=now)
+    if reason is None:
+        path = get_baseline_path()
+        print(f"  Baselines are current: {path}")
+        return path
+
+    print(f"  Refreshing baseline ({reason})...")
+    return refresh_precomputed_baselines(now=now)
+
+
 def _get_tier_interval(age: int) -> int:
     """Get the storage interval for a given age (seconds from now)."""
     for tier in TIERS:
@@ -73,14 +230,8 @@ def _get_tier_interval(age: int) -> int:
 
 def _get_ap_list() -> List[str]:
     """Get list of AP names from the active config."""
-    profile = os.environ.get("NETWORK_PROFILE", "enterprise")
-    config_file = f"simulator/config_{profile}.json"
-
     try:
-        config_path = Path(config_file)
-        if not config_path.exists():
-            config_path = Path("simulator/config_enterprise.json")
-
+        config_path = get_config_path()
         with open(config_path, "r") as f:
             config = json.load(f)
 
@@ -312,18 +463,19 @@ def bootstrap_historical_data(days: int = None) -> Dict[str, int]:
             print(f"    {classifier_name}: noon p10-p90: [{p10:.3f}..{p90:.3f}]")
 
     # Save baselines to JSON file
-    baselines_path = Path("data/baselines.json")
+    baselines_path = get_baseline_path()
     baselines_path.parent.mkdir(parents=True, exist_ok=True)
     baselines_data = {
-        "generated_at": now,
-        "lookback_days": TOTAL_DURATION / 86400,
-        "n_aps": n_aps,
-        "ap_list": ap_list,
+        **build_baseline_metadata(
+            generated_at=now,
+            n_aps=n_aps,
+            ap_list=ap_list,
+            lookback_days=TOTAL_DURATION / 86400,
+        ),
         "metrics": baselines,
         "classifiers": classifier_baselines,  # NEW: Include classifier baselines
     }
-    with open(baselines_path, "w") as f:
-        json.dump(baselines_data, f, indent=2)
+    write_baseline_atomically(baselines_data, baselines_path)
     print(f"  Baselines saved to {baselines_path}")
 
     phase2_elapsed = time.time() - phase2_start

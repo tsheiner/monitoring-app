@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from collections import defaultdict
 
 import numpy as np
+from simulator.baseline_artifact import (
+    baseline_staleness_reason,
+    get_baseline_path,
+    load_baseline,
+)
 
 
 class MetricsStore:
@@ -283,21 +288,18 @@ class MetricsStore:
         Returns:
             List of 24 hourly distribution dicts, or None if not available
         """
-        baselines_path = Path("data/baselines.json")
+        baselines_path = get_baseline_path()
         if not baselines_path.exists():
             return None
 
-        try:
-            with open(baselines_path, "r") as f:
-                data = json.load(f)
+        data = load_baseline(baselines_path)
+        if baseline_staleness_reason(data) is not None:
+            return None
 
-            metric_baseline = data.get("metrics", {}).get(metric)
-            if metric_baseline and len(metric_baseline) > 0:
-                return metric_baseline
-            return None
-        except Exception as e:
-            print(f"Warning: Failed to load pre-computed baseline: {e}")
-            return None
+        metric_baseline = data.get("metrics", {}).get(metric) if data else None
+        if metric_baseline and len(metric_baseline) > 0:
+            return metric_baseline
+        return None
 
     def compute_baseline_distribution(
         self,
@@ -548,7 +550,9 @@ class MetricsStore:
     def _get_metric_config(self, metric: str) -> Optional[Dict]:
         """Load metric configuration from config file."""
         try:
-            config_path = Path("simulator/config_enterprise.json")
+            from simulator.realistic_generator import get_config_path
+
+            config_path = get_config_path()
             if not config_path.exists():
                 return None
             with open(config_path, "r") as f:

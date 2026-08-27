@@ -12,15 +12,16 @@ import numpy as np
 from pathlib import Path
 
 
-def test_baselines_json_includes_classifier_thresholds(temp_data_dir):
+def test_baselines_json_includes_classifier_thresholds(temp_data_dir, monkeypatch):
     """Test that baselines.json includes threshold data for classifiers."""
     from simulator.bootstrap import bootstrap_historical_data
     from simulator.realistic_generator import RealisticMetricsGenerator
     
-    # Change to temp directory
+    # Keep all runtime artifacts isolated from the repository data directory.
     import os
     original_cwd = os.getcwd()
     os.chdir(temp_data_dir)
+    monkeypatch.setenv("MONITORING_DATA_DIR", str(temp_data_dir / "data"))
     
     try:
         # Create data directory
