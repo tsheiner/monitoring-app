@@ -166,6 +166,16 @@ main {
   margin-bottom: 15px;
 }
 
+.metrics-hint {
+  /* Let the metric controls establish width while the hint wraps within it. */
+  contain: inline-size;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+  color: #b0b0b0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .sidebar-divider {
   height: 1px;
   background: #3a3a3a;
